@@ -2,6 +2,11 @@
 # The full verification sweep: format, build+vet for every platform,
 # all tests, and headless screenshot smoke. CI runs this; so should you.
 set -euo pipefail
+# GFX_TEST_FLAGS adds flags to every go test and go run below, e.g.
+# GFX_TEST_FLAGS=-ldflags=-s on a Windows machine whose application-control
+# policy blocks some freshly linked test binaries (a stripped build is a
+# different binary and gets through).
+TF="${GFX_TEST_FLAGS:-}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
@@ -21,7 +26,7 @@ for target in "linux amd64" "windows amd64" "js wasm"; do
 done
 
 echo "== layering"
-go test -count=1 ./internal/layering/...
+go test $TF -count=1 ./internal/layering/...
 
 echo "== tests"
 # The output is filtered but the result is not: piping go test straight
@@ -29,7 +34,7 @@ echo "== tests"
 # unnoticed in the sweep for days.
 failed=""
 for m in $MODULES; do
-  if out=$( (cd "$m" && go test -count=1 -timeout 300s ./...) 2>&1 ); then :; else failed="$failed $m"; fi
+  if out=$( (cd "$m" && go test $TF -count=1 -timeout 300s ./...) 2>&1 ); then :; else failed="$failed $m"; fi
   echo "$out" | grep -v 'no test files' || true
 done
 if [ -n "$failed" ]; then echo "FAILED tests in:$failed"; exit 1; fi
@@ -37,10 +42,10 @@ if [ -n "$failed" ]; then echo "FAILED tests in:$failed"; exit 1; fi
 echo "== headless screenshot smoke"
 if [ -f "build/wgpu/libwgpu_native.so" ] || [ -f "build/wgpu/wgpu_native.dll" ] || [ -n "${GFX_WGPU_LIB:-}" ]; then
   tmp=$(mktemp -d)
-  (cd examples && go run ./settings -screenshot "$tmp/settings.png" >/dev/null)
-  (cd examples && go run ./kitchensink -screenshot "$tmp/kitchensink.png" >/dev/null)
+  (cd examples && go run $TF ./settings -screenshot "$tmp/settings.png" >/dev/null)
+  (cd examples && go run $TF ./kitchensink -screenshot "$tmp/kitchensink.png" >/dev/null)
   # frost exercises the offscreen-layer path (a second render pass per frame).
-  (cd examples && go run ./frost -screenshot "$tmp/frost.png" >/dev/null)
+  (cd examples && go run $TF ./frost -screenshot "$tmp/frost.png" >/dev/null)
   test -s "$tmp/settings.png" && test -s "$tmp/kitchensink.png" && test -s "$tmp/frost.png"
   rm -rf "$tmp"
   echo "screenshots ok"
