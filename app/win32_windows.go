@@ -534,6 +534,9 @@ var windows = map[uintptr]*Window{}
 var wndProc = sync.OnceValue(func() uintptr {
 	return ffi.Callback(func(hwnd, msg, wparam, lparam uintptr) uintptr {
 		w := windows[hwnd]
+		if inputTrace {
+			traceInput(msg, wparam, lparam)
+		}
 		switch msg {
 		case wmClose:
 			if w != nil && (w.OnCloseRequest == nil || w.OnCloseRequest()) {

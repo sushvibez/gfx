@@ -567,7 +567,10 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 // at once, and anything that acts while the button is down (a drag, the
 // view cube, a hold-to-act control, a press-then-release button) never
 // saw it.
-func (in *Input) feedMouse(events []app.MouseEvent) []app.MouseEvent {
+func (in *Input) feedMouse(events []app.MouseEvent) (taken []app.MouseEvent) {
+	if inputTrace {
+		defer func() { in.traceFrame(taken) }()
+	}
 	if len(in.carry) > 0 {
 		events = append(in.carry, events...)
 		in.carry = nil
