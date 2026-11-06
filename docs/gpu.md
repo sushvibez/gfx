@@ -23,8 +23,8 @@ Two backends share one API:
 | Web | `js` | the browser's `navigator.gpu` through `syscall/js`; each encoder call is one JS call today |
 
 What the web backend does not have: `Load`, `Probe`, `DefaultLibNames`,
-`ReadTexture`, `ReadBuffer` (readback is native-only, so every screenshot
-path needs a js stub), dual-source blending (`Device.DualSourceBlending`
+`ReadBuffer` (readback is native-only; `ReadTexture` exists on js and
+returns an error, so a screenshot path builds for the browser), dual-source blending (`Device.DualSourceBlending`
 reports false) and MSAA textures. The design's WGSL-reflection codegen for
 bind-group layouts is not built; pipelines use auto-derived layouts
 (`Pipeline.BindGroupLayout(i)`).

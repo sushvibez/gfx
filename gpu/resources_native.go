@@ -152,7 +152,6 @@ const FormatR8Unorm TextureFormat = 0x01
 
 // FormatRGBA16Float is a half-float colour target: an HDR accumulation
 // buffer (additive point clouds, bloom) that a later pass tone-maps.
-// Not readable with ReadTexture, which assumes four bytes a texel.
 const FormatRGBA16Float TextureFormat = 0x28 // WGPUTextureFormat_RGBA16Float
 
 const (
@@ -371,11 +370,14 @@ var mapCallback = sync.OnceValue(func() uintptr {
 })
 
 // ReadTexture copies a rendered texture back to the CPU and returns tightly
-// packed RGBA rows (width*height*4 bytes). It blocks until the GPU is done —
+// packed rows of its own texels: width*height*BytesPerTexel bytes (4 for
+// RGBA8/BGRA8, 1 for R8, 8 half floats for RGBA16Float). It blocks until the GPU is done —
 // a tool for tests, screenshots and goldens, not for per-frame use.
 func (d *Device) ReadTexture(q *Queue, t *Texture, width, height int) ([]byte, error) {
 	const rowAlign = 256 // WebGPU requires 256-byte-aligned rows for copies
-	paddedRow := (width*4 + rowAlign - 1) / rowAlign * rowAlign
+	bpt := max(1, t.bpt)
+	row := width * bpt
+	paddedRow := (row + rowAlign - 1) / rowAlign * rowAlign
 	size := paddedRow * height
 
 	staging := d.CreateBuffer(BufferMapRead|BufferCopyDst, size)
@@ -405,9 +407,9 @@ func (d *Device) ReadTexture(q *Queue, t *Texture, width, height int) ([]byte, e
 		return nil, fmt.Errorf("gpu: GetMappedRange returned nil")
 	}
 	mapped := unsafe.Slice((*byte)(ptr), size)
-	out := make([]byte, width*4*height)
+	out := make([]byte, row*height)
 	for y := range height {
-		copy(out[y*width*4:(y+1)*width*4], mapped[y*paddedRow:y*paddedRow+width*4])
+		copy(out[y*row:(y+1)*row], mapped[y*paddedRow:y*paddedRow+row])
 	}
 	wgpuBufferUnmap(staging.h)
 	return out, nil
