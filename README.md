@@ -104,3 +104,36 @@ macOS, XGo scripting, and the QML parity review of the `.gml` engine.
 ## License
 
 [Apache-2.0](LICENSE). Third-party attributions are in [NOTICE](NOTICE).
+Contributions are accepted under the terms in
+[CONTRIBUTING.md](CONTRIBUTING.md#licence): Apache-2.0, a grant that lets
+the project move to another open-source licence later, and a signed-off
+commit (`git commit -s`).
+
+### Maintainers: enforcing the sign-off
+
+GitHub does not check sign-offs itself; the free DCO app does:
+
+1. Open <https://github.com/apps/dco>, choose **Install** (or
+   **Configure** if it is already on the account), pick the account that
+   owns the repository and select only this repository.
+2. The app now adds a **DCO** check to every pull request. It fails when a
+   commit has no `Signed-off-by:` line matching the commit's author, and
+   its details page tells the contributor how to fix it
+   (`git commit --amend -s` for the last commit,
+   `git rebase --signoff main` for several).
+3. Make the check required so an unsigned pull request cannot be merged:
+   **Settings → Rules → Rulesets → New branch ruleset**, target the
+   default branch, enable **Require status checks to pass** and add
+   **DCO**. (The check appears in that list once the app has run on a
+   first pull request; open a test one if the list is empty.)
+
+Pushes made straight to the default branch by maintainers are not pull
+requests, so the check does not run on them. Optionally, a
+`.github/dco.yml` file configures the app, for example to let a
+contributor sign off past commits with one remediation commit instead of
+rewriting history:
+
+```yaml
+allowRemediationCommits:
+  individual: true
+```

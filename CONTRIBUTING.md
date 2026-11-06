@@ -63,3 +63,20 @@ To run one package's tests: `go test ./ui/...`; one test:
 
 By contributing you agree that your contributions are licensed under the
 Apache License 2.0, like the rest of the project.
+
+You also grant the project's maintainer (Sushil Kumar, and anyone he
+passes the maintenance of the project to) a perpetual, worldwide,
+non-exclusive, royalty-free, irrevocable licence to use, modify and
+distribute your contributions under any other licence approved by the
+Open Source Initiative, so the project can change its licence in future
+without having to trace every past contributor. You keep the copyright
+in your contributions and every right the Apache License gives you.
+
+Sign off each commit to certify that you wrote the change or otherwise
+have the right to submit it under these terms (the Developer Certificate
+of Origin, https://developercertificate.org):
+
+    git commit -s
+
+which adds a line `Signed-off-by: Your Name <you@example.com>` to the
+commit message. Pull requests with unsigned commits cannot be merged.

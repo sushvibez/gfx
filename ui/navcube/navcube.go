@@ -353,3 +353,22 @@ func Ease(yaw, pitch, toYaw, toPitch float32) (y, p float32, done bool) {
 	}
 	return yaw + dy*0.25, pitch + dp*0.25, false
 }
+
+// Element is the cube ready to place: Viewport (a tap snaps through
+// onSnap) inside its own drag region, so a drag that starts on the cube
+// turns the camera through onOrbit (dx, dy: pixels moved since the last
+// call) and never reaches what lies under it (a panel's resize handle,
+// a pannable pane). A drag that travels does not also snap.
+func (c *Cube) Element(size float32, onSnap func(yaw, pitch float32), onOrbit func(dx, dy float32)) ui.Element {
+	var lastX, lastY float32
+	return ui.Div().W(size).H(size).OnDrag(func(dx, dy float32, phase ui.DragPhase) {
+		if phase == ui.DragStart {
+			lastX, lastY = 0, 0
+			return
+		}
+		if onOrbit != nil && (dx != lastX || dy != lastY) {
+			onOrbit(dx-lastX, dy-lastY)
+		}
+		lastX, lastY = dx, dy
+	}).Children(c.Viewport(size, onSnap))
+}
