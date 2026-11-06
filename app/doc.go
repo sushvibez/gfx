@@ -5,8 +5,7 @@
 // Per-platform status (see /DESIGN.md §8):
 //   - Windows: Win32 via stdlib syscall; D3D12 through wgpu-native, verified
 //     on Windows 11 (headless and windowed).
-//   - Linux: X11 via ffi/purego; native Wayland follows later. X11 is the
-//     only backend with multi-window (NewChild/Hide/Show) so far.
+//   - Linux: X11 via ffi/purego; native Wayland follows later.
 //   - Android: NativeActivity via a small cgo glue (the one sanctioned
 //     cgo exception); touch mapped onto the mouse stream, soft keyboard
 //     later.
@@ -44,6 +43,25 @@
 //     hwnd map. Two windows on the same (LockOSThread'd) goroutine therefore
 //     share one pump: polling EITHER window services BOTH, which is correct
 //     but means a window whose Poll is never called still gets its events.
+//
+// # What each backend honours
+//
+// Every backend has the same Options and Window methods, so code builds
+// everywhere; a field or method a backend cannot honour is accepted and
+// ignored (NewChild returns an error). The headless backend is a separate
+// type with no OS window; it records placement requests and nothing more.
+//
+//	feature                           X11   Win32  Web    Android
+//	NewChild / CloseChild             yes   yes    error  error
+//	Hide / Show                       yes   yes    yes    no-op
+//	Options.Hidden                    yes   yes    yes    no
+//	Undecorated                       yes   yes    n/a    n/a
+//	Transparent (per-pixel alpha)     yes   no     no     no
+//	Unmovable/Unresizable/Unminim.    yes*  yes    n/a    n/a
+//	X, Y + Positioned, Fullscreen     yes*  yes    no     always
+//	SetBackground, RetainDisplay      yes   no     no     no
+//
+//	* through window-manager hints, which a WM may ignore.
 //
 // The package delivers a uniform event stream into the core event loop; no
 // platform types leak above this layer.

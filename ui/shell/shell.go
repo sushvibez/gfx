@@ -26,7 +26,16 @@ import (
 	"github.com/sushvibez/gfx/ui"
 )
 
-// Options configures Run and Screenshot.
+// Options configures every runner: Run and RunUI, RunGame and RunGame2,
+// OpenChild, and the Screenshot/ScreenshotGame headless paths.
+//
+// The window fields (Title, Width, Height, Undecorated, Transparent, the
+// Unmovable family, X/Y/Positioned/Fullscreen) are read by every runner
+// that opens a window; what the platform honours is listed in package
+// app's documentation. Every runner also reads FontSize, FontPaths,
+// ClearHex, MaxFrames, MaxFPS, MSDFText and ResizeBand; RunGame2 takes
+// those from its first window's Options. LineHeight and EventDriven are
+// about the retained ui tree, so only Run, RunUI and OpenChild read them.
 type Options struct {
 	Title     string
 	Width     int
@@ -34,7 +43,10 @@ type Options struct {
 	FontSize  float64  // default 18
 	FontPaths []string // preferred font files, tried before the defaults
 	MaxFrames int      // 0 = run until closed
-	// MaxFPS caps the frame rate (0 = as fast as the display allows).
+	// MaxFPS caps the frame rate. 0 means the runner's default: as fast
+	// as the display allows for the game runners, and 60 frames a second
+	// of animation for Run (input still draws at once; GFX_MAX_FPS
+	// overrides it).
 	//
 	// Vsync alone is not a cap worth relying on: a 240 Hz monitor asks
 	// for 240 frames a second, and a window that redraws unconditionally
@@ -67,7 +79,8 @@ type Options struct {
 	MSDFText bool
 	// Unmovable / Unresizable / Unminimizable pin the window's position /
 	// size / minimize control (gpui's is_movable/is_resizable/
-	// is_minimizable window hints; Windows-only today).
+	// is_minimizable window hints; Windows, and X11 through window-manager
+	// hints).
 	Unmovable     bool
 	Unresizable   bool
 	Unminimizable bool
@@ -124,15 +137,7 @@ func RunUI(o Options, view func() ui.Element) error {
 
 // Run opens a window and drives the app until the window closes.
 func Run(o Options, hooks Hooks) error {
-	if o.FontSize == 0 {
-		o.FontSize = 18
-	}
-	if o.ClearHex == 0 {
-		o.ClearHex = 0x0d0d12
-	}
-	if o.ResizeBand == 0 {
-		o.ResizeBand = 5
-	}
+	o = o.withDefaults()
 	// GFX_CPUPROFILE profiles a LIVE window too, not just a capture: what
 	// a frame costs while something on the page is animating is only
 	// visible here (Screenshot has the same knob).
@@ -183,8 +188,7 @@ func Run(o Options, hooks Hooks) error {
 	// Hidden until the first frame presents: GPU/font init takes long
 	// enough that an early-shown window sits as a blank flash (GPUI does
 	// the same — no WS_VISIBLE, placement applied when content is ready).
-	win, err := app.NewWindow(app.Options{Title: o.Title, Width: o.Width, Height: o.Height,
-		Undecorated: o.Undecorated, Transparent: o.Transparent, Hidden: true})
+	win, err := app.NewWindow(o.window(true))
 	if err != nil {
 		return err
 	}
@@ -263,15 +267,7 @@ func Run(o Options, hooks Hooks) error {
 		depthView = depth.CreateView()
 	}
 
-	clear := gpu.Color{
-		R: float64(o.ClearHex>>16&0xff) / 255,
-		G: float64(o.ClearHex>>8&0xff) / 255,
-		B: float64(o.ClearHex&0xff) / 255,
-		A: 1,
-	}
-	if o.Transparent {
-		clear = gpu.Color{} // alpha 0: the desktop shows through undrawn pixels
-	}
+	clear := o.clearColor()
 	var drag WindowDrag
 	rendered := 0
 	var lastRev, childRev uint64
@@ -304,6 +300,9 @@ func Run(o Options, hooks Hooks) error {
 	// frameCap is the shortest gap between two ANIMATION-driven frames
 	// (see the rate cap below); 0 disables it.
 	frameCap := time.Second / 60
+	if o.MaxFPS > 0 {
+		frameCap = time.Second / time.Duration(o.MaxFPS)
+	}
 	if v := os.Getenv("GFX_MAX_FPS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			frameCap = time.Second / time.Duration(n)
@@ -360,7 +359,7 @@ func Run(o Options, hooks Hooks) error {
 			inRegion := func(x, y float32) bool {
 				return hooks.DragRegion != nil && hooks.DragRegion(a, x, y)
 			}
-			drag.Handle(win, float32(w)/scale, float32(h)/scale, mouse, o.ResizeBand, inRegion)
+			drag.Handle(win, float32(w)/scale, float32(h)/scale, mouse, o.resizeBand(), inRegion)
 		}
 		if hooks.FrameStart != nil && !drag.Active() {
 			hooks.FrameStart(a, dt, mouse, keys)
@@ -734,10 +733,11 @@ func (d *WindowDrag) Active() bool { return d.mode != dragNone }
 
 // Handle consumes a frame's mouse events: presses on the window's border
 // band start a resize, presses where inDragRegion reports true start a
-// move; motion is applied via SetGeometry until release.
+// move; motion is applied via SetGeometry until release. band 0 means
+// the default 5 px; a negative band turns border resizing off.
 func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEvent,
 	band float32, inDragRegion func(x, y float32) bool) {
-	if band <= 0 {
+	if band == 0 {
 		band = 5
 	}
 	for _, m := range mouse {
@@ -836,4 +836,57 @@ func edgeAt(x, y, w, h, band float32) (app.ResizeEdge, bool) {
 		return app.EdgeRight, true
 	}
 	return 0, false
+}
+
+// ---- options shared by the runners --------------------------------------
+
+// window maps the shell's options onto the app layer's. hidden opens the
+// window unmapped; the runners show it after the first present, so GPU and
+// font start-up never flashes a blank window.
+func (o Options) window(hidden bool) app.Options {
+	return app.Options{Title: o.Title, Width: o.Width, Height: o.Height,
+		Undecorated: o.Undecorated, Transparent: o.Transparent, Hidden: hidden,
+		Unmovable: o.Unmovable, Unresizable: o.Unresizable, Unminimizable: o.Unminimizable,
+		X: o.X, Y: o.Y, Positioned: o.Positioned, Fullscreen: o.Fullscreen}
+}
+
+// withDefaults fills the zero fields every runner defaults the same way.
+func (o Options) withDefaults() Options {
+	if o.FontSize == 0 {
+		o.FontSize = 18
+	}
+	if o.ClearHex == 0 {
+		o.ClearHex = 0x0d0d12
+	}
+	if o.ResizeBand == 0 {
+		o.ResizeBand = 5
+	}
+	return o
+}
+
+// clearColor is the window's clear: ClearHex, or transparent black for a
+// Transparent window so the desktop shows through undrawn pixels.
+func (o Options) clearColor() gpu.Color {
+	if o.Transparent {
+		return gpu.Color{}
+	}
+	return gpu.Color{
+		R: float64(o.ClearHex>>16&0xff) / 255,
+		G: float64(o.ClearHex>>8&0xff) / 255,
+		B: float64(o.ClearHex&0xff) / 255,
+		A: 1,
+	}
+}
+
+// resizeBand is the border band an undecorated window resizes from, for
+// WindowDrag.Handle: negative when the window may not be resized there
+// (decorated windows resize through the OS frame).
+func (o Options) resizeBand() float32 {
+	if !o.Undecorated || o.Unresizable {
+		return -1
+	}
+	if o.ResizeBand == 0 {
+		return 5
+	}
+	return o.ResizeBand
 }

@@ -24,7 +24,7 @@ type Options struct {
 	// implements it (accepted here for API parity).
 	Transparent bool
 	// Hidden creates the window without showing it (call Show after the
-	// first present); honored on Windows, accepted here for API parity.
+	// first present); the canvas starts with visibility: hidden.
 	Hidden bool
 	// Unmovable / Unresizable are accepted for API parity; the browser
 	// owns canvas placement and sizing.
@@ -384,14 +384,15 @@ func (w *Window) EachFrame(fn func() bool) {
 // Closed reports whether this window has been closed.
 func (w *Window) Closed() bool { return w.closed }
 
-// CloseChild is a no-op stub (child windows are X11-only).
+// CloseChild is a no-op: NewChild always fails here (child windows are
+// X11 and Windows only).
 func (w *Window) CloseChild(*Window) {}
 
 // Focused reports whether the page/tab has focus.
 func (w *Window) Focused() bool { return !w.blurred }
 
-// NewChild opens a second top-level window. Multi-window is only implemented
-// on the X11 backend so far; the web app has a single canvas.
+// NewChild opens a second top-level window. It fails here: the web app has a
+// single canvas (multi-window is X11 and Windows only).
 func (w *Window) NewChild(o Options) (*Window, error) {
 	return nil, fmt.Errorf("app: multi-window is not implemented on web")
 }

@@ -35,7 +35,8 @@ no-op or returns an error.
 | `Monitors()`, `SetFullscreen`, `MonitorIndex` | XRandR | `EnumDisplayMonitors` | `window.screen`; `requestFullscreen` is only granted from a user-gesture handler, so a call from frame code is silently rejected | The activity surface; `SetFullscreen` is a no-op and `MonitorIndex` is 0 |
 | `RetainDisplay` | Keeps the X connection open after `Destroy` (the Vulkan ICD hooks it) | No-op | No-op | No-op |
 | `Options.Transparent` (per-pixel alpha) | ARGB visual; needs a compositor | Accepted, not implemented | Accepted, not implemented | Accepted, not implemented |
-| `Options.Hidden`, `Unmovable`, `Unresizable`, `Unminimizable` | Accepted | Implemented | Accepted (the browser owns the canvas) | Accepted |
+| `Options.Hidden` | Created unmapped, mapped by `Show` | Created without `WS_VISIBLE` | Canvas starts `visibility: hidden` | Accepted (the system shows the window) |
+| `Unmovable`, `Unresizable`, `Unminimizable` | Motif and `WM_NORMAL_HINTS` hints, which a window manager may ignore | Implemented | Accepted (the browser owns the canvas) | Accepted |
 | `Scale()` (DPI) | `Xft.dpi` at creation | Per-monitor DPI | `devicePixelRatio` | 1 |
 | `ClipboardText` / `SetClipboardText` | X11 selections with INCR | Win32 clipboard | `navigator.clipboard` plus the `paste` event (compile-checked, not verified in a browser) | `ClipboardManager` over JNI (verified on a phone) |
 | Gamepad | joydev (`/dev/input/jsN`) | XInput, with a WinMM fallback for DirectInput-only sticks | `navigator.getGamepads()` | None yet |

@@ -36,7 +36,7 @@ type Options struct {
 	// implements it (accepted here for API parity).
 	Transparent bool
 	// Hidden creates the window without showing it (call Show after the
-	// first present); honored on Windows, accepted here for API parity.
+	// first present); accepted for API parity, the system shows the window.
 	Hidden bool
 	// Unmovable / Unresizable are accepted for API parity; Android windows
 	// are fullscreen surfaces.
@@ -304,17 +304,18 @@ func (w *Window) SetTitle(string) {}
 
 func (w *Window) Destroy() { w.closed = true }
 
-// NewChild opens a second top-level window. Multi-window is only implemented
-// on the X11 backend so far; Android has a single NativeActivity window.
 // Closed reports whether this window has been closed.
 func (w *Window) Closed() bool { return w.closed }
 
-// CloseChild is a no-op stub (child windows are X11-only).
+// CloseChild is a no-op: NewChild always fails here (child windows are
+// X11 and Windows only).
 func (w *Window) CloseChild(*Window) {}
 
 // Focused is always true on Android: a visible activity has focus.
 func (w *Window) Focused() bool { return true }
 
+// NewChild fails: Android has a single NativeActivity window (multi-window
+// is X11 and Windows only).
 func (w *Window) NewChild(o Options) (*Window, error) {
 	return nil, fmt.Errorf("app: multi-window is not implemented on android")
 }

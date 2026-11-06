@@ -1126,8 +1126,6 @@ func (w *Window) CloseChild(c *Window) {
 	c.closed = true
 }
 
-// Hide removes the window from screen; Show puts it back. Only reachable via
-// secondary windows today (NewChild), so these are stubs until then.
 // Hide withdraws the window from the screen.
 func (w *Window) Hide() { showWindow(w.hwnd, 0 /*SW_HIDE*/) }
 

@@ -71,16 +71,13 @@ type childHost struct {
 // OpenChild opens a secondary window with its own view function. Call it
 // from Init or any UI callback (same goroutine as the frame loop). Children
 // share the App's renderer and fonts — their text and styling match the
-// primary window. Multi-window is platform-dependent (X11 today); on other
-// backends this returns the app layer's error.
+// primary window. Multi-window is platform-dependent (X11 and Windows); on
+// other backends this returns the app layer's error.
 func (a *App) OpenChild(o Options, view func() ui.Element) (*ChildWindow, error) {
 	if a.host == nil || a.Win == nil {
 		return nil, fmt.Errorf("shell: OpenChild needs a running windowed shell")
 	}
-	cw, err := a.Win.NewChild(app.Options{Title: o.Title, Width: o.Width, Height: o.Height,
-		Undecorated: o.Undecorated, Transparent: o.Transparent,
-		Unmovable: o.Unmovable, Unresizable: o.Unresizable, Unminimizable: o.Unminimizable,
-		X: o.X, Y: o.Y, Positioned: o.Positioned, Fullscreen: o.Fullscreen})
+	cw, err := a.Win.NewChild(o.window(false))
 	if err != nil {
 		return nil, err
 	}
@@ -94,12 +91,7 @@ func (a *App) OpenChild(o Options, view func() ui.Element) (*ChildWindow, error)
 	surface.Configure(h.device, w, hh, h.format)
 	c := &ChildWindow{Win: cw, view: view, surface: surface, w: w, h: hh,
 		Clear: gpu.Color{R: 1, G: 1, B: 1, A: 1}}
-	if o.Undecorated && !o.Unresizable {
-		c.resizeBand = o.ResizeBand
-		if c.resizeBand == 0 {
-			c.resizeBand = 5
-		}
-	}
+	c.resizeBand = o.resizeBand()
 	c.UI = ui.New(a.R2, a.Font, view)
 	c.UI.SetLineHeight(h.lineHeight)
 	if h.msaa > 0 {

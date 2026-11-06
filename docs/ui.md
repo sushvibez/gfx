@@ -85,13 +85,13 @@ err := shell.RunUI(shell.Options{
 | `FontSize` | default text size, 18 if zero |
 | `FontPaths` | font files tried before the platform defaults (`GFX_FONT` / `GFX_CJK_FONT` also apply) |
 | `MaxFrames` | exit after N presented frames (0 = until closed); used by CI runs |
-| `MaxFPS` | frame-rate cap, 0 = display rate (`GFX_MAX_FPS` overrides) |
+| `MaxFPS` | frame-rate cap; 0 = 60 frames a second of animation in `Run` (input still draws at once) and the display rate in the game runners (`GFX_MAX_FPS` overrides `Run`'s) |
 | `ClearHex` | window clear colour, `0x0d0d12` by default |
 | `LineHeight` | default line height as a multiple of font size (0 = natural) |
 | `MSDFText` | distance-field text as the window default (`GFX_MSDF=1\|0` overrides) |
 | `EventDriven` | a `FrameStart` hook that only reacts to events, so idle skipping stays on |
 | `Undecorated`, `ResizeBand`, `Transparent` | client-side decorations: the shell handles border resizing and `Hooks.DragRegion` moving |
-| `Unmovable`, `Unresizable`, `Unminimizable` | window hints (Windows only today) |
+| `Unmovable`, `Unresizable`, `Unminimizable` | window hints (Windows; X11 through window-manager hints) |
 | `X`, `Y`, `Positioned`, `Fullscreen` | placement in virtual-desktop pixels, borderless over the monitor containing (X, Y) |
 
 The general form is `shell.Run(o, shell.Hooks{...})`:
@@ -145,7 +145,11 @@ sibling of `RunUI`: no retained tree, just a `Frame` with the renderer `G`,
 mouse buttons, `WheelY` and touch gestures. Return `false` to quit; call
 `f.Unchanged()` to let the loop sleep when nothing moved.
 `shell.ScreenshotGame(o, steps, dt, update, prep, path)` steps it headlessly,
-and `shell.RunGame2` / `RunGame2Deferred` open two windows on one device.
+and `shell.RunGame2` / `RunGame2Deferred` open two windows on one device
+(X11 and Windows). The game runners read the same window, font, clear,
+frame-cap and `MSDFText` options as `Run`; an `Undecorated` game window
+resizes from its border and moves by `Frame.DragRegion`. `LineHeight` and
+`EventDriven` concern the retained tree and only `Run` reads them.
 
 ## The element catalogue
 

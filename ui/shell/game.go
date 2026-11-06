@@ -32,6 +32,7 @@ type Input struct {
 	down   map[app.Key]bool
 	runes  map[rune]bool
 	events []app.KeyEvent
+	mouse  []app.MouseEvent // this frame's pointer events (drain)
 
 	// Pointer state for the frame.
 	MouseX, MouseY float32 // last cursor position (screen pixels)
@@ -219,7 +220,8 @@ func (in *Input) drain(win *app.Window) {
 	in.clicked, in.released, in.WheelY = false, false, 0
 	in.rightClicked, in.rightReleased = false, false
 	in.midClicked, in.midReleased = false, false
-	for _, m := range win.MouseEvents() {
+	in.mouse = win.MouseEvents()
+	for _, m := range in.mouse {
 		if m.Kind != app.MouseScroll {
 			in.ModShift, in.ModCtrl = m.Shift, m.Ctrl
 		}
@@ -263,6 +265,13 @@ type Frame struct {
 	Dt   float64 // seconds since previous frame
 	In   *Input
 
+	// DragRegion, set by the game, reports whether a point (logical
+	// pixels) is the title-bar area that moves an Undecorated window;
+	// presses there start a move from the next frame on. Undecorated
+	// windows also resize from a ResizeBand-wide border unless
+	// Unresizable. RunGame only.
+	DragRegion func(x, y float32) bool
+
 	skip bool
 }
 
@@ -288,13 +297,9 @@ func (f *Frame) Unchanged() { f.skip = true }
 // sibling of RunUI for real-time content (no retained widget tree). dt is real
 // wall-clock seconds, clamped so a stall doesn't teleport the simulation.
 func RunGame(o Options, update func(*Frame) bool) error {
-	if o.FontSize == 0 {
-		o.FontSize = 18
-	}
-	if o.ClearHex == 0 {
-		o.ClearHex = 0x0d0d12
-	}
-	win, err := app.NewWindow(app.Options{Title: o.Title, Width: o.Width, Height: o.Height})
+	o = o.withDefaults()
+	// Hidden until the first frame presents, like Run.
+	win, err := app.NewWindow(o.window(true))
 	if err != nil {
 		return err
 	}
@@ -318,6 +323,9 @@ func RunGame(o Options, update func(*Frame) bool) error {
 	}
 	queue := device.Queue()
 	format := surface.PreferredFormat(adapter)
+	if o.Transparent {
+		surface.SetTransparent(adapter)
+	}
 	w, h := win.Size()
 	surface.Configure(device, w, h, format)
 
@@ -325,28 +333,14 @@ func RunGame(o Options, update func(*Frame) bool) error {
 	if err != nil {
 		return err
 	}
-	font, err := r.NewFont(defaultFontBytes(), o.FontSize)
+	// The same font set-up as Run: FontPaths, CJK, symbol and emoji
+	// fallbacks (a game's HUD uses the same arrows and dingbats).
+	font, err := newFont(r, o)
 	if err != nil {
 		return err
 	}
-	// CJK plus the symbol chain, the same coverage the UI shell installs:
-	// a game's HUD uses the same arrows and dingbats.
-	if fb, sym := fallbackFontBytes(), symbolFontChain(); fb != nil || len(sym) > 0 {
-		font.SetFallback(append([][]byte{fb}, sym...)...)
-	}
-	if eb := emojiFontBytes(); eb != nil {
-		_ = font.SetEmojiFallback(eb)
-	}
-	registerNamedFonts(r)
-	applyTextTuning(r)
-	applyTextPath(r, o.MSDFText)
-
-	clear := gpu.Color{
-		R: float64(o.ClearHex>>16&0xff) / 255,
-		G: float64(o.ClearHex>>8&0xff) / 255,
-		B: float64(o.ClearHex&0xff) / 255,
-		A: 1,
-	}
+	clear := o.clearColor()
+	var drag WindowDrag
 	in := &Input{down: map[app.Key]bool{}, runes: map[rune]bool{}}
 	rendered := 0
 	last := time.Now()
@@ -386,6 +380,10 @@ func RunGame(o Options, update func(*Frame) bool) error {
 		in.clicked, in.released, in.WheelY = false, false, 0
 		mouseEvents := win.MouseEvents()
 		mouseMoved := len(mouseEvents) > 0
+		if o.Undecorated {
+			ws := win.Scale()
+			drag.Handle(win, float32(w)/ws, float32(h)/ws, mouseEvents, o.resizeBand(), fr.DragRegion)
+		}
 		for _, m := range mouseEvents {
 			switch m.Kind {
 			case app.MouseMove:
@@ -459,6 +457,9 @@ func RunGame(o Options, update func(*Frame) bool) error {
 		surface.Present()
 		view.Release()
 		tex.Release()
+		if rendered == 0 {
+			win.Show() // the first frame is on screen: reveal the window
+		}
 		rendered++
 		return o.MaxFrames == 0 || rendered < o.MaxFrames
 	})
@@ -467,15 +468,21 @@ func RunGame(o Options, update func(*Frame) bool) error {
 
 // winCtx bundles one window's per-window render state for RunGame2.
 type winCtx struct {
-	win     *app.Window
-	surface *gpu.Surface
-	w, h    int
-	in      *Input
-	update  func(*Frame) bool
+	win      *app.Window
+	surface  *gpu.Surface
+	w, h     int
+	in       *Input
+	fr       Frame
+	update   func(*Frame) bool
+	clear    gpu.Color
+	band     float32
+	drag     WindowDrag
+	o        Options
+	rendered int
 }
 
-// RunGame2 opens two windows sharing one X display + GPU device (e.g. a map
-// and a status readout) — see RunGame2Deferred. The second window is shown
+// RunGame2 opens two windows sharing one GPU device (e.g. a map and a
+// status readout) — see RunGame2Deferred. The second window is shown
 // immediately.
 func RunGame2(o1, o2 Options, u1, u2 func(*Frame) bool) error {
 	return RunGame2Deferred(o1, o2, u1, u2, nil)
@@ -484,18 +491,19 @@ func RunGame2(o1, o2 Options, u1, u2 func(*Frame) bool) error {
 // RunGame2Deferred is RunGame2 with the second window hidden until showSecond()
 // first returns true (e.g. open the status screen on mission launch). A nil
 // showSecond shows it from the start. Each window gets its own Frame (size +
-// input); closing either ends the session; both updates share one Renderer2D.
+// input), window options and clear colour; closing either ends the session;
+// both updates share one Renderer2D, so FontSize, FontPaths, MaxFrames and
+// MaxFPS come from o1 and MSDFText is on when either asks for it. The second
+// window is a NewChild of the first (X11 and Windows).
 func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func() bool) error {
-	fontSize := o1.FontSize
-	if fontSize == 0 {
-		fontSize = 18
-	}
-	pw, err := app.NewWindow(app.Options{Title: o1.Title, Width: o1.Width, Height: o1.Height})
+	o1, o2 = o1.withDefaults(), o2.withDefaults()
+	// Both hidden until their first frame presents, like Run.
+	pw, err := app.NewWindow(o1.window(true))
 	if err != nil {
 		return err
 	}
 	defer pw.Destroy()
-	cw, err := pw.NewChild(app.Options{Title: o2.Title, Width: o2.Width, Height: o2.Height})
+	cw, err := pw.NewChild(o2.window(true))
 	if err != nil {
 		return err
 	}
@@ -526,21 +534,12 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 	if err != nil {
 		return err
 	}
-	font, err := r.NewFont(defaultFontBytes(), fontSize)
+	fo := o1
+	fo.MSDFText = o1.MSDFText || o2.MSDFText
+	font, err := newFont(r, fo)
 	if err != nil {
 		return err
 	}
-	// CJK plus the symbol chain, the same coverage the UI shell installs:
-	// a game's HUD uses the same arrows and dingbats.
-	if fb, sym := fallbackFontBytes(), symbolFontChain(); fb != nil || len(sym) > 0 {
-		font.SetFallback(append([][]byte{fb}, sym...)...)
-	}
-	if eb := emojiFontBytes(); eb != nil {
-		_ = font.SetEmojiFallback(eb)
-	}
-	registerNamedFonts(r)
-	applyTextTuning(r)
-	applyTextPath(r, o1.MSDFText || o2.MSDFText)
 
 	ctxs := make([]*winCtx, 2)
 	for i, s := range []struct {
@@ -549,22 +548,30 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 		sf  *gpu.Surface
 		up  func(*Frame) bool
 	}{{o1, pw, ps, u1}, {o2, cw, cs, u2}} {
+		if s.o.Transparent {
+			s.sf.SetTransparent(adapter)
+		}
 		w, h := s.win.Size()
 		s.sf.Configure(device, w, h, format)
-		ctxs[i] = &winCtx{win: s.win, surface: s.sf, w: w, h: h,
-			in: &Input{down: map[app.Key]bool{}, runes: map[rune]bool{}}, update: s.up}
+		in := &Input{down: map[app.Key]bool{}, runes: map[rune]bool{}}
+		ctxs[i] = &winCtx{win: s.win, surface: s.sf, w: w, h: h, in: in, update: s.up,
+			fr: Frame{G: r, Font: font, In: in}, clear: s.o.clearColor(), o: s.o}
 	}
-	clear := gpu.Color{R: float64(o1.ClearHex>>16&0xff) / 255, G: float64(o1.ClearHex>>8&0xff) / 255,
-		B: float64(o1.ClearHex&0xff) / 255, A: 1}
 
-	// The second window may start hidden, shown when showSecond() first fires.
+	// The second window may wait for showSecond() before its first frame.
 	secondShown := showSecond == nil
-	if !secondShown {
-		cw.Hide()
+	var budget time.Duration
+	if o1.MaxFPS > 0 {
+		budget = time.Second / time.Duration(o1.MaxFPS)
 	}
-
+	frames := 0
 	last := time.Now()
 	for pw.Poll() {
+		if budget > 0 && runtime.GOOS != "js" {
+			if d := budget - time.Since(last); d > 0 {
+				pw.WaitEvent(d)
+			}
+		}
 		now := time.Now()
 		dt := now.Sub(last).Seconds()
 		last = now
@@ -573,7 +580,6 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 		}
 		if !secondShown && showSecond() {
 			secondShown = true
-			cw.Show()
 		}
 		quit := false
 		// Games treat both screens as one session: closing either quits
@@ -586,6 +592,11 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 				continue // second window not open yet
 			}
 			c.in.drain(c.win)
+			scale := c.win.Scale() // logical-pixel game space; see RunGame
+			if c.o.Undecorated {
+				c.drag.Handle(c.win, float32(c.w)/scale, float32(c.h)/scale,
+					c.in.mouse, c.o.resizeBand(), c.fr.DragRegion)
+			}
 			if nw, nh := c.win.Size(); nw > 0 && nh > 0 && (nw != c.w || nh != c.h) {
 				c.w, c.h = nw, nh // zero sizes (minimized) fail GPU validation
 				c.surface.Configure(device, c.w, c.h, format)
@@ -599,22 +610,26 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 			}
 			view := tex.CreateView()
 			r.Begin(c.w, c.h)
-			scale := c.win.Scale() // logical-pixel game space; see RunGame
 			r.SetScale(scale)
-			if !c.update(&Frame{G: r, Font: font,
-				W: int(float32(c.w) / scale), H: int(float32(c.h) / scale), Dt: dt, In: c.in}) {
+			c.fr.W, c.fr.H, c.fr.Dt, c.fr.skip = int(float32(c.w)/scale), int(float32(c.h)/scale), dt, false
+			if !c.update(&c.fr) {
 				quit = true
 			}
 			enc := device.CreateCommandEncoder()
-			pass := enc.BeginRenderPass(view, clear)
+			pass := enc.BeginRenderPass(view, c.clear)
 			_ = r.Flush(pass)
 			pass.End()
 			queue.Submit(enc.Finish())
 			c.surface.Present()
 			view.Release()
 			tex.Release()
+			if c.rendered == 0 {
+				c.win.Show() // its first frame is on screen: reveal it
+			}
+			c.rendered++
 		}
-		if quit {
+		frames++
+		if quit || (o1.MaxFrames > 0 && frames >= o1.MaxFrames) {
 			return nil
 		}
 	}
