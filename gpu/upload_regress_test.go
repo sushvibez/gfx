@@ -68,7 +68,11 @@ func TestUploadStaysFastAfterTextureBurst(t *testing.T) {
 		queue.WriteTexture(tex, 1024, 1024, pix)
 		tex.Release()
 	}
-	after := write()
+	// The cliff is permanent (every later write stays slow), while load
+	// from the other packages' tests comes in spikes: the best of three
+	// measurements sees the first and rides out the second (a single one
+	// read 10.6 ms, ×17, in a loaded full sweep on a healthy device).
+	after := min(write(), write(), write())
 
 	const fastMS, maxRatio = 10.0, 8.0
 	t.Logf("900 KB write: %.2f ms before the 120 MB texture burst, %.2f ms after (×%.1f)", before, after, after/before)

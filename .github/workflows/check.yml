@@ -1,0 +1,59 @@
+# The framework's checks on every push to main and every pull request.
+#
+# linux: the full sweep (scripts/check.sh): gofmt, build+vet for linux,
+#   windows and js/wasm in both modules, the layering test, every test, and
+#   the headless screenshot smoke. GPU tests and screenshots run on Mesa's
+#   software Vulkan driver (lavapipe) through the pinned wgpu-native.
+# windows: every test of both modules natively (GPU tests skip without a
+#   wgpu-native library; the Windows-only code paths still run).
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/go.sum
+      - name: Software Vulkan (lavapipe) and test fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers libvulkan1 fonts-dejavu-core
+      - name: wgpu-native
+        run: bash scripts/fetch-wgpu.sh
+      - name: Check
+        run: bash scripts/check.sh
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            examples/go.sum
+      - name: Test (framework)
+        run: go test -count=1 -timeout 300s ./...
+      - name: Test (examples)
+        working-directory: examples
+        run: go test -count=1 -timeout 300s ./...
