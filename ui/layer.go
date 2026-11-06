@@ -56,14 +56,23 @@ type LayerState struct {
 // the first frame that paints it.
 func NewLayerState() *LayerState { return &LayerState{} }
 
-// Release frees the layer's texture (call when the item goes away for good;
-// dropping the state is enough for a short-lived app).
+// Release frees the layer's texture now. Calling it is optional: the UI
+// that paints a layer frees the texture itself once the layer has gone
+// unpainted for layerIdleFrames frames, so states that are simply dropped
+// (a closed page, a reloaded document) do not keep GPU memory. A released
+// layer that is painted again gets a new target.
 func (s *LayerState) Release() {
 	if s.layer != nil {
 		s.layer.Release()
 		s.layer = nil
 	}
+	s.ready = false // the content went with the texture
 }
+
+// layerIdleFrames is how many rendered frames a layer may go unpainted
+// before its UI frees the target: about five seconds of animation at 60
+// frames a second, long enough that a tab switched away and back keeps it.
+const layerIdleFrames = 300
 
 type LayerEl struct {
 	st       *LayerState
@@ -384,4 +393,32 @@ func (u *UI) RenderLayers() {
 	for i := len(u.ctx.layers) - 1; i >= 0; i-- {
 		u.ctx.layers[i].render(&u.ctx)
 	}
+	u.sweepLayers()
+}
+
+// sweepLayers frees the targets of layers this UI has not painted for
+// layerIdleFrames frames (see LayerState.Release).
+func (u *UI) sweepLayers() {
+	u.layerTick++
+	if u.layerSeen == nil {
+		u.layerSeen = map[*LayerState]uint64{}
+	}
+	for _, e := range u.ctx.layers {
+		u.layerSeen[e.st] = u.layerTick
+	}
+	for st, seen := range u.layerSeen {
+		if u.layerTick-seen > layerIdleFrames {
+			st.Release()
+			delete(u.layerSeen, st)
+		}
+	}
+}
+
+// ReleaseLayers frees every layer target this UI has painted, for a
+// window that is closing while its device lives on.
+func (u *UI) ReleaseLayers() {
+	for st := range u.layerSeen {
+		st.Release()
+	}
+	clear(u.layerSeen)
 }

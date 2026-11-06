@@ -14,7 +14,11 @@ import (
 // the render function lives in core.Property values (retained). Clicks
 // hit-test the most recent layout.
 type UI struct {
-	ctx         Context
+	ctx Context
+	// layerSeen is when each layer was last painted, in RenderLayers
+	// calls (layerTick), so idle targets can be freed (layer.go).
+	layerSeen   map[*LayerState]uint64
+	layerTick   uint64
 	view        func() Element
 	root        Element
 	pressTarget Rect

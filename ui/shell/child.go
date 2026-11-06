@@ -203,6 +203,7 @@ func (c *ChildWindow) frame(h *childHost, a *App, force bool) bool {
 }
 
 func (c *ChildWindow) teardown(h *childHost, a *App) {
+	c.UI.ReleaseLayers() // the device outlives the window: free its layers now
 	if c.msaaView != nil {
 		c.msaaView.Release()
 		c.msaaTex.Release()

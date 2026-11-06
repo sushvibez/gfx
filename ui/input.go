@@ -77,6 +77,22 @@ type InputState struct {
 	// layout the area last drew, for Up/Down/Home/End.
 	multiline bool
 	lines     []TextLine
+	// scrollX is how far a single-line field's text is scrolled left, so
+	// the caret stays in view when the text is wider than the field (Qt
+	// scrolls a TextInput the same way). Kept by paint.
+	scrollX float32
+	// A text area's vertical scroll (textarea.go): top is the first line
+	// shown; it follows the caret when the caret moves (caretSeen is where
+	// it was last followed) and the wheel or the scrollbar move it
+	// otherwise. lineH, shown and count are the last paint's metrics, for
+	// the wheel and the thumb; wheel accumulates sub-line wheel deltas.
+	area areaScroll
+}
+
+// areaScroll is a text area's vertical scroll, see InputState.area.
+type areaScroll struct {
+	top, caretSeen, shown, count int
+	lineH, wheel                 float32
 }
 
 // Accept installs a validator: fn sees each candidate value before it is
@@ -337,11 +353,9 @@ type InputEl struct {
 	// `enabled: false`): it still DRAWS its text, but nothing focuses it,
 	// types into it or drags a selection through it.
 	readOnly bool
-	// area is a TextArea: areaH tall, wrapped, areaTop the first line
-	// shown (textarea.go).
-	area    bool
-	areaH   float32
-	areaTop int
+	// area is a TextArea: areaH tall, wrapped (textarea.go).
+	area  bool
+	areaH float32
 }
 
 // ReadOnly stops the field taking input while it keeps drawing its content —
@@ -413,11 +427,28 @@ func (e *InputEl) Center() *InputEl { e.center = true; return e }
 // textX is where the text starts: the padding edge, or the offset that
 // centres it.
 func (e *InputEl) textX(ctx *Context, font *render.Font) float32 {
-	if !e.center || font == nil {
-		return e.rect.X + inputPadX
+	if e.center && font != nil {
+		if w, _ := ctx.R.MeasureText(font, e.shown()); w <= e.rect.W-2*inputPadX {
+			return e.rect.X + (e.rect.W-w)/2
+		}
 	}
-	w, _ := ctx.R.MeasureText(font, e.shown())
-	return e.rect.X + max((e.rect.W-w)/2, inputPadX)
+	// Left-aligned, or centred text too wide to centre: scrolled.
+	return e.rect.X + inputPadX - e.state.scrollX
+}
+
+// keepCaretVisible scrolls a single-line field so the caret is inside it,
+// and never further than the text needs: the end of the text sits at the
+// right edge at most, and text that fits is not scrolled at all.
+func (e *InputEl) keepCaretVisible(caretW, textW float32) {
+	st := e.state
+	avail := max(e.rect.W-2*inputPadX, 1)
+	if caretW-st.scrollX > avail {
+		st.scrollX = caretW - avail
+	}
+	if caretW < st.scrollX {
+		st.scrollX = caretW
+	}
+	st.scrollX = min(max(st.scrollX, 0), max(textW-avail, 0))
 }
 
 // font resolves the field's render font: the UI font, resized when SizePx
@@ -452,6 +483,9 @@ func (e *InputEl) measure(ctx *Context) (float32, float32) {
 func (e *InputEl) layout(ctx *Context, r Rect) {
 	e.rect = r
 	ctx.focusables = append(ctx.focusables, e) // text fields are focusable
+	if e.area {
+		ctx.scrolls = append(ctx.scrolls, e) // the wheel and the thumb scroll it
+	}
 }
 
 func (e *InputEl) isFocusable() bool       { return true }
@@ -485,12 +519,24 @@ func (e *InputEl) paint(ctx *Context) {
 	}
 	text := e.shown()
 	runes := []rune(text)
-	tx, ty := e.textX(ctx, font), e.rect.Y+inputPadY
 	prefixW := func(i int) float32 {
 		i = min(max(i, 0), len(runes))
 		w, _ := ctx.R.MeasureText(font, string(runes[:i]))
 		return w
 	}
+	if focused {
+		e.keepCaretVisible(prefixW(e.state.caret), prefixW(len(runes)))
+	} else {
+		// Unfocused, the field stays where it was (the start, until it is
+		// first edited), only clamped to text that may have shrunk.
+		e.state.scrollX = min(e.state.scrollX, max(prefixW(len(runes))-(e.rect.W-2*inputPadX), 0))
+	}
+	tx, ty := e.textX(ctx, font), e.rect.Y+inputPadY
+	// Text wider than the field is clipped at the padding, as Qt clips a
+	// TextField's content item (2 px of slack keep the caret whole); the
+	// scroll above keeps the caret within it.
+	ctx.R.PushClip(e.rect.X+inputPadX-2, e.rect.Y, max(e.rect.W-2*inputPadX+4, 0), e.rect.H)
+	defer ctx.R.PopClip()
 	// Placeholder hint while empty — while the VALUE is empty: a NoEcho
 	// field draws nothing, and it is not therefore empty.
 	if e.state.Text.Get() == "" && e.hasPlaceholdr {

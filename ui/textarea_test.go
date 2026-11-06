@@ -164,3 +164,47 @@ func TestTextAreaDrawsLines(t *testing.T) {
 		t.Errorf("laid out %d lines, want 3", len(st.lines))
 	}
 }
+
+// A text area scrolls by the wheel in whole lines and keeps that position
+// until the caret moves; then it follows the caret again.
+func TestTextAreaWheelAndCaretFollow(t *testing.T) {
+	st := NewInput("")
+	st.focused = true
+	e := &InputEl{state: st, area: true, rect: Rect{0, 0, 200, 100 + 2*inputPadY}}
+	lines := make([]TextLine, 30)
+	for i := range lines {
+		lines[i] = TextLine{Start: i * 2, End: i*2 + 1}
+	}
+	if top := e.areaFirst(lines, 20); top != 0 { // 5 lines shown of 30
+		t.Fatalf("first paint top = %d, want 0", top)
+	}
+	if !e.scroll(50) || st.area.top != 2 { // 2.5 lines: two now, half held
+		t.Errorf("wheel 50px: top = %d, want 2", st.area.top)
+	}
+	e.scroll(10) // the held half and this one make a third line
+	if st.area.top != 3 {
+		t.Errorf("wheel +10px: top = %d, want 3", st.area.top)
+	}
+	if top := e.areaFirst(lines, 20); top != 3 {
+		t.Errorf("repaint with the caret unmoved: top = %d, want 3 (the wheel's)", top)
+	}
+	st.caret = 2 * 20 // line 20
+	if top := e.areaFirst(lines, 20); top != 16 {
+		t.Errorf("caret moved to line 20: top = %d, want 16", top)
+	}
+	if th := e.thumbRect(); th.W == 0 || th.H < 24 {
+		t.Errorf("thumb = %+v, want a visible thumb", th)
+	}
+	e.scrollToY(e.rect.Y + e.rect.H) // drag to the bottom
+	if st.area.top != 25 {
+		t.Errorf("thumb dragged to the end: top = %d, want 25", st.area.top)
+	}
+	if e.scroll(100) {
+		t.Error("the wheel past the end was consumed; it should bubble")
+	}
+	short := &InputEl{state: NewInput(""), area: true, rect: e.rect}
+	short.areaFirst(lines[:3], 20)
+	if short.scroll(40) || short.thumbRect().W != 0 {
+		t.Error("text that fits scrolls or shows a thumb")
+	}
+}

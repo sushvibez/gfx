@@ -85,3 +85,26 @@ func TestInputEchoMasksDisplayNotValue(t *testing.T) {
 		t.Errorf("plain field draws %q", got)
 	}
 }
+
+// A single-line field scrolls its text left to keep the caret inside it,
+// and back when the caret returns; text that fits never scrolls.
+func TestInputScrollsToCaret(t *testing.T) {
+	st := NewInput("")
+	e := &InputEl{state: st, rect: Rect{0, 0, 120, 30}} // 100 px inside the padding
+	e.keepCaretVisible(250, 400)                        // caret far right of a long text
+	if st.scrollX != 150 {
+		t.Errorf("caret at 250: scrollX = %v, want 150", st.scrollX)
+	}
+	e.keepCaretVisible(180, 400) // still in view: no change
+	if st.scrollX != 150 {
+		t.Errorf("caret at 180: scrollX = %v, want it to stay 150", st.scrollX)
+	}
+	e.keepCaretVisible(40, 400) // Home-ward: scroll back to the caret
+	if st.scrollX != 40 {
+		t.Errorf("caret at 40: scrollX = %v, want 40", st.scrollX)
+	}
+	e.keepCaretVisible(60, 80) // the text now fits: no scroll at all
+	if st.scrollX != 0 {
+		t.Errorf("text that fits: scrollX = %v, want 0", st.scrollX)
+	}
+}

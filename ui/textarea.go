@@ -186,19 +186,80 @@ func (e *InputEl) areaLayout(ctx *Context, font *render.Font) []TextLine {
 	return lines
 }
 
-// areaFirst is the first line drawn: scrolled to keep the caret's line
-// in the box.
+// areaFirst is the first line drawn. When the area has focus and the caret
+// has moved since the last paint (typing, arrows, a click) it scrolls to keep the
+// caret's line in the box; otherwise it stays where the wheel or the
+// scrollbar left it.
 func (e *InputEl) areaFirst(lines []TextLine, lineH float32) int {
+	a := &e.state.area
 	shown := max(int((e.rect.H-2*inputPadY)/lineH), 1)
-	cl := LineAt(lines, e.state.caret)
-	switch {
-	case cl < e.areaTop:
-		e.areaTop = cl
-	case cl >= e.areaTop+shown:
-		e.areaTop = cl - shown + 1
+	a.shown, a.count, a.lineH = shown, len(lines), lineH
+	if caret := e.state.caret; e.state.focused && caret != a.caretSeen {
+		a.caretSeen = caret
+		cl := LineAt(lines, caret)
+		switch {
+		case cl < a.top:
+			a.top = cl
+		case cl >= a.top+shown:
+			a.top = cl - shown + 1
+		}
 	}
-	e.areaTop = min(max(e.areaTop, 0), max(len(lines)-shown, 0))
-	return e.areaTop
+	a.top = min(max(a.top, 0), a.maxTop())
+	return a.top
+}
+
+// maxTop is the last first line: the text's end at the bottom of the box.
+func (a *areaScroll) maxTop() int { return max(a.count-a.shown, 0) }
+
+// A text area is a scroll target: the wheel moves it by lines, and its
+// scrollbar thumb drags.
+func (e *InputEl) contains(x, y float32) bool { return e.rect.contains(x, y) }
+func (e *InputEl) viewRect() Rect             { return e.rect }
+
+func (e *InputEl) scroll(dy float32) bool {
+	a := &e.state.area
+	if !e.area || a.lineH <= 0 || a.maxTop() == 0 {
+		return false
+	}
+	a.wheel += dy / a.lineH
+	n := int(a.wheel)
+	if n == 0 {
+		return true // a part-line step: held, and the wheel is consumed
+	}
+	a.wheel -= float32(n)
+	top := min(max(a.top+n, 0), a.maxTop())
+	if top == a.top {
+		a.wheel = 0
+		return false // at the end: let the page scroll instead
+	}
+	a.top = top
+	return true
+}
+
+// thumbRect is the scrollbar thumb, zero-wide when everything fits.
+func (e *InputEl) thumbRect() Rect {
+	a := &e.state.area
+	if !e.area || a.maxTop() == 0 {
+		return Rect{}
+	}
+	h := max(24, e.rect.H*float32(a.shown)/float32(a.count))
+	y := e.rect.Y + (e.rect.H-h)*float32(a.top)/float32(a.maxTop())
+	return Rect{e.rect.X + e.rect.W - 7, y, 7, h}
+}
+
+// scrollToY drags the thumb's centre to pixel y.
+func (e *InputEl) scrollToY(y float32) {
+	a := &e.state.area
+	th := e.thumbRect()
+	if th.W == 0 {
+		return
+	}
+	span := e.rect.H - th.H
+	if span <= 0 {
+		return
+	}
+	f := min(max((y-th.H/2-e.rect.Y)/span, 0), 1)
+	a.top = int(f*float32(a.maxTop()) + 0.5)
 }
 
 // paintArea draws the area: box, wrapped text, selection and caret.
@@ -233,6 +294,13 @@ func (e *InputEl) paintArea(ctx *Context, font *render.Font, focused bool) {
 			ctx.R.FillRect(tx+cx, y, 1.5, lineH, e.textC)
 		}
 	}
+	// The scrollbar, when the text is taller than the box: the same thin
+	// bar a ScrollEl draws, in the text colour.
+	if th := e.thumbRect(); th.W > 0 {
+		bc := e.textC
+		bc.A *= 0.3
+		ctx.R.FillRoundRect(th.X+2, th.Y, 3, th.H, 1.5, bc)
+	}
 }
 
 // caretAt maps a point to the nearest caret position: in a text area the
@@ -249,7 +317,7 @@ func (e *InputEl) caretAt(ctx *Context, x, y float32) int {
 	if lines == nil {
 		lines = e.areaLayout(ctx, font)
 	}
-	k := e.areaTop + int((y-e.rect.Y-inputPadY)/font.Height())
+	k := e.state.area.top + int((y-e.rect.Y-inputPadY)/font.Height())
 	k = min(max(k, 0), len(lines)-1)
 	ln := lines[k]
 	rel := x - e.rect.X - inputPadX
