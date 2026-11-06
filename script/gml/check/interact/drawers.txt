@@ -1,0 +1,8 @@
+# Drawers: the button slides the panel in over the card, a click on the
+# scrim behind it slides it back out, and the panel's own controls work
+# while it is open. (These drawers are the page's own component, not
+# Controls' Drawer: a function sets `opened` and Behaviors animate it.)
+click 240,385     # Abrir Menú Lateral — the left drawer slides in
+click 150,300     # an item inside the open panel
+click 400,500     # the scrim: closes it again
+click 660,385     # Abrir Filtros — the right drawer

@@ -1,0 +1,8 @@
+# Sliders: dragging the handle has to move the value AND the label above it,
+# a stepped slider has to snap, a disabled one must not move, and a vertical
+# slider's zero is at the BOTTOM.
+drag 240,226 340,226     # basic slider: drag right
+drag 240,311 140,311     # stepped slider: drag left (snaps to 10s)
+drag 320,397 200,397     # disabled slider: must not move
+drag 510,290 510,220     # vertical slider: drag UP (value rises)
+click 380,226            # click on the groove jumps the handle there

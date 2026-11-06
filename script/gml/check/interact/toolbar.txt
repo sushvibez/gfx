@@ -1,0 +1,6 @@
+# ToolBar: its buttons act and its overflow menu opens.
+click 100,195
+click 200,195
+click 300,195
+click 660,195
+key Escape

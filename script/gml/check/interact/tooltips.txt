@@ -1,0 +1,6 @@
+# ToolTips: resting the pointer on a control shows its tip after that
+# control's own ToolTip.delay — the page's three buttons ask for 0ms, 500ms
+# and 1500ms, so a 700ms rest shows the first two and not the third.
+move 240,620      # Instant ToolTip (delay 0)
+move 240,675      # 500ms Delay
+move 660,300      # away again

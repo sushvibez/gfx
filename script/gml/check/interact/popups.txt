@@ -1,0 +1,9 @@
+# Dialogs and popups: each button raises its overlay, the dialog's buttons
+# report a result back to the page, a modal dims what is behind it, and
+# Escape closes whatever is on top.
+click 240,195     # Info Dialog opens
+key Escape        # ... and closes
+click 240,250     # Confirm Dialog opens (Yes/No button box)
+click 660,195     # Basic Popup (no overlay; a click outside closes it)
+click 660,250     # Modal Popup (dims the page behind)
+click 660,595     # Open Menu

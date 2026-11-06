@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>graphics: triangle</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0d14; display: grid; place-items: center; }
+    canvas { box-shadow: 0 0 40px rgba(0,0,0,.6); }
+    #status { color: #888; font: 14px system-ui; position: fixed; bottom: 12px; left: 12px; }
+  </style>
+</head>
+<body>
+  <canvas id="gfx-canvas"></canvas>
+  <div id="status">loading wasm…</div>
+  <script src="wasm_exec.js"></script>
+  <script>
+    const status = document.getElementById("status");
+    if (!navigator.gpu) {
+      status.textContent = "WebGPU is not available in this browser.";
+    } else {
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("main.wasm"), go.importObject)
+        .then((r) => { status.textContent = ""; return go.run(r.instance); })
+        .then(() => { status.textContent = "exited."; })
+        .catch((err) => { status.textContent = "failed: " + err; console.error(err); });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Menus: clicking a MenuBar title has to drop its menu over the page, a
+# click on an item has to run its handler ("Last action: ...") and close the
+# menu, and Escape has to dismiss an open menu.
+click 81,195      # File
+click 100,230     # ... first item in the dropped menu
+click 130,195     # Edit
+key Escape        # dismiss without choosing
+click 509,595     # Shape (the drawing card's bar)

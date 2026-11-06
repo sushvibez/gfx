@@ -1,0 +1,8 @@
+# Transforms: the sliders that drive rotation and scale, the origin buttons,
+# and the 3D card's axis sliders — a captured frame has to land on the same
+# transform.
+drag 172,182 300,182     # rotation slider
+drag 295,217 360,217     # scale slider
+click 292,260            # origin: TopLeft
+drag 549,182 700,182     # 3D: X axis
+click 540,296            # Reset

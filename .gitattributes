@@ -1,0 +1,10 @@
+# Go sources and shell scripts always check out with LF line endings,
+# overriding core.autocrlf: gofmt requires LF, so CRLF checkouts (Windows
+# default) made scripts/check.sh's format gate flag every file.
+*.go text eol=lf
+*.sh text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+go.work text eol=lf
+*.wgsl text eol=lf
+*.gml text eol=lf

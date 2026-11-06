@@ -1,0 +1,9 @@
+# RangeSliders: each handle drags on its own, they cannot cross, the label
+# above reports both values, a stepped pair snaps, and a disabled one does
+# not move. The last card's gradient follows the range.
+drag 145,226 100,226     # first handle of the basic slider, leftwards
+drag 335,226 380,226     # second handle, rightwards
+drag 175,311 260,311     # stepped: drag the lower handle up to the upper
+drag 155,397 240,397     # disabled: must not move
+drag 510,320 510,250     # vertical: drag the lower handle up
+drag 143,566 300,566     # price range: the label must reformat

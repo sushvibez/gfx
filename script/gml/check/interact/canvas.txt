@@ -1,0 +1,5 @@
+# Canvas: the buttons that redraw it, and a drag that paints on it.
+click 240,300
+drag 240,400 340,450
+click 660,300
+click 660,600

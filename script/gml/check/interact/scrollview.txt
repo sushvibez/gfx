@@ -1,0 +1,6 @@
+# ScrollView: the wheel scrolls the view under the pointer, a drag on the
+# scrollbar thumb jumps it, and a flick keeps moving after the release.
+wheel 240,300 -240
+wheel 240,300 120
+fling 240,400 240,200
+wheel 660,300 -120

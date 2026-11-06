@@ -1,0 +1,70 @@
+# The manual review pass: every corpus page opened three times at once
+# (scripts/qml-trio.sh <page>) — real Qt, our .gml engine, and a Go port
+# written straight against the ui builder — and looked at, INCLUDING its
+# interaction. Row order is the review order. Columns: page, gml, go.
+# Status: pending | reviewing | ok | notes after a colon.
+buttons	reviewing: round 8 — pressed colour on styled buttons (shared root.pressed), ToolButton menus open under their button, content-sized; 0.71 ms CPU/frame (item 88)	reviewing: round 8 — ToolButton menus open (last frame's boxes); 0.20 ms CPU/frame
+sliders	pending	port built, NOT yet reviewed: ui.Slider gained Colors/Thickness/Disabled/W/Grow/CrossFill and Qt's vertical visualPosition; ui.Dial paints nothing, so the dial is canvas-drawn
+rangesliders	pending	pending
+switches	pending	pending
+combobox	pending	pending
+tabbar	pending	pending
+toolbar	pending	pending
+menubar	pending	pending
+popups	pending	pending
+drawers	pending	pending
+scrollview	pending	pending
+splitview	pending	pending
+swipeview	pending	pending
+layouts	pending	pending
+lists	pending	pending
+gridview	pending	pending
+indicators	pending	pending
+textinputs	pending	pending
+date	pending	pending
+filedialogs	pending	pending
+flickable	pending	pending
+pathview	pending	pending
+states	pending	pending
+animations	pending	pending
+loaderex	pending	pending
+treeview	pending	pending
+tableview	pending	pending
+settings	pending	pending
+chatui	pending	pending
+toasts	pending	pending
+network	pending	pending
+images	pending	pending
+canvas	pending	pending
+shapes	pending	pending
+transforms	pending	pending
+visualeffects	pending	pending
+frostglass	pending	pending
+lenstabs	pending	pending
+lensphoto	pending	pending
+portal	pending	pending
+diorama	pending	pending
+multiplane	pending	pending
+spritestack	pending	pending
+particles	pending	pending
+shaders	pending	pending
+cards2d5	pending	pending
+hud	pending	pending
+pfd	pending	pending
+ecam	pending	pending
+navdisplay	pending	pending
+aircraftmap	pending	pending
+graphs	pending	pending
+charts3d	pending	pending
+graphics3d	pending	pending
+customitem	pending	pending
+multimedia	pending	pending
+maps	pending	pending
+pdfreader	pending	pending
+database	pending	pending
+threads	pending	pending
+websocket	pending	pending
+ethernet	pending	pending
+asynccpp	pending	pending
+theorycpp	pending	pending
+qmlcppbridge	pending	pending

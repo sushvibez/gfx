@@ -1,0 +1,8 @@
+# Lists: a tap has to select a row (the delegate highlights and the page's
+# "Selected:" line follows), a tap in the grid selects a colour, a wheel
+# scrolls the list, and the dynamic list's Add button appends what was typed.
+click 240,225     # select Alice
+click 240,388     # select David
+click 528,240     # grid: pick Coral
+click 768,420     # grid: pick Rose
+wheel 240,340 120 # scroll the contact list down

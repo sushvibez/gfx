@@ -1,0 +1,7 @@
+# Menus through the app's style: the View Options button pops one up, its
+# checkable items toggle (the style draws the tick in its indicator), and a
+# click outside closes it.
+click 120,595     # View Options ▾
+click 160,660     # the first checkable item
+click 120,595     # open it again — the tick has to have stayed
+click 700,400     # click away: closed

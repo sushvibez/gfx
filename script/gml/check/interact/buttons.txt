@@ -1,0 +1,8 @@
+# Buttons: pressed and hovered state, a checkable button toggling, and the
+# status line under the card that reports which is which.
+move 135,403      # hover "Press Me"
+press 135,403     # ... and hold it (the down state)
+release 135,403
+move 300,403      # hover "Hover Me"
+click 460,403     # the checkable button: toggles on
+click 460,403     # ... and off again

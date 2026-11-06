@@ -1,0 +1,6 @@
+# SplitView: dragging a handle resizes the panes either side, and the labels
+# report their new widths. The vertical one's handle moves rows.
+drag 183,320 260,320     # horizontal handle: widen the sidebar
+drag 260,320 150,320     # ... and back, narrower than it started
+drag 660,272 660,200     # vertical handle: shrink the header
+drag 160,620 240,620     # the nested IDE layout's own handle

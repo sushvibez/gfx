@@ -1,0 +1,23 @@
+.idea/
+.vscode/
+build/
+*.test
+*.exe
+*.log
+examples/*/web/main.wasm
+examples/*/web/wasm_exec.js
+# gml parity-check artifacts stay local (regenerate via scripts/), but
+# the corpus docs and the committed representative pairs are tracked.
+# (A dir excluded by `check/` cannot have children re-included, so the
+# gml check dir is re-included first and its contents filtered.)
+check/
+!script/gml/check/
+script/gml/check/*
+!script/gml/check/QML-EXAMPLES.md
+# the manual review's status table (the reviewer's record, page by page)
+!script/gml/check/REVIEW-STATUS.tsv
+!script/gml/check/qml-examples/
+# the interaction scripts ARE the test cases (both engines replay them)
+!script/gml/check/interact/
+# Papers and other large downloads never belong in the repo.
+*.pdf

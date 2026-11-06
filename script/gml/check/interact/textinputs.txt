@@ -1,0 +1,11 @@
+# Typing: the field has to take focus from the click, show what was typed,
+# echo a password as dots, refuse non-digits where a validator says so, and
+# the page's summary line ("Name: ...") has to follow each field.
+click 240,215
+type Ada
+click 240,290
+type secret
+click 240,365
+type 12x9
+click 660,280
+type multi line text

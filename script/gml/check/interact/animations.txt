@@ -1,0 +1,7 @@
+# Animations: the Play buttons that run them. A capture lands wherever the
+# tween has got to, so this checks the SETTLED end state, not the middle:
+# both engines must finish the same way.
+click 120,190     # Easing Curves: Play
+click 540,190     # Sequential & Parallel: Play
+drag 238,585 300,585   # Behavior & Spring: change the spring
+click 660,600     # States & Transitions: the shape

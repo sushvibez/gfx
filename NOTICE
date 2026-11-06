@@ -1,0 +1,37 @@
+gfx
+Copyright 2026 Sushil Kumar
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product contains code adapted from other projects:
+
+- Zed's GPUI (https://github.com/zed-industries/zed, Apache-2.0): the
+  signed-distance-field quad renderer, border evaluation and Gaussian
+  shadow technique in render/renderer2d.go, and the shape of the fluent
+  element-builder API in ui. The examples under examples/gpui and
+  examples/qml/gpui recreate GPUI's example programs.
+- Microsoft Terminal (https://github.com/microsoft/terminal, MIT): the
+  DirectWrite-style text gamma and enhanced-contrast blending in
+  render/renderer2d.go.
+- Evan Wallace's "Fast Rounded Rectangle Shadows" technique
+  (https://madebyevan.com/shaders/fast-rounded-rectangle-shadows/),
+  ported in render/renderer2d.go.
+- The GitHub Flavored Markdown specification text (https://github.github.com/gfm/,
+  CC-BY-SA 4.0) is included as md/testdata/gfm-spec.txt and used only by
+  the parser's conformance tests.
+- The .gml pages under examples/qml and the parity screenshots under
+  script/gml/check/qml-examples follow the QML-Examples-Collection corpus
+  (https://github.com/JesusRamosMembrive/QML-Examples-Collection); the
+  pages are re-authored for this engine.
+
+Go module dependencies (each under its own licence, see the module cache):
+github.com/ebitengine/purego (MIT), github.com/chewxy/math32 (BSD-2-Clause),
+github.com/hajimehoshi/go-mp3 (Apache-2.0), github.com/jfreymuth/oggvorbis
+and github.com/jfreymuth/vorbis (MIT), golang.org/x/image and
+golang.org/x/text (BSD-3-Clause). The examples module also uses
+modernc.org/sqlite (BSD-3-Clause).
+
+Assets fetched by scripts/ at development time are not part of this
+repository: wgpu-native (Apache-2.0 / MIT), the Inter, JetBrains Mono and
+Noto Sans CJK fonts (SIL Open Font License), Khronos glTF sample assets and
+Poly Haven textures (CC0).

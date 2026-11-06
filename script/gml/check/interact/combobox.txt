@@ -1,0 +1,6 @@
+# ComboBox: the popup has to open over the page, a pick has to close it and
+# update both the display text and the "Selected:" line under it.
+click 240,247     # open the string-list combo
+click 240,300     # pick the item under the first one
+click 660,240     # open the editable combo
+key Escape        # dismiss without picking

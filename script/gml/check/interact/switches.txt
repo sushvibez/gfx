@@ -1,0 +1,7 @@
+# Toggles: every one of these must flip, report its new state in the
+# summary line, and (Select All) drive the group's tri-state.
+click 88,195      # Wi-Fi switch off
+click 88,240      # Bluetooth switch on
+click 525,320     # Option B checkbox
+click 495,200     # Select All (tri-state -> all)
+click 495,540     # Enable Zone (disables the zone's controls)

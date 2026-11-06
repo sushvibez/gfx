@@ -1,0 +1,6 @@
+# Layouts: the controls that reflow them (adding items, switching
+# direction) — a reflow is where a layout engine's rules show.
+click 240,300
+click 240,400
+click 660,300
+click 660,400

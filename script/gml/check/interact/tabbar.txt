@@ -1,0 +1,7 @@
+# TabBar: switching tabs is the whole page — each click must move the
+# highlight and swap the StackLayout's content underneath it.
+click 240,195
+click 360,195
+click 615,195
+click 795,195
+click 120,195

@@ -1,0 +1,6 @@
+# SwipeView: a swipe moves to the next page and the PageIndicator follows;
+# the indicator's dots are clickable too.
+drag 240,300 60,300      # swipe left: next page
+drag 60,300 240,300      # swipe right: back
+click 660,300            # the second card's own controls
+key Right

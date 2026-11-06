@@ -1,0 +1,7 @@
+# PathView: a drag that starts ON an item turns the carousel (Qt's
+# dragMargin is 0, so a press in the middle of the circle does nothing),
+# and the arc carousel's nav buttons step it one item at a time.
+drag 240,262 140,300     # from the "Qt" bubble at the top of the circle
+drag 100,290 240,262     # ... and back
+click 780,503            # the arc carousel's ▶ button
+click 540,503            # ... and ◀

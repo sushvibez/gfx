@@ -1,0 +1,6 @@
+# Indicators: the buttons that start/stop a BusyIndicator and step a
+# ProgressBar, and a PageIndicator's own dots.
+click 240,300
+click 240,400
+click 660,300
+click 660,400
