@@ -139,6 +139,8 @@ type callExpr struct {
 	callee expr
 	args   []expr
 	line   int
+	// spread: an argument is `...expr` (Math.max(...xs)); eval flattens it.
+	spread bool
 }
 
 type listExpr struct{ items []expr }
@@ -1321,7 +1323,7 @@ func (p *parser) postfixChain() (expr, error) {
 			if err != nil {
 				return nil, err
 			}
-			e = &callExpr{callee: e, args: args, line: t.line}
+			e = &callExpr{callee: e, args: args, line: t.line, spread: hasSpread(args)}
 		case t.kind == tokPunct && t.text == "[":
 			p.pos++
 			idx, err := p.expr(0)
@@ -1344,9 +1346,17 @@ func (p *parser) callArgs() ([]expr, error) {
 	var args []expr
 	p.skipNewlines()
 	for !(p.cur().kind == tokPunct && p.cur().text == ")") {
+		// Spread argument: ...expr, flattened when the call is made.
+		spread := p.cur().kind == tokPunct && p.cur().text == "..."
+		if spread {
+			p.pos++
+		}
 		a, err := p.expr(0)
 		if err != nil {
 			return nil, err
+		}
+		if spread {
+			a = &spreadExpr{inner: a}
 		}
 		args = append(args, a)
 		p.skipNewlines()
@@ -1426,6 +1436,14 @@ func (p *parser) primary() (expr, error) {
 	case t.kind == tokString:
 		p.pos++
 		return &litExpr{t.text}, nil
+	case t.kind == tokRegex:
+		p.pos++
+		pattern, flags, _ := strings.Cut(t.text, "\x00")
+		re, err := newRegExp(pattern, flags)
+		if err != nil {
+			return nil, fmt.Errorf("gml:%d: %v", t.line, err)
+		}
+		return &litExpr{re}, nil
 	case t.kind == tokTemplate:
 		p.pos++
 		return parseTemplate(t.text, t.line)
@@ -1635,4 +1653,14 @@ func attrsOf(n *node) attrsID {
 		return attrsID{}
 	}
 	return attrsID{&n.attrs[0], len(n.attrs)}
+}
+
+// hasSpread reports whether a call has a `...expr` argument.
+func hasSpread(args []expr) bool {
+	for _, a := range args {
+		if _, ok := a.(*spreadExpr); ok {
+			return true
+		}
+	}
+	return false
 }

@@ -96,7 +96,7 @@ func main() {
 | `env.Set(name, v)` | expose any value (a `*render.View3D`, a map, a slice); a changed value bumps the frame revision |
 | `env.Get(name)` | read a document-scope value back (a property `Ref`, a text field's `*ui.InputState`, ...) |
 | `env.Input(name, *ui.InputState)`, `env.Scroll(name, *ui.ScrollState)` | share text/scroll state with hand-written ui code |
-| `gml.Load(path, env)`, `gml.LoadString(src, env)` | parse and bind; `Load` makes the file's directory the base for images, fonts, components and modules |
+| `gml.Load(path, env)`, `gml.LoadString(src, env)`, `gml.LoadStringAt(src, dir, env)` | parse and bind; `Load` makes the file's directory the base for images, fonts, components and modules, `LoadStringAt` uses `dir` for embedded markup; `Load` turns QML's lenient mode on for `.qml` files, `Document.SetLenient` does it for the others |
 | `gml.Watch(path, env)` | `Load` plus hot reload; returns a `*Live` with the same `View`/`SetProperty`/`DeclaresType` and an `Err()` for hosts drawing their own chrome |
 | `doc.View()` | the per-frame `func() ui.Element` |
 | `doc.SetProperty(name, v)` / `doc.Property(name)` | write / read a property the document root declares; a host write breaks the binding, as an assignment in markup would |
@@ -203,9 +203,12 @@ An attribute whose last segment starts with `on` is a handler:
 A declared `signal tick(int value)` is emitted by calling `tick(1)`; its
 `onTick` handler on the same element runs with `value` bound.
 `on<Prop>Changed` handlers fire on declared properties and control state.
-`Connections { target: id; function onClicked() { ... } }` attaches a
-handler from elsewhere (the Qt 6 `function` form only; the handler is
-called without the signal's arguments).
+`Connections { target: id; function onMoved(dx) { ... } }` attaches a
+handler from elsewhere, and so does the Qt 5 form `onMoved: ...`, which
+sees the signal's own parameter names. A signal declared in markup passes
+its arguments to both, and is callable from outside as `id.moved(3)`.
+Element signals such as `onClicked` reach a Connections handler without
+arguments.
 
 ### Property declarations
 
@@ -327,8 +330,11 @@ Literals: decimal, `0x`/`0b`/`0o`, exponents (`1e9`); `'...'`/`"..."` with
 `\n \t \uXXXX` (surrogate pairs join); template literals with `${expr}`;
 `#rrggbb`/`#aarrggbb` unquoted; `true false null undefined`; array literals
 with spread (`[...a, 1]`) and inline elements (`[ State { } ]`); object
-literals `{ key: v, "key": v }`; regex literals (kept as the pattern string;
-not matched); `function (a, b = 1) { }` and arrow functions `x => x + 1`,
+literals `{ key: v, "key": v }`; regex literals `/ab+/gi`, RegExp values
+with `test`, `exec`, `source`, `flags`, `global` (also `RegExp(src, flags)`;
+Go's RE2 syntax, so no lookaround or backreferences), which `replace`,
+`replaceAll`, `match`, `search` and `split` accept, `$1`/`$&` and function
+replacements included; `function (a, b = 1) { }` and arrow functions `x => x + 1`,
 `(a, b) => { ... }` — closures over the enclosing scope.
 
 Operators: `+ - * / %`, `< > <= >= == != === !==`, `&& || !`, `?:`, `??`,
@@ -367,29 +373,29 @@ mutators `push pop shift unshift splice reverse sort`; everything answers
 formatDateTime` (the common `yyyy MM dd hh mm ss ap` tokens),
 `resolvedUrl` (identity), `callLater(fn, args...)` (runs at the top of the
 next frame), `vector2d vector3d vector4d size point rect` (plain objects),
-`locale(name)` (en-US-like whatever the name), `Qt.Key_*` codes, the
+`locale(name)` (separators, currency and AM/PM for the common locales,
+en-US for the rest), `Qt.Key_*` codes and `Qt.*Modifier` bits, the
 alignment, orientation, edge, sort-order, check-state and cursor enums and
 the named colours `black white red green blue yellow transparent`.
 
 ### Not supported
 
-Call-argument spread (`Math.max(...xs)` — spread works in array literals
-only), destructuring, default/rest in arrow parameters, `in`, `instanceof`,
+Destructuring, default/rest in arrow parameters, `in`, `instanceof`,
 `delete`, `void`, `do...while`, `for...in`, labels, classes, getters and
 setters, prototypes, `this` (functions resolve names lexically), computed
 object keys, shorthand object properties, `>>>`, `**`, bitwise on anything
 but small integers, `Array.isArray`, `Object.keys/values/entries/assign`,
-`Array.from`, `Promise`/`async`, `setTimeout`/`setInterval`, regex
-matching, `sort` with a comparator (sorts by string form), `String.prototype`
-methods beyond the list above, `qsTr` and the other `Qt.*` members not
-listed (`Qt.binding`, `Qt.createComponent`, `Qt.createQmlObject`,
+`Array.from`, `Promise`/`async`, `setTimeout`/`setInterval`,
+`String.prototype` methods beyond the list above, translation catalogues
+(`qsTr`, `qsTranslate` and `qsTrId` return their source text, with `%n`
+filled in), the `Qt.*` members not listed (`Qt.binding`, `Qt.createComponent`, `Qt.createQmlObject`,
 `Qt.quit`, `Qt.openUrlExternally`, `Qt.application`, `Qt.platform`),
 `Screen`, `Qt.labs.settings` persistence, JavaScript library imports
-(`.js` files), exceptions carrying objects (a `throw` value is stringified).
-An array mutator (`push`, `sort`, ...) must be called on something
-assignable — a property, a local, an element of one — because arrays are
-values and the result is written back through the receiver; `a.slice().sort()`
-fails with "not an assignable property".
+(`.js` files). Arrays are values: a mutator (`push`, `sort`, ...) on a
+property, a local or an element of one writes the result back through it,
+and on a temporary (`a.slice().sort((x, y) => x - y)`) returns the result.
+Call arguments spread (`Math.max(...xs)`), and a thrown object reaches
+`catch` intact.
 
 ### Example
 
@@ -502,7 +508,7 @@ on Button, `Spacer { }`.
 | element | notes |
 | --- | --- |
 | `ListModel`, `ListElement` | rows of named roles; runtime `append insert remove clear set get count` work from handlers and mark readers dirty; `setProperty`, `move`, `sync` are not modelled |
-| `ListView` | `model`, `delegate`, `currentIndex`, `highlight`, `spacing`, `height`/`rowHeight`, `section.property`/`section.delegate`, `verticalLayoutDirection`, `onAtYEndChanged`/`onAtYBeginningChanged`; delegates read `ListView.isCurrentItem`, `ListView.view`. `orientation` (horizontal lists render vertically), `header`/`footer` (rejected on `.gml`), `add`/`remove`/`move`/`displaced`/`populate` transitions, `highlightRangeMode`, `cacheBuffer`, `keyNavigationEnabled`, `snapMode` are not modelled |
+| `ListView` | `model`, `delegate`, `currentIndex`, `highlight`, `spacing`, `height`/`rowHeight`, `section.property`/`section.delegate`, `verticalLayoutDirection`, `onAtYEndChanged`/`onAtYBeginningChanged`; delegates read `ListView.isCurrentItem`, `ListView.view`; `orientation: ListView.Horizontal` (delegates side by side at their own width, scrolling sideways, every delegate built); `header`/`footer` (above and below the rows, not scrolling with them). `add`/`remove`/`move`/`displaced`/`populate` transitions, `highlightRangeMode`, `cacheBuffer`, `keyNavigationEnabled`, `snapMode` are not modelled |
 | `GridView` | `model`, `delegate`, `cellWidth`, `cellHeight`, `currentIndex`, `highlight`; `flow`, `snapMode`, `cacheBuffer` accepted |
 | `PathView` with `Path` | `model`, `delegate`, `path` (`PathLine`, `PathQuad`, `PathCubic`, `PathArc`, `PathAttribute`, `PathPercent`), `currentIndex`, `preferredHighlightBegin`, `dragMargin`; drag and flick turn the carousel; `PathView.isCurrentItem`, `PathView.onPath` and `PathAttribute` values in delegates |
 | `TableView`, `TableModel`, `TableModelColumn`, `HorizontalHeaderView`, `ItemSelectionModel`, `DelegateChooser`, `DelegateChoice` | one delegate per cell with `row`, `column`, `display`, `selected`, `current`; `editDelegate` commits into a TableModel; `selectionModel` enables tap-to-select a row; `syncView` headers. Column widths come from the delegate; `columnWidthProvider` and `TableView.*` attached editing flags are accepted |
@@ -536,11 +542,17 @@ from handlers. Time comes from the frame loop, so a timer only advances
 while frames are produced (headless screenshots warm one frame).
 
 `Keys.onPressed`/`Keys.onReleased` on a focused item run with `event`
-bound: `event.key` (a `Qt.Key_*` code — Escape, Tab, Backspace, Return,
-Enter, Delete, Home, End, arrows, Space, and letters/digits as their
-uppercase code), `event.text`; `event.modifiers` is always 0 and
-`event.accepted = true` does nothing. `Keys.onReturnPressed` /
-`onEnterPressed` on text fields. `KeyNavigation.*` and `Shortcut` are not
+bound: `event.key` (a `Qt.Key_*` code: the editing and arrow keys, Insert,
+PageUp/PageDown, F1–F12, Space, punctuation, and letters/digits as their
+uppercase code), `event.text`, `event.modifiers` (`Qt.ShiftModifier`,
+`ControlModifier`, `AltModifier` bits). As in Qt, a `Keys.onPressed`
+handler that acts on a key sets `event.accepted = true`; a key it leaves
+unaccepted falls through to the default handling (Enter/Space activate).
+The key-specific handlers (`Keys.onLeftPressed`, `onRightPressed`,
+`onUpPressed`, `onDownPressed`, `onEscapePressed`, `onSpacePressed`,
+`onTabPressed`, `onBacktabPressed`, `onDeletePressed`, `onReturnPressed`,
+`onEnterPressed`, `onDigit0Pressed`…`onDigit9Pressed`) start accepted, and
+`onPressed` runs after one only if it un-accepts the event. `KeyNavigation.*` and `Shortcut` are not
 modelled.
 
 ### Canvas 2D context

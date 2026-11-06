@@ -457,7 +457,7 @@ func makeViewAttached(current bool) map[string]any {
 		// The enum members too: this map SHADOWS the ListView namespace
 		// for the row's duration, and a view built inside a row still
 		// states `verticalLayoutDirection: ListView.BottomToTop`.
-		"Horizontal": float64(0), "Vertical": float64(1),
+		"Horizontal": float64(1), "Vertical": float64(2),
 		"TopToBottom": float64(0), "BottomToTop": float64(1),
 		"LeftToRight": float64(0), "RightToLeft": float64(1)}
 }

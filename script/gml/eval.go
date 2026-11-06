@@ -107,6 +107,32 @@ func NewEnv() *Env {
 			return float64(f), nil
 		},
 		"String": stringGlobal(),
+		// RegExp(source, flags), with or without `new`.
+		"RegExp": func(args []any) (any, error) {
+			if len(args) > 0 {
+				if re, ok := args[0].(*jsRegExp); ok {
+					return re, nil
+				}
+			}
+			src, flags := "", ""
+			if len(args) > 0 {
+				src = str(args[0])
+			}
+			if len(args) > 1 {
+				flags = str(args[1])
+			}
+			return newRegExp(src, flags)
+		},
+		// Qt's translation functions. There are no translation catalogues,
+		// so each returns its source text: qsTr(text, disambiguation, n)
+		// with %n replaced by n, qsTranslate(context, text, …) the same,
+		// qsTrId(id) the id; QT_TR_NOOP and friends mark text unchanged.
+		"qsTr":              func(args []any) (any, error) { return trText(args, 0), nil },
+		"qsTranslate":       func(args []any) (any, error) { return trText(args, 1), nil },
+		"qsTrId":            func(args []any) (any, error) { return trText(args, 0), nil },
+		"QT_TR_NOOP":        func(args []any) (any, error) { return trText(args, 0), nil },
+		"QT_TRANSLATE_NOOP": func(args []any) (any, error) { return trText(args, 1), nil },
+		"QT_TRID_NOOP":      func(args []any) (any, error) { return trText(args, 0), nil },
 		"Boolean": func(args []any) (any, error) {
 			if len(args) == 0 {
 				return false, nil
@@ -1121,6 +1147,11 @@ func (x *memberExpr) eval(env *Env) (any, error) {
 		if x.optional && base == nil {
 			return nil, nil
 		}
+		if re, ok := base.(*jsRegExp); ok {
+			if v, ok := re.member(x.name); ok {
+				return v, nil
+			}
+		}
 		if x.name == "length" {
 			switch c := base.(type) {
 			case []any:
@@ -1463,6 +1494,17 @@ func (x *objExpr) eval(env *Env) (any, error) {
 }
 
 func (x *callExpr) eval(env *Env) (any, error) {
+	if x.spread {
+		// f(a, ...xs): evaluate the arguments once, flatten the spread
+		// ones, and make the call with the values as literals.
+		args, err := expandArgs(x.args, env)
+		if err != nil {
+			return nil, err
+		}
+		flat := *x
+		flat.args, flat.spread = args, false
+		return flat.eval(env)
+	}
 	// Bare-identifier calls: the animate() builtin and env-registered Go funcs.
 	if id, ok := x.callee.(*identExpr); ok {
 		if id.name == "animate" {
@@ -1490,9 +1532,27 @@ func (x *callExpr) eval(env *Env) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				out, ret := mutateArray(arr, m.name, args)
-				if err := assign(m.base, &litExpr{out}, env); err != nil {
-					return nil, fmt.Errorf("gml:%d: %s: %v", x.line, m.name, err)
+				var out []any
+				var ret any
+				if m.name == "sort" && len(args) > 0 && args[0] != nil {
+					// sort(compare): ordered by the comparator's sign.
+					out = append([]any{}, arr...)
+					if err := sortWith(out, args[0]); err != nil {
+						return nil, fmt.Errorf("gml:%d: sort: %v", x.line, err)
+					}
+					ret = out
+				} else {
+					out, ret = mutateArray(arr, m.name, args)
+				}
+				// A receiver that is a temporary (items.slice().sort(), a
+				// literal) has nowhere to be written back: the result is
+				// the value, as in JS.
+				if assignable(m.base) {
+					if err := assign(m.base, &litExpr{out}, env); err != nil {
+						return nil, fmt.Errorf("gml:%d: %s: %v", x.line, m.name, err)
+					}
+				} else if m.name == "sort" || m.name == "reverse" {
+					return out, nil
 				}
 				return ret, nil
 			}
@@ -1511,6 +1571,11 @@ func (x *callExpr) eval(env *Env) (any, error) {
 	fnv, err := x.callee.eval(env)
 	if err != nil {
 		return nil, err
+	}
+	// o?.f() with o null or undefined: the optional chain short-circuits
+	// the whole call to undefined, as in JS, instead of calling nothing.
+	if fnv == nil && optionalChain(x.callee) {
+		return nil, nil
 	}
 	return callValue(fnv, x.args, env, x.line, "value")
 }
@@ -1563,6 +1628,18 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 		return str(base), true, nil
 	case "valueOf":
 		return base, true, nil
+	}
+	// RegExp methods, and the String methods given a RegExp argument.
+	if re, ok := base.(*jsRegExp); ok {
+		v, handled := re.call(name, args)
+		return v, handled, nil
+	}
+	if s, ok := base.(string); ok && len(args) > 0 {
+		if re, ok := args[0].(*jsRegExp); ok {
+			if v, handled, err := regexStringMethod(s, name, re, args); handled {
+				return v, true, err
+			}
+		}
 	}
 	switch recv := base.(type) {
 	case float64:
@@ -2232,8 +2309,8 @@ func mutateArray(arr []any, name string, args []any) (out []any, ret any) {
 		}
 		return out, out
 	case "sort":
-		// Default JS sort compares as strings; a comparator argument is
-		// not modeled (the corpus sorts plain values).
+		// Without a comparator JS compares as strings (a comparator is
+		// handled by the caller, which can call it: sortWith).
 		sortAnyStrings(out)
 		return out, out
 	}
@@ -2419,5 +2496,108 @@ func scrollHash(s *ui.ScrollState) uint64 {
 func stampScrollTokens() {
 	for s, t := range scrollToks {
 		t.Set(scrollHash(s))
+	}
+}
+
+// trText is a translation call's result with no catalogue loaded: the
+// source text at args[at], with %n replaced by the count two places after
+// it (qsTr(text, disambiguation, n)), as Qt does for the untranslated case.
+func trText(args []any, at int) string {
+	if at >= len(args) {
+		return ""
+	}
+	s := str(args[at])
+	if at+2 < len(args) {
+		if n, err := toFloat64(args[at+2]); err == nil {
+			s = strings.ReplaceAll(s, "%n", strconv.FormatFloat(n, 'f', -1, 64))
+		}
+	}
+	return s
+}
+
+// expandArgs evaluates call arguments, flattening `...expr` ones into the
+// list, and returns them as literal expressions.
+func expandArgs(args []expr, env *Env) ([]expr, error) {
+	out := make([]expr, 0, len(args))
+	for _, a := range args {
+		sp, isSpread := a.(*spreadExpr)
+		if !isSpread {
+			v, err := a.eval(env)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, &litExpr{v})
+			continue
+		}
+		v, err := sp.inner.eval(env)
+		if err != nil {
+			return nil, err
+		}
+		if r, ok := v.(Ref); ok {
+			v = r.get()
+		}
+		switch t := v.(type) {
+		case []any:
+			for _, item := range t {
+				out = append(out, &litExpr{item})
+			}
+		case string: // a string spreads into its characters, as in JS
+			for _, c := range t {
+				out = append(out, &litExpr{string(c)})
+			}
+		case nil:
+			return nil, fmt.Errorf("gml: cannot spread %v", v)
+		default:
+			return nil, fmt.Errorf("gml: cannot spread a %T", v)
+		}
+	}
+	return out, nil
+}
+
+// assignable reports whether a mutator's receiver names a place the
+// changed array can be written back to (a variable, a property, an
+// element), rather than a temporary such as a call's result.
+func assignable(e expr) bool {
+	switch e.(type) {
+	case *identExpr, *memberExpr, *indexExpr:
+		return true
+	}
+	return false
+}
+
+// sortWith sorts vs in place by a JS comparator: negative puts a first.
+// The sort is stable, as JS's is since ES2019.
+func sortWith(vs []any, cmp any) error {
+	var firstErr error
+	sort.SliceStable(vs, func(i, j int) bool {
+		if firstErr != nil {
+			return false
+		}
+		r, err := callAny(cmp, []any{vs[i], vs[j]})
+		if err != nil {
+			firstErr = err
+			return false
+		}
+		f, err := toFloat64(r)
+		if err != nil {
+			return false
+		}
+		return f < 0
+	})
+	return firstErr
+}
+
+// optionalChain reports whether a callee is reached through `?.` anywhere
+// along its member chain (o?.f, o?.a.f).
+func optionalChain(e expr) bool {
+	for {
+		m, ok := e.(*memberExpr)
+		if !ok {
+			return false
+		}
+		if m.optional {
+			return true
+		}
+		e = m.base
 	}
 }

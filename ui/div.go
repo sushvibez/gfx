@@ -75,10 +75,11 @@ type DivEl struct {
 	focusC                 RGBA
 	focusVisW              float32 // border shown only for keyboard focus (.focus_visible)
 	focusVisC              RGBA
-	focusSlot              int                // 1-based index into ctx.focusables this frame; 0 = none
-	tabIdx                 int                // Tab traversal rank (GPUI tab_index); ties resolve in layout order
-	wantFocus              bool               // requests initial keyboard focus (QML focus: true)
-	keyFn                  func(app.KeyEvent) // raw key handler (QML Keys.onPressed/onReleased)
+	focusSlot              int                     // 1-based index into ctx.focusables this frame; 0 = none
+	tabIdx                 int                     // Tab traversal rank (GPUI tab_index); ties resolve in layout order
+	wantFocus              bool                    // requests initial keyboard focus (QML focus: true)
+	keyFn                  func(app.KeyEvent)      // raw key handler (QML Keys.onPressed/onReleased)
+	keyAccept              func(app.KeyEvent) bool // OnKeyAccept: the handler says whether it took the key
 	cursor                 app.Cursor
 	justify                Align   // main axis
 	items                  Align   // cross axis
@@ -588,10 +589,23 @@ func (d *DivEl) OnKey(fn func(app.KeyEvent)) *DivEl {
 	return d
 }
 
+// OnKeyAccept is OnKey for a handler that reports whether it took the
+// key (QML's event.accepted). A key it leaves falls through to the UI's
+// default handling (Enter/Space activation), as an unaccepted QML key
+// event propagates.
+func (d *DivEl) OnKeyAccept(fn func(app.KeyEvent) bool) *DivEl {
+	d.keyAccept = fn
+	d.focusable = true
+	return d
+}
+
 // handleKey delivers a key event to this element's handler, reporting whether
 // it consumed the event (false when there's no key handler, so the UI can fall
 // through to default Enter/Space activation).
 func (d *DivEl) handleKey(ev app.KeyEvent) bool {
+	if d.keyAccept != nil {
+		return d.keyAccept(ev)
+	}
 	if d.keyFn != nil {
 		d.keyFn(ev)
 		return true

@@ -36,6 +36,7 @@ const (
 	tokString
 	tokTemplate // `backtick ${expr} string` — raw inner text, expanded by parser
 	tokPunct    // single/double char punctuation and operators
+	tokRegex    // /pattern/flags: text is the pattern, a NUL, then the flags
 )
 
 type token struct {
@@ -78,8 +79,7 @@ func lex(src string) ([]token, error) {
 			l.pos += 2
 		case c == '/' && l.regexAhead():
 			// JS regex literal in a value position (`regularExpression:
-			// /[0-9]*/i`). Kept as the pattern string: validators are not
-			// modeled, but the expression must parse.
+			// /[0-9]*/i`, `/ab+/.test(s)`): a RegExp value (regexp.go).
 			l.pos++
 			var b strings.Builder
 			for l.pos < len(l.src) && l.src[l.pos] != '/' && l.src[l.pos] != '\n' {
@@ -94,10 +94,11 @@ func lex(src string) ([]token, error) {
 				return nil, fmt.Errorf("gml:%d: unterminated regex literal", l.line)
 			}
 			l.pos++ // closing slash
-			for l.pos < len(l.src) && strings.ContainsRune("gimsuy", l.src[l.pos]) {
-				l.pos++ // flags: accepted, not modeled
+			flags := l.pos
+			for l.pos < len(l.src) && strings.ContainsRune("dgimsuvy", l.src[l.pos]) {
+				l.pos++
 			}
-			l.emit(tokString, b.String())
+			l.emit(tokRegex, b.String()+"\x00"+string(l.src[flags:l.pos]))
 		case unicode.IsLetter(c) || c == '_':
 			start := l.pos
 			for l.pos < len(l.src) && (unicode.IsLetter(l.src[l.pos]) || unicode.IsDigit(l.src[l.pos]) || l.src[l.pos] == '_') {
@@ -302,7 +303,7 @@ func (l *lexer) regexAhead() bool {
 			continue
 		}
 		switch t.kind {
-		case tokIdent, tokNumber, tokString, tokTemplate:
+		case tokIdent, tokNumber, tokString, tokTemplate, tokRegex:
 			return false
 		case tokPunct:
 			switch t.text {

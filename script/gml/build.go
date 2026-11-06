@@ -1857,7 +1857,10 @@ type docState struct {
 
 	// fileComps caches QML-style file components resolved from baseDir
 	// (<Type>.gml; nil = known-missing).
-	fileComps   map[string]*node
+	fileComps map[string]*node
+	// fileDirs is the directory each loaded component file came from, so a
+	// Loader source inside it resolves against its own directory.
+	fileDirs    map[*node]string
 	fileDialogs map[string]*fileDialogState
 	painted     map[string]*paintedInst
 	nodesByID   map[string]*node
@@ -2767,11 +2770,20 @@ func (doc *docState) registerConnections(n *node) {
 	if n.typeName == "Connections" {
 		target := connectionsTargetID(n)
 		if target != "" {
+			if doc.connections[target] == nil {
+				doc.connections[target] = map[string]funcDecl{}
+			}
 			for _, fn := range n.funcs {
-				if doc.connections[target] == nil {
-					doc.connections[target] = map[string]funcDecl{}
-				}
 				doc.connections[target][fn.name] = fn
+			}
+			// The Qt 5 form, `onClicked: { … }`: a handler attribute with
+			// no parameter list (a declaration of the function form wins).
+			for _, a := range n.attrs {
+				if len(a.name) > 2 && strings.HasPrefix(a.name, "on") && a.stmt != nil {
+					if _, has := doc.connections[target][a.name]; !has {
+						doc.connections[target][a.name] = funcDecl{name: a.name, body: a.stmt, line: a.line}
+					}
+				}
 			}
 		}
 	}
@@ -3823,13 +3835,36 @@ func declareFuncsScoped(n *node, env, closure *Env) {
 // declareSignals registers each `signal name(params)` as a callable: emitting
 // it runs the same element's `on<Name>` handler with the params bound. A
 // signal is therefore a userFunc whose body is its handler — emit = call.
-func declareSignals(n *node, env *Env) {
+func declareSignals(n *node, env *Env, doc *docState) {
+	id := nodeID(n)
 	for _, s := range n.signals {
-		body := handlerFor(n, "on"+title(s.name))
-		env.vars[s.name] = &userFunc{params: s.params, body: body, env: env}
+		handler := "on" + title(s.name)
+		own := &userFunc{params: s.params, body: handlerFor(n, handler), env: env}
+		fd, connected := doc.connections[id][handler]
+		if id == "" || !connected {
+			env.vars[s.name] = own
+			doc.signalMethod(id, s.name, own)
+			continue
+		}
+		// A Connections { target: <this id> } handler runs too, after the
+		// element's own, with the signal's arguments. The Qt 5 form
+		// (`onMoved: …`) declares no parameters and sees the signal's
+		// parameter names, as in QML.
+		params := fd.params
+		if len(params) == 0 {
+			params = s.params
+		}
+		conn := &userFunc{params: params, body: fd.body, env: env}
+		env.vars[s.name] = jsFunc(func(args []any) (any, error) {
+			if _, err := callUserFunc(own, args); err != nil {
+				return nil, err
+			}
+			return callUserFunc(conn, args)
+		})
+		doc.signalMethod(id, s.name, env.vars[s.name])
 	}
 	for _, c := range n.children {
-		declareSignals(c, env)
+		declareSignals(c, env, doc)
 	}
 }
 
@@ -4845,6 +4880,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	var borderDashed bool
 	var borderC ui.RGBA
 	var onClicked, keysPressed, keysReleased []stmt
+	var keysSpecific map[float64][]stmt // Keys.onLeftPressed and friends, by Qt key code
 	var onEntered, onExited, onPressed, onReleased []stmt
 	// rotation/scale apply about transformOrigin, which may be declared
 	// after them, so they are collected and applied at the end.
@@ -5022,6 +5058,16 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			keysPressed = a.stmt
 		case "Keys.onReleased":
 			keysReleased = a.stmt
+		case "Keys.onLeftPressed", "Keys.onRightPressed", "Keys.onUpPressed", "Keys.onDownPressed",
+			"Keys.onEscapePressed", "Keys.onSpacePressed", "Keys.onTabPressed", "Keys.onBacktabPressed",
+			"Keys.onDeletePressed", "Keys.onReturnPressed", "Keys.onEnterPressed",
+			"Keys.onDigit0Pressed", "Keys.onDigit1Pressed", "Keys.onDigit2Pressed", "Keys.onDigit3Pressed",
+			"Keys.onDigit4Pressed", "Keys.onDigit5Pressed", "Keys.onDigit6Pressed", "Keys.onDigit7Pressed",
+			"Keys.onDigit8Pressed", "Keys.onDigit9Pressed":
+			if keysSpecific == nil {
+				keysSpecific = map[float64][]stmt{}
+			}
+			keysSpecific[keySignalCode(a.name)] = a.stmt
 		case "focus":
 			if b, err := attrBool(a, env); err == nil && b {
 				d.Focus()
@@ -5159,8 +5205,8 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 		})
 	}
 	// Keys.onPressed / Keys.onReleased → focusable raw key handler.
-	if kh := keyHandler(keysPressed, keysReleased, env); kh != nil {
-		d.OnKey(kh)
+	if kh := keyHandlerWith(keysSpecific, keysPressed, keysReleased, env); kh != nil {
+		d.OnKeyAccept(kh)
 	}
 	doc.wireHoverPress(n, d, env, onEntered, onExited, onPressed, onReleased)
 	return nil
@@ -8037,7 +8083,9 @@ func buildGridView(n *node, env *Env, doc *docState) (ui.Element, error) {
 func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var height, rowHeight float32 = 200, 32
 	var rowSpacing float32
-	var bottomUp bool // verticalLayoutDirection: ListView.BottomToTop
+	var bottomUp bool   // verticalLayoutDirection: ListView.BottomToTop
+	var horizontal bool // orientation: ListView.Horizontal
+	var headerNode, footerNode *node
 	// Sections: a header row is inserted wherever the section role's value
 	// changes (QML groups by CONSECUTIVE runs, not by a GROUP BY).
 	var sectionRole string
@@ -8104,7 +8152,29 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 					bottomUp = f == 1
 				}
 			}
-		case "width", "clip", "orientation", "cacheBuffer", "boundsBehavior", "snapMode",
+		case "header", "footer":
+			// Built above / below the rows, inside the list's height
+			// (listHeaderFooter).
+			var comp *node
+			if a.elem != nil {
+				comp = unwrapComponent(a.elem)
+			} else {
+				comp = doc.componentValue(a.expr, env) // header: someComponentId
+			}
+			if a.name == "header" {
+				headerNode = comp
+			} else {
+				footerNode = comp
+			}
+		case "orientation":
+			// ListView.Horizontal (Qt.Horizontal, 1): a row that scrolls
+			// sideways (buildHorizontalList).
+			if v, err := a.expr.eval(env); err == nil {
+				if f, err := toFloat32(v); err == nil {
+					horizontal = f == 1
+				}
+			}
+		case "width", "clip", "cacheBuffer", "boundsBehavior", "snapMode",
 			"highlightRangeMode", "highlightMoveDuration",
 			"highlightFollowsCurrentItem", "preferredHighlightBegin", "preferredHighlightEnd",
 			"add", "remove", "move", "displaced", "populate",
@@ -8150,6 +8220,9 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	curRef := doc.intProp(doc.key(n)+"|currentIndex", seed)
 	doc.exposeIDProp(n, "currentIndex", curRef)
+	if horizontal {
+		return buildHorizontalList(n, env, doc, delegate, rows, count, rowSpacing, height, curRef, highlight), nil
+	}
 	st := listStateFor(n, doc)
 	exposeListMethods(n, env, doc, st, count, rowHeight)
 	wireScrollEdge(n, env, doc, st, scrollEdge)
@@ -8183,7 +8256,7 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 				heights[i] = rowHeight
 			}
 		}
-		return listDirection(ui.List(st, rowHeight, len(plan), func(i int) ui.Element {
+		return listHeaderFooter(doc, env, headerNode, footerNode, height, listDirection(ui.List(st, rowHeight, len(plan), func(i int) ui.Element {
 			sl := plan[i]
 			env := rowEnv
 			if sl.header {
@@ -8208,9 +8281,9 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 				return ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
 			}
 			return el
-		}).Heights(heights).Spacing(rowSpacing).H(height).AutoHideBar(), bottomUp), nil
+		}).Heights(heights).Spacing(rowSpacing).H(height).AutoHideBar(), bottomUp)), nil
 	}
-	return listDirection(ui.List(st, rowHeight, count, func(i int) ui.Element {
+	return listHeaderFooter(doc, env, headerNode, footerNode, height, listDirection(ui.List(st, rowHeight, count, func(i int) ui.Element {
 		var row map[string]any
 		if rows != nil {
 			row = rows[i]
@@ -8235,7 +8308,7 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 		}
 		return el
-	}).Spacing(rowSpacing).H(height).AutoHideBar(), bottomUp), nil
+	}).Spacing(rowSpacing).H(height).AutoHideBar(), bottomUp)), nil
 }
 
 // listDirection applies a ListView's row policy to the built list: each row
@@ -8570,4 +8643,95 @@ func textWidthImposed(n *node) bool {
 	// of the use site's anchors or layout hints — the instantiation records
 	// what the use site imposed (see node.imposedWidth).
 	return n.imposedWidth
+}
+
+// signalMethod makes a declared signal callable through its element's id,
+// `knob.moved(3)`, as well as by its bare name inside the element.
+func (doc *docState) signalMethod(id, name string, fn any) {
+	if id == "" {
+		return
+	}
+	obj := doc.elemObjs.get(doc.intern(id))
+	if obj == nil {
+		return
+	}
+	if obj.methods == nil {
+		obj.methods = map[string]any{}
+	}
+	obj.methods[name] = fn
+}
+
+// buildHorizontalList is a ListView with orientation: ListView.Horizontal:
+// the delegates side by side, each at its own width, in a view that
+// scrolls sideways. It builds every delegate (no virtualisation): the
+// horizontal lists markup writes are carousels and tab strips of a few
+// dozen items, not the long vertical feeds ui.List exists for.
+func buildHorizontalList(n *node, env *Env, doc *docState, delegate *node, rows []map[string]any,
+	count int, spacing, height float32, curRef Ref, highlight *node) ui.Element {
+	viewKey := doc.key(n)
+	rowEnv := doc.scopeSnapshot(env, "rows|"+viewKey)
+	items := make([]ui.Element, 0, count)
+	cur := -1
+	if ci, err := toInt(curRef.get()); err == nil {
+		cur = ci
+	}
+	for i := 0; i < count; i++ {
+		var row map[string]any
+		if rows != nil {
+			row = rows[i]
+		}
+		restore := enterRow(viewKey, delegate, rowEnv, doc, row, i)
+		el, err := build(delegate, rowEnv, doc)
+		if err != nil {
+			el = ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
+		} else if highlight != nil && i == cur {
+			if hl, err := build(highlight, rowEnv, doc); err == nil {
+				el = ui.Div().AnchorMode().Children(
+					ui.Anchored(hl, "", ui.Anchors{Fill: "parent"}),
+					ui.Anchored(el, "", ui.Anchors{Fill: "parent"}),
+				)
+			}
+		}
+		restore()
+		items = append(items, el)
+	}
+	st := doc.scrollFor(doc.rowPrefix + "__hlist|" + viewKey)
+	sc := ui.Scroll(st).ContentSized().H(height).AutoHideBar()
+	for _, a := range n.attrs {
+		if a.name == "width" {
+			if w, err := attrFloat(a, env); err == nil && w > 0 {
+				sc.W(w)
+			}
+		}
+	}
+	return sc.Children(
+		ui.Div().Row().Gap(spacing).Children(items...))
+}
+
+// listHeaderFooter puts a ListView's header and footer components above
+// and below its rows, the three sharing the list's height. In QML they
+// scroll with the content; here they stay put at the ends, which is how a
+// list shorter than its view (the usual case for a titled list) looks
+// either way.
+func listHeaderFooter(doc *docState, env *Env, header, footer *node, height float32, l *ui.ListEl) ui.Element {
+	if header == nil && footer == nil {
+		return l
+	}
+	parts := make([]ui.Element, 0, 3)
+	if header != nil {
+		if el, err := build(header, env, doc); err == nil {
+			parts = append(parts, el)
+		} else {
+			logf("gml: ListView header: %v", err)
+		}
+	}
+	parts = append(parts, l.H(0).Grow())
+	if footer != nil {
+		if el, err := build(footer, env, doc); err == nil {
+			parts = append(parts, el)
+		} else {
+			logf("gml: ListView footer: %v", err)
+		}
+	}
+	return ui.Div().Col().H(height).Children(parts...)
 }

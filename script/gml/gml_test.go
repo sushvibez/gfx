@@ -1518,7 +1518,7 @@ func TestEnums(t *testing.T) {
 		{"Text.WordWrap", "1"},
 		{"Image.PreserveAspectFit", "1"},
 		{"Font.Bold", "75"},
-		{"ListView.Horizontal", "0"},
+		{"ListView.Horizontal", "1"}, // Qt.Horizontal
 		{"Qt.AlignCenter", "132"},
 		{"Qt.red", "#ff0000"},
 		{"Font.Bold > Font.Normal", "true"},
@@ -2236,8 +2236,8 @@ Item {
     focus: true
     Keys.onPressed: {
         moves += 1
-        if (event.key == Qt.Key_Left) last = "left"
-        else if (event.text == "x") last = "x"
+        if (event.key == Qt.Key_Left) { last = "left"; event.accepted = true }
+        else if (event.text == "x") { last = "x"; event.accepted = true }
     }
 }`
 	env := NewEnv()
@@ -2258,6 +2258,11 @@ Item {
 	}
 	if got := str(env.vars["last"].(Ref).get()); got != "x" {
 		t.Errorf("last = %s, want x", got)
+	}
+	// A key the handler leaves unaccepted is not consumed (Qt's rule for
+	// Keys.onPressed: it propagates).
+	if u.Key(app.KeyEvent{Down: true, Rune: 'q'}) {
+		t.Error("an unaccepted key was consumed")
 	}
 }
 

@@ -98,8 +98,10 @@ func registerEnums(vars map[string]any) {
 	}
 
 	listViewNS := map[string]any{
-		"Horizontal": float64(0),
-		"Vertical":   float64(1),
+		// Qt's values (Qt.Horizontal / Qt.Vertical), so either spelling
+		// of an orientation compares equal.
+		"Horizontal": float64(1),
+		"Vertical":   float64(2),
 		// verticalLayoutDirection / layoutDirection.
 		"TopToBottom": float64(0),
 		"BottomToTop": float64(1),
@@ -167,6 +169,11 @@ func registerEnums(vars map[string]any) {
 	registerQtFuncs(qtNS)
 	for k, code := range qtKeyCodes { // Qt.Key_Left etc. for Keys handlers
 		qtNS[k] = code
+	}
+	for k, bit := range qtModifiers { // Qt.ShiftModifier etc., for event.modifiers
+		if _, taken := qtNS[k]; !taken {
+			qtNS[k] = bit
+		}
 	}
 
 	// Animation.Infinite for loops; Easing.* names (string-valued so
@@ -461,9 +468,11 @@ func registerQtFuncs(qt map[string]any) {
 		if name == "" {
 			name = "C"
 		}
+		l := localeFor(name)
 		return map[string]any{
-			"name": name, "decimalPoint": ".", "groupSeparator": ",",
-			"currencySymbol": "$", "amText": "AM", "pmText": "PM",
+			"name": name, "decimalPoint": l.dec, "groupSeparator": l.group,
+			"currencySymbol": l.currency, "amText": l.am, "pmText": l.pm,
+			"nativeLanguageName": l.language,
 		}, nil
 	})
 	qt["rgba"] = jsFunc(func(a []any) (any, error) {
@@ -697,4 +706,43 @@ func argTime(args []any, i int) time.Time {
 		}
 	}
 	return timeNow()
+}
+
+// localeData is the part of a QLocale that markup reads through
+// Qt.locale(name): separators, currency and the AM/PM texts.
+type localeData struct{ dec, group, currency, am, pm, language string }
+
+// locales holds the common ones by name; localeFor falls back to the
+// language alone ("de_AT" → "de") and then to en_US, Qt's "C" shape.
+var locales = map[string]localeData{
+	"en_US": {".", ",", "$", "AM", "PM", "American English"},
+	"en_GB": {".", ",", "£", "am", "pm", "British English"},
+	"en_IN": {".", ",", "₹", "am", "pm", "Indian English"},
+	"de":    {",", ".", "€", "AM", "PM", "Deutsch"},
+	"de_CH": {".", "’", "CHF", "AM", "PM", "Schweizer Hochdeutsch"},
+	"fr":    {",", "\u202f", "€", "AM", "PM", "français"},
+	"es":    {",", ".", "€", "a. m.", "p. m.", "español"},
+	"it":    {",", ".", "€", "AM", "PM", "italiano"},
+	"nl":    {",", ".", "€", "a.m.", "p.m.", "Nederlands"},
+	"pt":    {",", ".", "€", "da manhã", "da tarde", "português"},
+	"pt_BR": {",", ".", "R$", "AM", "PM", "português"},
+	"sv":    {",", "\u00a0", "kr", "fm", "em", "svenska"},
+	"ru":    {",", "\u00a0", "₽", "AM", "PM", "русский"},
+	"pl":    {",", "\u00a0", "zł", "AM", "PM", "polski"},
+	"ja":    {".", ",", "￥", "午前", "午後", "日本語"},
+	"zh":    {".", ",", "¥", "上午", "下午", "中文"},
+	"ko":    {".", ",", "₩", "오전", "오후", "한국어"},
+	"hi":    {".", ",", "₹", "am", "pm", "हिन्दी"},
+}
+
+func localeFor(name string) localeData {
+	name = strings.ReplaceAll(name, "-", "_")
+	if l, ok := locales[name]; ok {
+		return l
+	}
+	lang, _, _ := strings.Cut(name, "_")
+	if l, ok := locales[lang]; ok {
+		return l
+	}
+	return locales["en_US"]
 }

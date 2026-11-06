@@ -61,18 +61,27 @@ func (doc *docState) fileComponent(name string) *node {
 		return nil
 	}
 	doc.fileComps[name] = root
+	doc.noteFileDir(root, found)
 	return root
 }
 
 // fileComponentAt parses (and caches) a component file addressed by a
 // RELATIVE PATH — QML's `Loader { source: "screens/Foo.qml" }` form, as
-// opposed to fileComponent's type-name lookup. Resolved against the
-// document's baseDir; cached under the resolved path.
+// opposed to fileComponent's type-name lookup. Resolved, as in QML,
+// against the directory of the file the Loader is written in (the document's
+// baseDir for the document itself); cached under the resolved path.
 func (doc *docState) fileComponentAt(relPath string) *node {
-	if relPath == "" || doc.baseDir == "" {
+	base := doc.baseDir
+	if d, ok := doc.fileDirs[doc.curFile]; ok {
+		base = d
+	}
+	if relPath == "" || base == "" {
 		return nil
 	}
-	path := filepath.Join(doc.baseDir, relPath)
+	path := relPath
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, relPath)
+	}
 	if doc.fileComps == nil {
 		doc.fileComps = map[string]*node{}
 	}
@@ -91,12 +100,20 @@ func (doc *docState) fileComponentAt(relPath string) *node {
 		doc.fileComps[path] = nil
 		return nil
 	}
-	// Note: the loaded file's own imports/assets resolve against the
-	// DOCUMENT's baseDir (like every file component) — Loader sources in
-	// subdirectories should reference assets/imports relative to the
-	// root document.
+	// Its own Loader sources resolve against its directory. Its other
+	// assets and imports still resolve against the DOCUMENT's baseDir
+	// (like every file component).
 	doc.fileComps[path] = root
+	doc.noteFileDir(root, path)
 	return root
+}
+
+// noteFileDir records the directory a component file was read from.
+func (doc *docState) noteFileDir(root *node, path string) {
+	if doc.fileDirs == nil {
+		doc.fileDirs = map[*node]string{}
+	}
+	doc.fileDirs[root] = filepath.Dir(path)
 }
 
 // useSiteAttr freezes a plain use-site attribute to the value it has in the

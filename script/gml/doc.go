@@ -25,6 +25,22 @@ func LoadString(src string, env *Env) (*Document, error) {
 	return loadSource(src, env, "")
 }
 
+// LoadStringAt is LoadString for source that belongs to a directory:
+// imports, singletons, file components and relative Image or Loader
+// sources resolve against baseDir, as they do for a file loaded from
+// there. Use it for markup embedded in a program (go:embed) next to the
+// files it refers to.
+func LoadStringAt(src, baseDir string, env *Env) (*Document, error) {
+	return loadSource(src, env, baseDir)
+}
+
+// SetLenient switches QML's lenient mode on or off: a child whose build
+// fails is logged and skipped instead of failing the page, and a few
+// layout rules follow Qt's plain positioning. Load turns it on for .qml
+// files; markup from LoadString or LoadStringAt that is real QML can ask
+// for it here, before the first View.
+func (d *Document) SetLenient(on bool) { d.doc.lenient = on }
+
 // loadSource is the shared load path: imports resolve (when a base
 // directory is known) BEFORE property declaration, so singletons like a
 // Style object are in scope when property defaults evaluate.
@@ -55,10 +71,12 @@ func loadSource(src string, env *Env, baseDir string) (*Document, error) {
 		return nil, err
 	}
 	declareFuncs(root, env)
-	declareSignals(root, env)
+	// Connections first: a declared signal folds in the handlers that
+	// target its element.
+	d.doc.registerConnections(root)
+	declareSignals(root, env, d.doc)
 	d.doc.collectParticleParts(root)
 	d.doc.registerComponents(root)
-	d.doc.registerConnections(root)
 	return d, nil
 }
 
@@ -369,11 +387,11 @@ func (l *Live) maybeReload() {
 		return
 	}
 	declareFuncs(root, l.env)
-	declareSignals(root, l.env)
-	next.doc.components = map[string]*node{}
-	next.doc.registerComponents(root)
 	next.doc.connections = map[string]map[string]funcDecl{}
 	next.doc.registerConnections(root)
+	declareSignals(root, l.env, next.doc)
+	next.doc.components = map[string]*node{}
+	next.doc.registerComponents(root)
 	next.doc.invalidateCache() // markup changed — force a rebuild
 	l.doc = next
 	l.lastErr = nil
