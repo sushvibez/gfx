@@ -67,6 +67,8 @@ type UI struct {
 	// Drag-and-drop state. pendDrag holds a pressed-but-not-yet-moved
 	// source; once the pointer moves past a threshold dragging begins and
 	// dragGhost (a snapshot of the source's child) follows the cursor.
+	// gestures: the last click and a held press (pointer.go).
+	gestures     gestureState
 	pendDrag     *DraggableEl
 	dragging     bool
 	dragPayload  any
@@ -394,7 +396,7 @@ func (u *UI) FrameCounts() (measure, layout int) {
 // WantsFrame reports whether the last painted frame contained time-driven
 // content (an animated GIF) that needs the render loop to keep ticking even
 // with no input, animations or property changes.
-func (u *UI) WantsFrame() bool { return u.ctx.wantsFrame }
+func (u *UI) WantsFrame() bool { return u.ctx.wantsFrame || u.gestures.holding(u) }
 
 // Mouse feeds a frame's platform mouse events through the UI: hover
 // position for styling, press tracking, and click-on-release semantics —
@@ -508,6 +510,7 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 				if dr, ok := el.(*DraggableEl); ok {
 					u.pendDrag = dr
 				}
+				u.gestures.pressed(el)
 				if el != nil && el.onClick() != nil {
 					u.pressTarget = el.bounds()
 				}
@@ -630,10 +633,19 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 			if u.root != nil && u.pressTarget.W > 0 {
 				if el := u.hitTest(m.X, m.Y); el != nil && el.onClick() != nil && el.bounds() == u.pressTarget {
 					el.onClick()()
+					u.gestures.clicked(el)
 				}
 			}
 			u.pressTarget = Rect{}
+			u.gestures.holdEl = nil
 		}
+	}
+	// A press held long enough becomes a press-and-hold — checked every
+	// frame, events or not (WantsFrame keeps frames coming meanwhile) —
+	// and the release that ends it is then not a click.
+	if u.gestures.tick(u, u.ctx.MouseX, u.ctx.MouseY) {
+		u.pressTarget = Rect{}
+		u.ForceFullRedraw()
 	}
 }
 

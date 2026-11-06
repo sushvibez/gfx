@@ -795,9 +795,13 @@ var wndProc = sync.OnceValue(func() uintptr {
 				// the last client-space position instead. Shift+wheel
 				// scrolls horizontally (the desktop convention; Windows
 				// only sends WM_MOUSEHWHEEL for real tilt wheels).
+				// A precision touchpad sends a fraction of a notch per
+				// event, and a pinch as Ctrl+wheel: the modifiers ride
+				// along so a zoom can tell.
 				delta := float32(int16(wparam>>16)) / 120
-				e := MouseEvent{Kind: MouseScroll, X: w.lastX, Y: w.lastY}
-				if shift, _, _ := modifiers(); shift {
+				shift, ctrl, _ := modifiers()
+				e := MouseEvent{Kind: MouseScroll, X: w.lastX, Y: w.lastY, Shift: shift, Ctrl: ctrl}
+				if shift {
 					e.ScrollX = -delta * wheelNotchPx
 				} else {
 					e.ScrollY = -delta * wheelNotchPx

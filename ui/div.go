@@ -90,7 +90,12 @@ type DivEl struct {
 	click                  func()
 	hoverFn                func(bool) // reports live hover state every paint (QML MouseArea.containsMouse / Control.hovered)
 	pressFn                func(bool) // reports live press state every paint (QML MouseArea.pressed / Control.down)
-	children               []Element
+	// Pointer gestures (pointer.go): double-click, press-and-hold, wheel,
+	// hover position.
+	dblFn, holdFn func()
+	wheelFn       func(dx, dy float32) bool
+	hoverMoveFn   func(x, y float32)
+	children      []Element
 
 	rect Rect // assigned by layout
 	// measure memo (see measure)
@@ -1101,6 +1106,12 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 	// tree out — headless renders, tooling, tests — not only to a frame
 	// that reaches the renderer. (The hover/press VISUALS still resolve at
 	// paint time, from the same rect.)
+	if d.hoverMoveFn != nil && r.contains(ctx.MouseX, ctx.MouseY) {
+		d.hoverMoveFn(ctx.MouseX-r.X, ctx.MouseY-r.Y)
+	}
+	if d.wheelFn != nil {
+		ctx.scrolls = append(ctx.scrolls, wheelTarget{d})
+	}
 	if d.hoverFn != nil || d.pressFn != nil {
 		hovered := r.contains(ctx.MouseX, ctx.MouseY)
 		if d.hoverFn != nil {
