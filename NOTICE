@@ -19,10 +19,16 @@ This product contains code adapted from other projects:
 - The GitHub Flavored Markdown specification text (https://github.github.com/gfm/,
   CC-BY-SA 4.0) is included as md/testdata/gfm-spec.txt and used only by
   the parser's conformance tests.
-- The .gml pages under examples/qml and the parity screenshots under
-  script/gml/check/qml-examples follow the QML-Examples-Collection corpus
-  (https://github.com/JesusRamosMembrive/QML-Examples-Collection); the
-  pages are re-authored for this engine.
+- The QML-Examples-Collection corpus
+  (https://github.com/JesusRamosMembrive/QML-Examples-Collection,
+  GPL-3.0) is the reference for the .gml engine's parity review. Two
+  directories carry material derived from it and are therefore licensed
+  under the GNU General Public License v3.0, not Apache-2.0, each with
+  its own LICENSE: examples/qmlgo (Go ports of corpus pages) and
+  script/gml/check/qml-examples (screenshots of corpus pages). Nothing in
+  the framework imports them. The corpus pages themselves are not part of
+  this repository; the parity tools load them from a local checkout
+  (GFX_QML_CORPUS).
 
 Go module dependencies (each under its own licence, see the module cache):
 github.com/ebitengine/purego (MIT), github.com/chewxy/math32 (BSD-2-Clause),

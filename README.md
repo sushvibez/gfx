@@ -104,6 +104,11 @@ macOS, XGo scripting, and the QML parity review of the `.gml` engine.
 ## License
 
 [Apache-2.0](LICENSE). Third-party attributions are in [NOTICE](NOTICE).
+Two directories are GPL-3.0 instead, because they derive from the GPL
+QML-Examples-Collection corpus used for the parity review:
+[`examples/qmlgo`](examples/qmlgo) and
+[`script/gml/check/qml-examples`](script/gml/check/qml-examples); the
+framework does not import either.
 Contributions are accepted under the terms in
 [CONTRIBUTING.md](CONTRIBUTING.md#licence): Apache-2.0, a grant that lets
 the project move to another open-source licence later, and a signed-off
