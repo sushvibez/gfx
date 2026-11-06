@@ -33,6 +33,9 @@ type Input struct {
 	runes  map[rune]bool
 	events []app.KeyEvent
 	mouse  []app.MouseEvent // this frame's pointer events (drain)
+	// carry holds pointer events put off to the next frame: a release that
+	// arrived in the same frame as its press (feedMouse).
+	carry []app.MouseEvent
 
 	// Pointer state for the frame.
 	MouseX, MouseY float32 // last cursor position (screen pixels)
@@ -134,6 +137,7 @@ func (in *Input) Drain(win *app.Window) { in.drain(win) }
 // DrainEvents feeds pre-drained event slices — for games that need the raw
 // events themselves (relative mouse deltas) and the tracked state.
 func (in *Input) DrainEvents(keys []app.KeyEvent, mouse []app.MouseEvent) {
+	in.resetEdges()
 	in.events = keys
 	for _, k := range keys {
 		if k.Key != app.KeyNone {
@@ -144,44 +148,12 @@ func (in *Input) DrainEvents(keys []app.KeyEvent, mouse []app.MouseEvent) {
 		}
 		in.ModShift, in.ModCtrl = k.Shift, k.Ctrl
 	}
-	in.clicked, in.released, in.WheelY = false, false, 0
-	in.rightClicked, in.rightReleased = false, false
-	in.midClicked, in.midReleased = false, false
-	for _, m := range mouse {
-		if m.Kind != app.MouseScroll {
-			in.ModShift, in.ModCtrl = m.Shift, m.Ctrl
-		}
-		switch m.Kind {
-		case app.MouseMove:
-			in.MouseX, in.MouseY = m.X, m.Y
-		case app.MouseDown:
-			in.MouseX, in.MouseY = m.X, m.Y
-			switch m.Button {
-			case 1:
-				in.mouseDown, in.clicked = true, true
-			case 2:
-				in.midDown, in.midClicked = true, true
-			case 3:
-				in.rightDown, in.rightClicked = true, true
-			}
-		case app.MouseUp:
-			in.MouseX, in.MouseY = m.X, m.Y
-			switch m.Button {
-			case 1:
-				in.mouseDown, in.released = false, true
-			case 2:
-				in.midDown, in.midReleased = false, true
-			case 3:
-				in.rightDown, in.rightReleased = false, true
-			}
-		case app.MouseScroll:
-			in.WheelY += m.ScrollY
-		}
-	}
+	in.mouse = in.feedMouse(mouse)
 }
 
 // drain pulls one frame of key + pointer events from win into the Input.
 func (in *Input) drain(win *app.Window) {
+	in.resetEdges() // first: the pinch below feeds WheelY
 	// Multi-touch (backends that have it): keep the gesture state current.
 	if tw, ok := any(win).(interface{ TouchEvents() []app.TouchEvent }); ok {
 		in.Touches = tw.TouchEvents()
@@ -217,41 +189,7 @@ func (in *Input) drain(win *app.Window) {
 		}
 		in.ModShift, in.ModCtrl = k.Shift, k.Ctrl
 	}
-	in.clicked, in.released, in.WheelY = false, false, 0
-	in.rightClicked, in.rightReleased = false, false
-	in.midClicked, in.midReleased = false, false
-	in.mouse = win.MouseEvents()
-	for _, m := range in.mouse {
-		if m.Kind != app.MouseScroll {
-			in.ModShift, in.ModCtrl = m.Shift, m.Ctrl
-		}
-		switch m.Kind {
-		case app.MouseMove:
-			in.MouseX, in.MouseY = m.X, m.Y
-		case app.MouseDown:
-			in.MouseX, in.MouseY = m.X, m.Y
-			switch m.Button {
-			case 1:
-				in.mouseDown, in.clicked = true, true
-			case 2:
-				in.midDown, in.midClicked = true, true
-			case 3:
-				in.rightDown, in.rightClicked = true, true
-			}
-		case app.MouseUp:
-			in.MouseX, in.MouseY = m.X, m.Y
-			switch m.Button {
-			case 1:
-				in.mouseDown, in.released = false, true
-			case 2:
-				in.midDown, in.midReleased = false, true
-			case 3:
-				in.rightDown, in.rightReleased = false, true
-			}
-		case app.MouseScroll:
-			in.WheelY += m.ScrollY
-		}
-	}
+	in.mouse = in.feedMouse(win.MouseEvents())
 }
 
 // Frame is the per-frame context handed to a game's update function: the
@@ -376,32 +314,15 @@ func RunGame(o Options, update func(*Frame) bool) error {
 				in.runes[unicode.ToLower(k.Rune)] = k.Down
 			}
 		}
-		// Drain pointer events: track position, primary-button edges, wheel.
-		in.clicked, in.released, in.WheelY = false, false, 0
+		// Drain pointer events: position, button edges, wheel (feedMouse).
+		in.resetEdges()
 		mouseEvents := win.MouseEvents()
 		mouseMoved := len(mouseEvents) > 0
 		if o.Undecorated {
 			ws := win.Scale()
 			drag.Handle(win, float32(w)/ws, float32(h)/ws, mouseEvents, o.resizeBand(), fr.DragRegion)
 		}
-		for _, m := range mouseEvents {
-			switch m.Kind {
-			case app.MouseMove:
-				in.MouseX, in.MouseY = m.X, m.Y
-			case app.MouseDown:
-				in.MouseX, in.MouseY = m.X, m.Y
-				if m.Button == 1 {
-					in.mouseDown, in.clicked = true, true
-				}
-			case app.MouseUp:
-				in.MouseX, in.MouseY = m.X, m.Y
-				if m.Button == 1 {
-					in.mouseDown, in.released = false, true
-				}
-			case app.MouseScroll:
-				in.WheelY += m.ScrollY
-			}
-		}
+		in.mouse = in.feedMouse(mouseEvents)
 		resized := false
 		if nw, nh := win.Size(); nw > 0 && nh > 0 && (nw != w || nh != h) {
 			w, h = nw, nh // zero sizes (minimized) would fail GPU validation
@@ -433,7 +354,7 @@ func RunGame(o Options, update func(*Frame) bool) error {
 		// an expose all override it, and MaxFrames runs (screenshots,
 		// tests, benchmarks) never skip — they are counting frames.
 		if fr.skip && rendered > 0 && o.MaxFrames == 0 &&
-			len(in.events) == 0 && !mouseMoved && !resized && !exposed {
+			len(in.events) == 0 && !mouseMoved && !resized && !exposed && !in.Pending() {
 			if runtime.GOOS != "js" {
 				win.WaitEvent(250 * time.Millisecond)
 			}
@@ -635,3 +556,73 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 	}
 	return nil
 }
+
+// feedMouse folds a frame's pointer events into the Input and returns the
+// ones it took. A release that arrives in the same frame as its own press
+// — a touchpad tap, which Windows delivers as a down and an up a few
+// milliseconds apart, or a very quick click — is put off to the next
+// frame with everything after it, so every frame-based reader sees the
+// button down for one frame and released the next, exactly as for a
+// slower click. Without it a tap was clicked, released and not down all
+// at once, and anything that acts while the button is down (a drag, the
+// view cube, a hold-to-act control, a press-then-release button) never
+// saw it.
+func (in *Input) feedMouse(events []app.MouseEvent) []app.MouseEvent {
+	if len(in.carry) > 0 {
+		events = append(in.carry, events...)
+		in.carry = nil
+	}
+	var pressedNow [4]bool // buttons pressed in this frame
+	for i, m := range events {
+		if m.Kind == app.MouseUp && m.Button >= 1 && m.Button <= 3 && pressedNow[m.Button] {
+			in.carry = append([]app.MouseEvent(nil), events[i:]...)
+			return events[:i]
+		}
+		if m.Kind != app.MouseScroll {
+			in.ModShift, in.ModCtrl = m.Shift, m.Ctrl
+		}
+		switch m.Kind {
+		case app.MouseMove:
+			in.MouseX, in.MouseY = m.X, m.Y
+		case app.MouseDown:
+			in.MouseX, in.MouseY = m.X, m.Y
+			if m.Button >= 1 && m.Button <= 3 {
+				pressedNow[m.Button] = true
+			}
+			switch m.Button {
+			case 1:
+				in.mouseDown, in.clicked = true, true
+			case 2:
+				in.midDown, in.midClicked = true, true
+			case 3:
+				in.rightDown, in.rightClicked = true, true
+			}
+		case app.MouseUp:
+			in.MouseX, in.MouseY = m.X, m.Y
+			switch m.Button {
+			case 1:
+				in.mouseDown, in.released = false, true
+			case 2:
+				in.midDown, in.midReleased = false, true
+			case 3:
+				in.rightDown, in.rightReleased = false, true
+			}
+		case app.MouseScroll:
+			in.WheelY += m.ScrollY
+		}
+	}
+	return events
+}
+
+// resetEdges clears the one-frame state (button edges, the wheel) before
+// a frame's events are read.
+func (in *Input) resetEdges() {
+	in.clicked, in.released, in.WheelY = false, false, 0
+	in.rightClicked, in.rightReleased = false, false
+	in.midClicked, in.midReleased = false, false
+}
+
+// Pending reports pointer events held for the next frame (a release that
+// came in the same frame as its press, see feedMouse): a loop that sleeps
+// when nothing happened must run one more frame first.
+func (in *Input) Pending() bool { return len(in.carry) > 0 }
