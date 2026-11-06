@@ -13,11 +13,22 @@ set -euo pipefail
 
 VERSION=v29.0.0.0
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
+# Android Studio's default SDK location per host, unless ANDROID_HOME says.
+case "$(uname -s)" in
+  Darwin) SDK_DEFAULT="$HOME/Library/Android/sdk" ;;
+  MINGW*|MSYS*|CYGWIN*) SDK_DEFAULT="${LOCALAPPDATA:-$HOME/AppData/Local}/Android/Sdk" ;;
+  *) SDK_DEFAULT="$HOME/Android/Sdk" ;;
+esac
+SDK="${ANDROID_HOME:-$SDK_DEFAULT}"
 SRC="${WGPU_SRC:-/tmp/wgpu-native-$VERSION}"
 NDK_HOME="$(ls -d "$SDK"/ndk/* | sort -V | tail -1)"
-TOOLS="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+# An NDK ships one host toolchain (linux-x86_64, darwin-x86_64 or
+# windows-x86_64); on Windows the clang wrappers are .cmd scripts.
+HOST_TAG="$(ls "$NDK_HOME/toolchains/llvm/prebuilt" | head -1)"
+TOOLS="$NDK_HOME/toolchains/llvm/prebuilt/$HOST_TAG/bin"
+SYSROOT="$NDK_HOME/toolchains/llvm/prebuilt/$HOST_TAG/sysroot"
+CMD=""; EXE=""
+case "$HOST_TAG" in windows-*) CMD=".cmd"; EXE=".exe" ;; esac
 API=29
 
 
@@ -34,9 +45,9 @@ rustup target add --toolchain "$TOOLCHAIN" aarch64-linux-android x86_64-linux-an
 build() { # <rust-target> <abi> <clang-prefix>
   local target="$1" abi="$2" prefix="$3"
   local up; up="$(echo "$target" | tr 'a-z-' 'A-Z_')"
-  export CARGO_TARGET_${up}_LINKER="$TOOLS/${prefix}${API}-clang"
-  export CC_${target//-/_}="$TOOLS/${prefix}${API}-clang"
-  export AR_${target//-/_}="$TOOLS/llvm-ar"
+  export CARGO_TARGET_${up}_LINKER="$TOOLS/${prefix}${API}-clang$CMD"
+  export CC_${target//-/_}="$TOOLS/${prefix}${API}-clang$CMD"
+  export AR_${target//-/_}="$TOOLS/llvm-ar$EXE"
   echo "== building $abi"
   (cd "$SRC" && BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$SYSROOT --target=${prefix}${API}" \
     cargo build --release --target "$target")

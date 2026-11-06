@@ -1,4 +1,4 @@
-//go:build linux || windows
+//go:build linux || windows || js
 
 // fps is the first-person walkthrough: the physics/p3 kinematic character
 // (MoveAndSlide) walking a small level — corridor walls, a staircase, a 30°
@@ -14,6 +14,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/binary"
 	"flag"
 	"fmt"
@@ -52,27 +53,34 @@ type level struct {
 	t        float32
 }
 
-func levelPath() (string, error) {
+// levelGML is the level built in, for runs with no source tree around
+// them (the web build); a level.gml on disk wins, so it can be edited.
+//
+//go:embed level.gml
+var levelGML string
+
+func levelPath() string {
 	for _, p := range []string{"fps/level.gml", "level.gml", "examples/fps/level.gml"} {
 		if _, err := os.Stat(p); err == nil {
-			return p, nil
+			return p
 		}
 	}
-	return "", fmt.Errorf("level.gml not found")
+	return ""
 }
 
 func buildLevel() (*level, error) {
-	path, err := levelPath()
-	if err != nil {
-		return nil, err
-	}
 	l := &level{}
 	l.platX.Set(2.2)
 	env := gml.NewEnv()
 	// Host properties the document binds against (declared BEFORE load).
 	env.Float("doorOpen", &l.doorOpen)
 	env.Float("platX", &l.platX)
-	l.scene, err = gml.LoadSceneFile(path, env)
+	var err error
+	if path := levelPath(); path != "" {
+		l.scene, err = gml.LoadSceneFile(path, env)
+	} else {
+		l.scene, err = gml.LoadScene(levelGML, env)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -411,20 +419,7 @@ func run(maxFrames int) error {
 		}
 		lookX, lookY, haveLast = in.MouseX, in.MouseY, true
 
-		// Keyboard movement.
-		var move core.Vec3
-		if in.Rune('w') {
-			move.Z++
-		}
-		if in.Rune('s') {
-			move.Z--
-		}
-		if in.Rune('d') {
-			move.X++
-		}
-		if in.Rune('a') {
-			move.X--
-		}
+		move := keyMove(in)
 		jump := in.Pressed(app.KeyNone, ' ')
 
 		// Gamepad: first connected pad.
@@ -542,16 +537,28 @@ func headless(path string) error {
 	p := newPlayer(l.world())
 	u := ui.New(r2, font, func() ui.Element { return hud(p, W, H) })
 
-	// Scripted walk: forward onto the pressure plate (z≈13), then hold
-	// while the door slides open — the frame shows the level from the plate.
+	// Scripted walk, driven as a player would drive it: an app.Headless
+	// host takes injected key events, and the live loop's own Input and
+	// keyMove turn them into movement. Hold W onto the pressure plate
+	// (z≈13), let go, and stand while the door slides open — the frame
+	// shows the level from the plate.
+	host := app.NewHeadless(app.Options{Width: W, Height: H})
+	defer host.Destroy()
+	in := shell.NewInput()
 	const dt = 1.0 / 60
-	for i := 0; i < 200; i++ {
-		l.step(dt, p.inZone)
-		p.update(dt, core.V3(0, 0, 1), [2]float32{}, false)
-	}
-	for i := 0; i < 90; i++ { // stand still; door animates open
-		l.step(dt, p.inZone)
-		p.update(dt, core.Vec3{}, [2]float32{}, false)
+	for i := 0; i < 290; i++ {
+		switch i {
+		case 0:
+			host.InjectKey(app.KeyEvent{Rune: 'w', Down: true})
+		case 200:
+			host.InjectKey(app.KeyEvent{Rune: 'w', Down: false})
+		}
+		host.Step(func() bool {
+			in.DrainEvents(host.KeyEvents(), host.MouseEvents())
+			l.step(dt, p.inZone)
+			p.update(dt, keyMove(in), [2]float32{}, false)
+			return true
+		})
 	}
 	// Turn around for the shot: the landing with the animated character.
 	p.yaw = math32.Pi
@@ -578,4 +585,23 @@ func headless(path string) error {
 	}
 	fmt.Println("wrote", path)
 	return nil
+}
+
+// keyMove is the keyboard's walk direction (WASD), shared by the live loop
+// and the headless script.
+func keyMove(in *shell.Input) core.Vec3 {
+	var move core.Vec3
+	if in.Rune('w') {
+		move.Z++
+	}
+	if in.Rune('s') {
+		move.Z--
+	}
+	if in.Rune('d') {
+		move.X++
+	}
+	if in.Rune('a') {
+		move.X--
+	}
+	return move
 }

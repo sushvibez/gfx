@@ -158,12 +158,13 @@ always on; two atomic adds per call. With `GFX_CALLS=1` the counts are
 printed to stderr once a second from `Queue.Submit`, averaged per submit:
 
 ```
-gpu: per submit: 14 draws, 9 bind groups, 5 pipelines, 3 scissors, 6 vertex bufs, 1 encoders, 2 passes | 7 buffer uploads (120 KB), 0 texture uploads (0 KB) | 60 submits/s
+gpu: per submit: 14.0 draws, 9.0 bind groups, 5.0 pipelines, 3.0 scissors, 6.0 vertex bufs, 1.0 encoders, 2.0 passes | 7.0 buffer uploads (120 KB), 0.0 texture uploads (0 KB) | 60 submits in 1s
 ```
 
-Because the line is emitted once per second of wall time, a headless
-`-screenshot` run that finishes in under a second prints nothing; use it on
-a windowed run (`-frames 600`) or on a game loop. For apps running through
+A run shorter than that second still reports: `Device.Release` and the
+shell's screenshot paths flush the partial window (`gpu.FlushCallTrace`,
+which a program that exits without releasing its device can call itself).
+The first submit starts the window and is not counted. For apps running through
 `ui/shell`, `GFX_FPS=1` prints a richer per-second line (presented frames,
 loop passes, damage culling, measure/layout counts and the same upload
 figures) and, with `MaxFrames` set, the process CPU time at exit.

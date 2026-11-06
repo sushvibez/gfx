@@ -438,3 +438,24 @@ func (w *Window) SetBackground(uint32) {}
 // RetainDisplay is X11-only (keeps the connection open after Destroy);
 // a no-op here.
 func (w *Window) RetainDisplay() {}
+
+// SetPointerCapture asks for Pointer Lock (relative mouse look): while it
+// holds, the cursor hides and MouseMove events carry DX/DY deltas. The
+// browser grants it only shortly after a user gesture (a click) and the
+// user can end it with Esc, so PointerCaptured follows the browser's
+// state (pointerlockchange) rather than this request.
+func (w *Window) SetPointerCapture(on bool) {
+	doc := js.Global().Get("document")
+	if on {
+		if !doc.Get("pointerLockElement").Equal(w.canvas) {
+			w.canvas.Call("requestPointerLock")
+		}
+		return
+	}
+	if doc.Get("pointerLockElement").Equal(w.canvas) {
+		doc.Call("exitPointerLock")
+	}
+}
+
+// PointerCaptured reports whether the canvas holds Pointer Lock.
+func (w *Window) PointerCaptured() bool { return w.captured }

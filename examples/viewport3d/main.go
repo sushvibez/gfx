@@ -1,4 +1,4 @@
-//go:build linux || windows
+//go:build linux || windows || js
 
 // viewport3d demonstrates ui.Viewport3D: a live 3D scene embedded INSIDE a
 // normal 2D layout (header, side panel, footer) as an ordinary element —

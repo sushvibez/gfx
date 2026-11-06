@@ -47,20 +47,42 @@ func noteSubmitTrace() {
 	callTraceFrames++
 	now := time.Now()
 	if callTraceAt.IsZero() {
-		callTraceAt = now
+		// The first submit starts the window: start-up uploads are left
+		// out, and so is the submit itself, whose counts were just reset.
+		callTraceAt, callTraceFrames = now, 0
 		ResetUploadStats()
 		return
 	}
 	if now.Sub(callTraceAt) < time.Second {
 		return
 	}
-	n := int64(max(callTraceFrames, 1))
+	reportCalls(now)
+}
+
+// reportCalls prints the averages since callTraceAt and starts a new window.
+func reportCalls(now time.Time) {
+	// Averages to a tenth: one draw a frame is 1.0, not the 0 an integer
+	// division made of 60 draws over 61 submits.
+	n := float64(max(callTraceFrames, 1))
+	per := func(v int64) float64 { return float64(v) / n }
 	dr, bi, pi, sc, vb, en, pa := CallStats()
 	bc, bb, tc, tb := UploadStats()
-	fmt.Fprintf(os.Stderr, "gpu: per submit: %d draws, %d bind groups, %d pipelines, %d scissors, %d vertex bufs, %d encoders, %d passes | %d buffer uploads (%d KB), %d texture uploads (%d KB) | %d submits/s\n",
-		dr/n, bi/n, pi/n, sc/n, vb/n, en/n, pa/n, bc/n, bb/n/1024, tc/n, tb/n/1024, callTraceFrames)
+	fmt.Fprintf(os.Stderr, "gpu: per submit: %.1f draws, %.1f bind groups, %.1f pipelines, %.1f scissors, %.1f vertex bufs, %.1f encoders, %.1f passes | %.1f buffer uploads (%.0f KB), %.1f texture uploads (%.0f KB) | %d submits in %v\n",
+		per(dr), per(bi), per(pi), per(sc), per(vb), per(en), per(pa), per(bc), per(bb)/1024, per(tc), per(tb)/1024,
+		callTraceFrames, now.Sub(callTraceAt).Round(time.Millisecond))
 	ResetUploadStats()
 	callTraceAt, callTraceFrames = now, 0
+}
+
+// FlushCallTrace prints what GFX_CALLS has counted since its last line, so
+// a run shorter than the one-second window (a -screenshot, a test) still
+// reports. Device.Release calls it; a program that exits without releasing
+// its device can call it itself. A no-op without GFX_CALLS.
+func FlushCallTrace() {
+	if !callTrace || callTraceFrames == 0 {
+		return
+	}
+	reportCalls(time.Now())
 }
 
 // statTiming also times the uploads (GFX_UPLOAD_TIMING=1). Off by

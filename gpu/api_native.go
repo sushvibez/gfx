@@ -574,7 +574,10 @@ type Device struct {
 	staging *int
 }
 
-func (d *Device) Release() { wgpuDeviceRelease(d.h) }
+func (d *Device) Release() {
+	FlushCallTrace() // a short run still reports its GFX_CALLS line
+	wgpuDeviceRelease(d.h)
+}
 
 func (d *Device) Queue() *Queue {
 	if d.staging == nil {

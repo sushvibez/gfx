@@ -18,6 +18,7 @@ import (
 // before each step to script input (held keys, one-shot events). This is the
 // game-loop sibling of Screenshot, used to capture a deterministic frame.
 func ScreenshotGame(o Options, steps int, dt float64, update func(*Frame) bool, prep func(step int, in *Input), path string) error {
+	defer gpu.FlushCallTrace() // a run shorter than GFX_CALLS's window still reports
 	if o.FontSize == 0 {
 		o.FontSize = 18
 	}

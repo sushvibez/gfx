@@ -1,4 +1,4 @@
-//go:build linux || windows
+//go:build linux || windows || js
 
 // Partviewer is the part-studio style demo: a full-window 3D viewport (parametric
 // machined part, orbit camera) with the 2D UI floating over it — a left tool

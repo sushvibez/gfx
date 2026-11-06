@@ -26,6 +26,7 @@ func button(label string, onClick func()) ui.Element {
 
 func main() {
 	frames := flag.Int("frames", 0, "exit after N frames (0 = run until closed)")
+	shot := flag.String("screenshot", "", "render one frame headlessly and write a PNG")
 	flag.Parse()
 
 	var count core.Property[int]
@@ -39,10 +40,16 @@ func main() {
 		)
 	}
 
-	err := shell.RunUI(shell.Options{
+	opts := shell.Options{
 		Title: "graphics: counter", Width: 420, Height: 240,
 		FontSize: 20, MaxFrames: *frames,
-	}, view)
+	}
+	var err error
+	if *shot != "" {
+		err = shell.ScreenshotUI(opts, view, *shot)
+	} else {
+		err = shell.RunUI(opts, view)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "counter:", err)
 		os.Exit(1)

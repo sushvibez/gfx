@@ -112,7 +112,7 @@ GPU (`gpu/`):
 | `GFX_WGPU_POWER` | `low` or `high`: adapter power preference (`low` is the iGPU on a hybrid laptop). | `gpu/api_native.go` | `high` |
 | `GFX_WGPU_DX12_SWAPCHAIN` | `hwnd` or `visual`: a plain-HWND DXGI swapchain or a DirectComposition visual (DX12 only). | `gpu/api_native.go`, `app/win32_windows.go` | `visual` |
 | `GFX_WGPU_LOG` | `error`, `warn`, `info`, `debug` or `trace`: route wgpu-native's log to stderr at that level. | `gpu/wgpu_native.go` | off |
-| `GFX_CALLS` | Any value: print per-submit encoding and upload counts to stderr once a second (see headless-and-ci.md). | `gpu/stats.go` | off |
+| `GFX_CALLS` | Any value: print per-submit encoding and upload counts to stderr once a second, and once more when the device is released (see headless-and-ci.md). | `gpu/stats.go` | off |
 | `GFX_UPLOAD_TIMING` | Any value: also time buffer and texture uploads (`gpu.UploadNanos`). | `gpu/stats.go` | off |
 | `GFX_UPLOAD_TRACE` | Any value: log individual slow buffer writes. | `gpu/resources_native.go` | off |
 

@@ -8,6 +8,7 @@
 //
 //	go run ./particles
 //	go run ./particles -n 2000000 -frames 600
+//	go run ./particles -screenshot out.png
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/ecs"
+	"github.com/sushvibez/gfx/examples/internal/shot"
 	"github.com/sushvibez/gfx/gpu"
 	"github.com/sushvibez/gfx/gpu/plat"
 )
@@ -106,11 +108,125 @@ fn fs(in : VSOut) -> @location(0) vec4f {
 func main() {
 	n := flag.Int("n", 1_000_000, "particle count")
 	frames := flag.Int("frames", 0, "exit after N frames (0 = run until closed)")
+	screenshot := flag.String("screenshot", "", "simulate 60 frames headlessly and write the last as a PNG")
 	flag.Parse()
-	if err := run(*n, *frames); err != nil {
+	var err error
+	if *screenshot != "" {
+		const W, H = 1024, 768
+		err = shot.Render(W, H, 60, *screenshot, func(d *gpu.Device, q *gpu.Queue, f gpu.TextureFormat) (func(*gpu.TextureView), error) {
+			s, err := newSim(d, q, f, *n, W, H)
+			if err != nil {
+				return nil, err
+			}
+			// A fixed 60 Hz step with the pointer at the centre: the same
+			// picture every run.
+			return func(v *gpu.TextureView) { s.frame(v, W, H, 1.0/60, W/2, H/2, 1) }, nil
+		})
+	} else {
+		err = run(*n, *frames)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "particles:", err)
 		os.Exit(1)
 	}
+}
+
+// sim is the particle system's GPU state: the ECS column the compute pass
+// steps, the parameters, and the two pipelines.
+type sim struct {
+	device             *gpu.Device
+	queue              *gpu.Queue
+	n, gx, gy          int
+	col                *ecs.GPUColumn[Particle]
+	pbuf               *gpu.Buffer
+	stepPipe           *gpu.ComputePipeline
+	drawPipe           *gpu.RenderPipeline
+	stepBind, drawBind *gpu.BindGroup
+}
+
+// newSim seeds n particles over a w×h area and builds the pipelines for a
+// target of the given format.
+func newSim(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat, n, w, h int) (*sim, error) {
+	s := &sim{device: device, queue: queue, n: n}
+	// Seed the particles through the ECS; the column uploads once and the
+	// GPU owns it from then on.
+	world := ecs.NewWorld()
+	parts := ecs.NewComponent[Particle](world)
+	rng := rand.New(rand.NewSource(42))
+	for range n {
+		e := world.Spawn()
+		parts.Add(e, Particle{
+			Pos: core.V2(rng.Float32()*float32(w), rng.Float32()*float32(h)),
+			Vel: core.V2((rng.Float32()-0.5)*60, (rng.Float32()-0.5)*60),
+		})
+	}
+	s.col = ecs.NewGPUColumn(device, parts, 0)
+	s.col.Sync(queue)
+
+	s.pbuf = device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(params{})))
+
+	cm, err := device.CreateShaderModuleWGSL("particles-step", computeWGSL)
+	if err != nil {
+		return nil, err
+	}
+	step, err := device.CreateComputePipeline(cm, "step")
+	if err != nil {
+		return nil, err
+	}
+	cm.Release()
+	s.stepBind = device.CreateBindGroup(step.BindGroupLayout(0),
+		gpu.BindGroupEntry{Binding: 0, Buffer: s.col.Buffer()},
+		gpu.BindGroupEntry{Binding: 1, Buffer: s.pbuf},
+	)
+	s.stepPipe = step
+
+	rm, err := device.CreateShaderModuleWGSL("particles-draw", renderWGSL)
+	if err != nil {
+		return nil, err
+	}
+	draw, err := device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
+		Shader: rm, VertexEntry: "vs", FragmentEntry: "fs",
+		Format: format, AlphaBlend: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	rm.Release()
+	s.drawBind = device.CreateBindGroup(draw.BindGroupLayout(0),
+		gpu.BindGroupEntry{Binding: 0, Buffer: s.col.Buffer()},
+		gpu.BindGroupEntry{Binding: 1, Buffer: s.pbuf},
+	)
+	s.drawPipe = draw
+
+	// 2D dispatch grid: WebGPU caps each dimension at 65535 workgroups.
+	groups := (n + 63) / 64
+	s.gx = min(groups, 65535)
+	s.gy = (groups + s.gx - 1) / s.gx
+	return s, nil
+}
+
+// frame steps the particles by dt towards (mx, my) (strength < 0 repels)
+// and draws them into view.
+func (s *sim) frame(view *gpu.TextureView, w, h int, dt, mx, my, strength float32) {
+	p := params{DT: dt, W: float32(w), H: float32(h), Strength: strength, MX: mx, MY: my, XStride: float32(s.gx * 64)}
+	s.queue.WriteBuffer(s.pbuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&p)), unsafe.Sizeof(p)))
+	enc := s.device.CreateCommandEncoder()
+	cp := enc.BeginComputePass()
+	cp.SetPipeline(s.stepPipe)
+	cp.SetBindGroup(0, s.stepBind)
+	cp.Dispatch(s.gx, s.gy, 1)
+	cp.End()
+	rp := enc.BeginRenderPass(view, gpu.Color{R: 0.02, G: 0.02, B: 0.04, A: 1})
+	rp.SetPipeline(s.drawPipe)
+	rp.SetBindGroup(0, s.drawBind)
+	rp.Draw(6, s.n, 0, 0)
+	rp.End()
+	s.queue.Submit(enc.Finish())
+}
+
+func (s *sim) release() {
+	s.col.Release()
+	s.pbuf.Release()
 }
 
 func run(n, maxFrames int) error {
@@ -140,62 +256,11 @@ func run(n, maxFrames int) error {
 	w, h := win.Size()
 	surface.Configure(device, w, h, format)
 
-	// Seed the particles through the ECS; the column uploads once and the
-	// GPU owns it from then on.
-	world := ecs.NewWorld()
-	parts := ecs.NewComponent[Particle](world)
-	rng := rand.New(rand.NewSource(42))
-	for range n {
-		e := world.Spawn()
-		parts.Add(e, Particle{
-			Pos: core.V2(rng.Float32()*float32(w), rng.Float32()*float32(h)),
-			Vel: core.V2((rng.Float32()-0.5)*60, (rng.Float32()-0.5)*60),
-		})
-	}
-	col := ecs.NewGPUColumn(device, parts, 0)
-	defer col.Release()
-	col.Sync(queue)
-
-	pbuf := device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(params{})))
-	defer pbuf.Release()
-
-	cm, err := device.CreateShaderModuleWGSL("particles-step", computeWGSL)
+	s, err := newSim(device, queue, format, n, w, h)
 	if err != nil {
 		return err
 	}
-	step, err := device.CreateComputePipeline(cm, "step")
-	if err != nil {
-		return err
-	}
-	cm.Release()
-	stepLayout := step.BindGroupLayout(0)
-	stepBind := device.CreateBindGroup(stepLayout,
-		gpu.BindGroupEntry{Binding: 0, Buffer: col.Buffer()},
-		gpu.BindGroupEntry{Binding: 1, Buffer: pbuf},
-	)
-
-	rm, err := device.CreateShaderModuleWGSL("particles-draw", renderWGSL)
-	if err != nil {
-		return err
-	}
-	draw, err := device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
-		Shader: rm, VertexEntry: "vs", FragmentEntry: "fs",
-		Format: format, AlphaBlend: true,
-	})
-	if err != nil {
-		return err
-	}
-	rm.Release()
-	drawLayout := draw.BindGroupLayout(0)
-	drawBind := device.CreateBindGroup(drawLayout,
-		gpu.BindGroupEntry{Binding: 0, Buffer: col.Buffer()},
-		gpu.BindGroupEntry{Binding: 1, Buffer: pbuf},
-	)
-
-	// 2D dispatch grid: WebGPU caps each dimension at 65535 workgroups.
-	groups := (n + 63) / 64
-	gx := min(groups, 65535)
-	gy := (groups + gx - 1) / gx
+	defer s.release()
 
 	var mx, my float32 = float32(w) / 2, float32(h) / 2
 	strength := float32(1)
@@ -223,28 +288,13 @@ func run(n, maxFrames int) error {
 		last = now
 		dt = min(dt, 1.0/30)
 
-		p := params{DT: dt, W: float32(w), H: float32(h), Strength: strength, MX: mx, MY: my, XStride: float32(gx * 64)}
-		queue.WriteBuffer(pbuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&p)), unsafe.Sizeof(p)))
-
 		tex, ok := surface.CurrentTexture()
 		if !ok {
 			surface.Configure(device, w, h, format)
 			return true
 		}
 		view := tex.CreateView()
-
-		enc := device.CreateCommandEncoder()
-		cp := enc.BeginComputePass()
-		cp.SetPipeline(step)
-		cp.SetBindGroup(0, stepBind)
-		cp.Dispatch(gx, gy, 1)
-		cp.End()
-		rp := enc.BeginRenderPass(view, gpu.Color{R: 0.02, G: 0.02, B: 0.04, A: 1})
-		rp.SetPipeline(draw)
-		rp.SetBindGroup(0, drawBind)
-		rp.Draw(6, n, 0, 0)
-		rp.End()
-		queue.Submit(enc.Finish())
+		s.frame(view, w, h, dt, mx, my, strength)
 		surface.Present()
 
 		view.Release()

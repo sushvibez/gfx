@@ -19,7 +19,13 @@ set -euo pipefail
 NAME="${1:?usage: build-apk.sh <example> [abi]}"
 ABI="${2:-x86_64}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
+# Android Studio's default SDK location per host, unless ANDROID_HOME says.
+case "$(uname -s)" in
+  Darwin) SDK_DEFAULT="$HOME/Library/Android/sdk" ;;
+  MINGW*|MSYS*|CYGWIN*) SDK_DEFAULT="${LOCALAPPDATA:-$HOME/AppData/Local}/Android/Sdk" ;;
+  *) SDK_DEFAULT="$HOME/Android/Sdk" ;;
+esac
+SDK="${ANDROID_HOME:-$SDK_DEFAULT}"
 OUT="$ROOT/build/apk/$NAME"
 MINSDK=29
 
@@ -31,10 +37,16 @@ esac
 
 # Resolve toolchain pieces.
 NDK="$(ls -d "$SDK"/ndk/* | sort -V | tail -1)"
-TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+# An NDK ships one host toolchain (linux-x86_64, darwin-x86_64 or
+# windows-x86_64); on Windows the clang wrappers are .cmd scripts and the
+# SDK's build tools .exe (apksigner a .bat).
+HOST_TAG="$(ls "$NDK/toolchains/llvm/prebuilt" | head -1)"
+TOOLS="$NDK/toolchains/llvm/prebuilt/$HOST_TAG/bin"
+CMD=""; EXE=""; BAT=""
+case "$HOST_TAG" in windows-*) CMD=".cmd"; EXE=".exe"; BAT=".bat" ;; esac
 BT="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
 PLATFORM_JAR="$(ls "$SDK"/platforms/android-*/android.jar | sort -V | tail -1)"
-CLANG="$TOOLS/${CLANG_ARCH}${MINSDK}-clang"
+CLANG="$TOOLS/${CLANG_ARCH}${MINSDK}-clang$CMD"
 WGPU="$ROOT/build/wgpu/android/$ABI/libwgpu_native.so"
 
 [ -f "$WGPU" ] || { echo "missing $WGPU — run scripts/build-wgpu-android.sh" >&2; exit 1; }
@@ -77,7 +89,7 @@ if [ -n "${GFX_APK_ASSETS:-}" ]; then
   ASSETS_ARG=(-A "$GFX_APK_ASSETS")
   echo "== assets from $GFX_APK_ASSETS ($(du -sh "$GFX_APK_ASSETS" | cut -f1))"
 fi
-"$BT/aapt2" link -o "$OUT/base.apk" -I "$PLATFORM_JAR" "${ASSETS_ARG[@]}" \
+"$BT/aapt2$EXE" link -o "$OUT/base.apk" -I "$PLATFORM_JAR" "${ASSETS_ARG[@]}" \
   --manifest "$OUT/AndroidManifest.xml" --min-sdk-version $MINSDK --target-sdk-version 34
 
 echo "== add native libs"
@@ -89,7 +101,7 @@ if [ ! -f "$KS" ]; then
   keytool -genkeypair -keystore "$KS" -alias gfx -storepass android -keypass android \
     -dname "CN=gfx" -keyalg RSA -keysize 2048 -validity 10000 >/dev/null 2>&1
 fi
-"$BT/zipalign" -f 4 "$OUT/base.apk" "$OUT/$NAME.apk"
-"$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android "$OUT/$NAME.apk"
+"$BT/zipalign$EXE" -f 4 "$OUT/base.apk" "$OUT/$NAME.apk"
+"$BT/apksigner$BAT" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android "$OUT/$NAME.apk"
 
 echo "APK: $OUT/$NAME.apk  ($PKG)"

@@ -45,6 +45,7 @@ func Screenshot(o Options, hooks Hooks, path string) error {
 }
 
 func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.UI) (string, bool)) error {
+	defer gpu.FlushCallTrace() // a run shorter than GFX_CALLS's window still reports
 	if p := os.Getenv("GFX_CPUPROFILE"); p != "" {
 		f, err := os.Create(p)
 		if err == nil {

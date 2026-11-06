@@ -65,18 +65,7 @@ func run(maxFrames int) error {
 	w, h := win.Size()
 	surface.Configure(device, w, h, format)
 
-	module, err := device.CreateShaderModuleWGSL("triangle", shader)
-	if err != nil {
-		return err
-	}
-	defer module.Release()
-
-	pipeline, err := device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
-		Shader:        module,
-		VertexEntry:   "vs",
-		FragmentEntry: "fs",
-		Format:        format,
-	})
+	pipeline, err := newPipeline(device, format)
 	if err != nil {
 		return err
 	}
@@ -95,13 +84,7 @@ func run(maxFrames int) error {
 			return true
 		}
 		view := tex.CreateView()
-
-		enc := device.CreateCommandEncoder()
-		pass := enc.BeginRenderPass(view, gpu.Color{R: 0.05, G: 0.05, B: 0.08, A: 1})
-		pass.SetPipeline(pipeline)
-		pass.Draw(3, 1, 0, 0)
-		pass.End()
-		queue.Submit(enc.Finish())
+		draw(device, queue, pipeline, view)
 		surface.Present()
 
 		view.Release()
@@ -112,4 +95,29 @@ func run(maxFrames int) error {
 	})
 	fmt.Printf("rendered %d frames at %dx%d\n", rendered, w, h)
 	return nil
+}
+
+// newPipeline builds the triangle's pipeline for a target format.
+func newPipeline(device *gpu.Device, format gpu.TextureFormat) (*gpu.RenderPipeline, error) {
+	module, err := device.CreateShaderModuleWGSL("triangle", shader)
+	if err != nil {
+		return nil, err
+	}
+	defer module.Release()
+	return device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
+		Shader:        module,
+		VertexEntry:   "vs",
+		FragmentEntry: "fs",
+		Format:        format,
+	})
+}
+
+// draw clears the target and draws the triangle into it.
+func draw(device *gpu.Device, queue *gpu.Queue, pipeline *gpu.RenderPipeline, view *gpu.TextureView) {
+	enc := device.CreateCommandEncoder()
+	pass := enc.BeginRenderPass(view, gpu.Color{R: 0.05, G: 0.05, B: 0.08, A: 1})
+	pass.SetPipeline(pipeline)
+	pass.Draw(3, 1, 0, 0)
+	pass.End()
+	queue.Submit(enc.Finish())
 }
