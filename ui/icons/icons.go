@@ -12,12 +12,20 @@
 // tint) or RegisterFull (self-colored artwork the tint must not touch).
 package icons
 
-import "sync"
+import (
+	"fmt"
+	"sort"
+	"sync"
+
+	"github.com/sushvibez/gfx/render"
+)
 
 var (
 	mu     sync.RWMutex
 	stroke = map[string]string{} // inner SVG, inherits stroke color
 	full   = map[string]string{} // inner SVG, self-colored (tint ignored)
+	// parsed caches Parse by name and tint; Register clears it.
+	parsed = map[[2]string]*render.SVG{}
 )
 
 // Register adds (or replaces) a stroked glyph: body is inner SVG drawn
@@ -25,6 +33,7 @@ var (
 func Register(name, body string) {
 	mu.Lock()
 	stroke[name] = body
+	clear(parsed)
 	mu.Unlock()
 }
 
@@ -33,6 +42,7 @@ func Register(name, body string) {
 func RegisterFull(name, body string) {
 	mu.Lock()
 	full[name] = body
+	clear(parsed)
 	mu.Unlock()
 }
 
@@ -106,4 +116,47 @@ func init() {
 	} {
 		stroke[name] = body
 	}
+}
+
+// Names lists every registered glyph, built-in and registered, sorted.
+func Names() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	names := make([]string, 0, len(stroke)+len(full))
+	for n := range stroke {
+		names = append(names, n)
+	}
+	for n := range full {
+		if _, dup := stroke[n]; !dup {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// Parse returns the glyph parsed for drawing (render.Renderer2D's SVG
+// calls), tinted with color as SVG does; an unknown name is an error. The
+// result is cached per name and tint and shared, so callers must not
+// modify it; registering a glyph clears the cache.
+func Parse(name, color string) (*render.SVG, error) {
+	key := [2]string{name, color}
+	mu.RLock()
+	s, ok := parsed[key]
+	mu.RUnlock()
+	if ok {
+		return s, nil
+	}
+	data := SVG(name, color)
+	if data == nil {
+		return nil, fmt.Errorf("icons: no glyph named %q", name)
+	}
+	s, err := render.ParseSVG(data)
+	if err != nil {
+		return nil, fmt.Errorf("icons: %s: %w", name, err)
+	}
+	mu.Lock()
+	parsed[key] = s
+	mu.Unlock()
+	return s, nil
 }

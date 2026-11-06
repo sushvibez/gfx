@@ -157,3 +157,22 @@ func TestGridTracksDoNotShrinkBelowTheirContent(t *testing.T) {
 		t.Errorf("with surplus, cell 1 at x %v, want 218", got)
 	}
 }
+
+// P pads the grid: the natural size grows by twice the padding and the
+// cells are laid out inside it.
+func TestGridPadding(t *testing.T) {
+	g := Grid(2, 0).Gap(10).P(8)
+	g.Cell(Div().Size(50, 20), 1, 1)
+	g.Cell(Div().Size(70, 20), 1, 1)
+	w, h := g.measure(&Context{})
+	if w != 50+10+70+16 || h != 20+16 {
+		t.Errorf("padded natural size = %vx%v, want %vx%v", w, h, 50+10+70+16, 20+16)
+	}
+	g.layout(&Context{}, Rect{100, 100, w, h})
+	if p := g.placed[0]; p.X != 108 || p.Y != 108 {
+		t.Errorf("first cell at %v,%v, want 108,108", p.X, p.Y)
+	}
+	if p := g.placed[1]; p.X != 108+50+10 || p.X+p.W != 100+w-8 {
+		t.Errorf("second cell spans %v..%v, want %v..%v", p.X, p.X+p.W, 168, 100+w-8)
+	}
+}

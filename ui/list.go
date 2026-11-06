@@ -41,23 +41,21 @@ func (e *ListEl) Spacing(px float32) *ListEl { e.gap = max(px, 0); return e }
 
 // Heights gives the rows individual heights instead of one uniform row
 // height — what a sectioned list needs, where a section header is a row of
-// its own and taller (or shorter) than the items under it. len(heights)
-// must be the row count; anything else is ignored.
+// its own and taller (or shorter) than the items under it. heights[i] is
+// row i's height; rows past the end of a short slice take the uniform row
+// height (or the measured one, with Measured), and entries past the row
+// count are unused, so a slice that lags the model by a frame still lays
+// out every row.
 func (e *ListEl) Heights(heights []float32) *ListEl {
-	if len(heights) == e.count {
-		e.heights = heights
-	}
+	e.heights = heights
 	return e
 }
 
 // rowH_ is row i's height: the one given by Heights, the one measured when
 // the row was last built, else the uniform estimate.
 func (e *ListEl) rowHeightAt(i int) float32 {
-	if e.heights != nil {
-		if i < len(e.heights) {
-			return e.heights[i]
-		}
-		return 0
+	if i < len(e.heights) {
+		return e.heights[i]
 	}
 	if e.measure_ && e.st.measured != nil {
 		if h, ok := e.st.measured[i]; ok {
@@ -73,42 +71,23 @@ func (e *ListEl) rowTop(i int) (top, h float32) {
 	if e.heights == nil && !e.measure_ {
 		return float32(i) * (e.rowH + e.gap), e.rowH
 	}
-	if e.heights == nil {
-		for k := 0; k < i; k++ {
-			top += e.rowHeightAt(k) + e.gap
-		}
-		return top, e.rowHeightAt(i)
+	for k := 0; k < i; k++ {
+		top += e.rowHeightAt(k) + e.gap
 	}
-	for k := 0; k < i && k < len(e.heights); k++ {
-		top += e.heights[k] + e.gap
-	}
-	if i < len(e.heights) {
-		h = e.heights[i]
-	}
-	return top, h
+	return top, e.rowHeightAt(i)
 }
 
 // contentHeight is the whole list's height, however the rows are sized.
 func (e *ListEl) contentHeight() float32 {
-	if e.heights == nil && e.measure_ {
-		if e.count == 0 {
-			return 0
-		}
-		var total float32
-		for i := 0; i < e.count; i++ {
-			total += e.rowHeightAt(i) + e.gap
-		}
-		return max(total-e.gap, 0)
+	if e.count == 0 {
+		return 0
 	}
-	if e.heights == nil {
-		if e.count == 0 {
-			return 0
-		}
+	if e.heights == nil && !e.measure_ {
 		return float32(e.count)*(e.rowH+e.gap) - e.gap
 	}
 	var total float32
-	for _, h := range e.heights {
-		total += h + e.gap
+	for i := 0; i < e.count; i++ {
+		total += e.rowHeightAt(i) + e.gap
 	}
 	return max(total-e.gap, 0)
 }

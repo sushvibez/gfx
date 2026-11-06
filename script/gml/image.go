@@ -180,14 +180,10 @@ func (doc *docState) svgFor(src string) *render.SVG {
 	if name, ok := strings.CutPrefix(src, "icon:"); ok {
 		var svg *render.SVG
 		name, color, _ := strings.Cut(name, "/")
-		if data := icons.SVG(name, color); data != nil {
-			if s, err := render.ParseSVG(data); err == nil {
-				svg = s
-			} else {
-				logf("gml: Image source %q: %v", src, err)
-			}
+		if s, err := icons.Parse(name, color); err == nil {
+			svg = s
 		} else {
-			logf("gml: Image source %q: unknown icon", src)
+			logf("gml: Image source %q: %v", src, err)
 		}
 		doc.svgs[src] = svg
 		return svg

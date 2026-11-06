@@ -30,6 +30,7 @@ package ui
 type GridEl struct {
 	cols, rows int
 	gapX, gapY float32
+	pad        float32 // inner padding on every side (P)
 	w, h       float32
 	grow       float32
 	crossFill  bool
@@ -71,10 +72,14 @@ func Grid(cols, rows int) *GridEl {
 
 func (g *GridEl) Gap(px float32) *GridEl     { g.gapX, g.gapY = px, px; return g }
 func (g *GridEl) GapXY(x, y float32) *GridEl { g.gapX, g.gapY = x, y; return g }
-func (g *GridEl) W(px float32) *GridEl       { g.w = px; return g }
-func (g *GridEl) H(px float32) *GridEl       { g.h = px; return g }
-func (g *GridEl) Size(w, h float32) *GridEl  { g.w, g.h = w, h; return g }
-func (g *GridEl) Grow() *GridEl              { g.grow = 1; return g }
+
+// P pads the grid on every side: the tracks share what is left inside.
+func (g *GridEl) P(px float32) *GridEl { g.pad = max(px, 0); return g }
+
+func (g *GridEl) W(px float32) *GridEl      { g.w = px; return g }
+func (g *GridEl) H(px float32) *GridEl      { g.h = px; return g }
+func (g *GridEl) Size(w, h float32) *GridEl { g.w, g.h = w, h; return g }
+func (g *GridEl) Grow() *GridEl             { g.grow = 1; return g }
 
 // CrossFill marks a grid that asked to fill its parent's CROSS axis —
 // `GridLayout { Layout.fillWidth: true }` inside a ColumnLayout, which is
@@ -182,6 +187,7 @@ func (g *GridEl) prepare(ctx *Context, avail float32) {
 	g.rowFill = make([]bool, g.rows)
 	// The width a cell is offered while measuring: an even share, which is
 	// the best guess before the tracks are known.
+	avail -= 2 * g.pad
 	share := float32(0)
 	if avail > 0 {
 		share = (avail - g.gapX*float32(g.cols-1)) / float32(g.cols)
@@ -228,8 +234,10 @@ func (g *GridEl) prepare(ctx *Context, avail float32) {
 			}
 		}
 	}
-	g.natW = sum(g.colPref) + g.gapX*float32(g.cols-1)
-	g.natH = sum(g.rowPref) + g.gapY*float32(g.rows-1)
+	// The natural size includes the padding, so measure, natural and
+	// layoutMax all see the grid's outer size.
+	g.natW = sum(g.colPref) + g.gapX*float32(g.cols-1) + 2*g.pad
+	g.natH = sum(g.rowPref) + g.gapY*float32(g.rows-1) + 2*g.pad
 }
 
 // spread grows the tracks a cell covers until they hold it, adding any
@@ -373,6 +381,9 @@ func orZero(a, b float32) float32 {
 func (g *GridEl) layout(ctx *Context, r Rect) {
 	g.rect = r
 	g.prepare(ctx, r.W)
+	if p := g.pad; p > 0 {
+		r = Rect{r.X + p, r.Y + p, max(r.W-2*p, 0), max(r.H-2*p, 0)}
+	}
 	colW := g.tracks(g.colPref, g.colMin, g.colFill, r.W, g.gapX)
 	rowH := g.tracks(g.rowPref, g.rowMin, g.rowFill, r.H, g.gapY)
 	x0 := make([]float32, len(colW))

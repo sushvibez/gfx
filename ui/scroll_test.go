@@ -163,3 +163,15 @@ func TestWheelNotchMatchesQt(t *testing.T) {
 		t.Errorf("three notches scrolled %v in total, want 216 (Qt adds them linearly)", st.Y)
 	}
 }
+
+// Bg and Rounded are part of a scroll view's paint signature, so changing
+// the background repaints it under damage tracking.
+func TestScrollBgInPaintSig(t *testing.T) {
+	st := &ScrollState{}
+	plain := Scroll(st).paintSig()
+	bg := Scroll(st).Bg(RGBA{R: 1, A: 1}).paintSig()
+	round := Scroll(st).Bg(RGBA{R: 1, A: 1}).Rounded(6).paintSig()
+	if plain == bg || bg == round {
+		t.Errorf("paint signatures %x %x %x: background and radius must change it", plain, bg, round)
+	}
+}

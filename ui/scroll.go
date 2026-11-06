@@ -167,9 +167,11 @@ type ScrollEl struct {
 	rect     Rect
 	barC     RGBA
 	hasBarC  bool
-	autoHide bool // the bar shows only while the view moves or is hovered
-	hovered  bool // the pointer is over the viewport, recorded at layout
-	flick    bool // pans by drag, with a kinetic release (QML Flickable)
+	bg       RGBA    // background behind the content (Bg); A 0 = none
+	radius   float32 // background corner radius (Rounded)
+	autoHide bool    // the bar shows only while the view moves or is hovered
+	hovered  bool    // the pointer is over the viewport, recorded at layout
+	flick    bool    // pans by drag, with a kinetic release (QML Flickable)
 	// contentSized: the content keeps its own width instead of being
 	// stretched to the viewport (QML's contentWidth: -1). See ContentSized.
 	contentSized bool
@@ -203,6 +205,14 @@ func (e *ScrollEl) growFactor() float32 { return e.grow }
 // BarColor sets the scrollbar thumb colour (default a translucent white that
 // suits dark themes; set a dark colour for light backgrounds).
 func (e *ScrollEl) BarColor(c RGBA) *ScrollEl { e.barC, e.hasBarC = c, true; return e }
+
+// Bg fills the viewport behind the content, and Rounded rounds that fill,
+// so a scrolling panel needs no wrapping Div for its background. The
+// content is still clipped to the viewport's rectangle.
+func (e *ScrollEl) Bg(c RGBA) *ScrollEl { e.bg = c; return e }
+
+// Rounded sets the corner radius of the Bg fill.
+func (e *ScrollEl) Rounded(px float32) *ScrollEl { e.radius = px; return e }
 
 func (e *ScrollEl) W(px float32) *ScrollEl   { e.w = px; return e }
 func (e *ScrollEl) H(px float32) *ScrollEl   { e.h = px; return e }
@@ -313,6 +323,8 @@ func (e *ScrollEl) paintSig() uint64 {
 	h.b(e.hasBarC)
 	h.b(e.autoHide)
 	h.b(e.hovered)
+	h.col(e.bg)
+	h.f32(e.radius)
 	return uint64(h)
 }
 
@@ -324,6 +336,9 @@ func (e *ScrollEl) paint(ctx *Context) {
 	// frame loop keeps running while an element asks for the next one.
 	if e.st.advanceFling(ctx.animT) {
 		ctx.wantsFrame = true
+	}
+	if e.bg.A > 0 {
+		ctx.R.FillRoundRect(e.rect.X, e.rect.Y, e.rect.W, e.rect.H, e.radius, e.bg)
 	}
 	ctx.R.PushClip(e.rect.X, e.rect.Y, e.rect.W, e.rect.H)
 	e.content.paint(ctx)

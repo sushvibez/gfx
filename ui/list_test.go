@@ -28,13 +28,19 @@ func TestListPerRowHeights(t *testing.T) {
 			t.Errorf("row %d at %v (h %v), want %v (h %v)", i, top, h, want, heights[i])
 		}
 	}
-	// A height list of the wrong length is ignored — uniform rows stay.
-	plain := List(st, 40, 3, func(int) Element { return Div() }).Heights([]float32{1, 2})
-	if plain.heights != nil {
-		t.Error("a mismatched height list must be ignored")
+	// A short height list covers the rows it reaches; the rest take the
+	// uniform height. Entries past the row count are unused.
+	short := List(&ListState{}, 40, 3, func(int) Element { return Div() }).Heights([]float32{10, 20})
+	short.layout(&Context{}, Rect{0, 0, 200, 400})
+	if top, h := short.rowTop(2); top != 30 || h != 40 {
+		t.Errorf("row 2 past a short list at %v (h %v), want 30 (h 40)", top, h)
 	}
-	if top, h := plain.rowTop(2); top != 80 || h != 40 {
-		t.Errorf("uniform row 2 at %v (h %v), want 80 (h 40)", top, h)
+	if got := short.contentHeight(); got != 70 {
+		t.Errorf("short-list content height = %v, want 70", got)
+	}
+	long := List(&ListState{}, 40, 2, func(int) Element { return Div() }).Heights([]float32{10, 20, 99})
+	if got := long.contentHeight(); got != 30 {
+		t.Errorf("long-list content height = %v, want 30 (the extra entry unused)", got)
 	}
 }
 
