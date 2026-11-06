@@ -22,26 +22,39 @@ Layers big enough to have their own story keep their own list:
 ## Now — the open-source release (2026-10-31)
 
 ### Continuous integration
-No `.github/workflows` yet. Wanted: one workflow running
-`scripts/check.sh` on ubuntu (gofmt, build+vet for linux/windows/js, the
-layering test, all tests) plus the headless screenshot smoke, which needs
-wgpu-native (`scripts/fetch-wgpu.sh`) and a software Vulkan adapter
-(Mesa lavapipe) on the runner. A Windows job for `go test ./...` would
-have caught the two Windows-only failures fixed at release time.
+`.github/workflows/check.yml` (2026-11-06): ubuntu runs `scripts/check.sh`
+whole (gofmt, build+vet for linux/windows/js, layering, every test, the
+screenshot smoke) on Mesa lavapipe with the pinned wgpu-native; windows
+runs both modules' tests. Open until its first green run on GitHub. The
+scripts are committed without the executable bit, so the workflow calls
+them through `bash`. The one timing test that flaked in a loaded sweep
+(`gpu` upload cliff) now takes the best of three measurements.
 
-### Licence audit before tagging v0.1.0
-`NOTICE` lists what was adapted (GPUI's SDF renderer and shadows,
-Microsoft Terminal's text gamma, Evan Wallace's shadow technique, the GFM
-spec text, the QML-Examples-Collection corpus). Confirm the corpus
-repository's licence covers the re-authored `.gml` pages and the parity
-screenshots under `script/gml/check/qml-examples`, and that
-`examples/images/assets/logo.png` is ours.
+### Licence audit (2026-11-06)
+GPUI (Apache-2.0), Microsoft Terminal (MIT), Evan Wallace's shadow
+technique and the GFM spec text (CC-BY-SA, test data only) are attributed
+in `NOTICE`; `examples/images/assets/logo.png` is ours (generated for the
+image examples, commit b847dc2). The QML-Examples-Collection corpus is
+**GPL-3.0**: the corpus pages are not in the repository, but the Go ports
+in `examples/qmlgo` and the screenshots in `script/gml/check/qml-examples`
+derive from it, so both directories now carry the GPL-3.0 text and say so
+(README, NOTICE); v0.1.0 had published them as Apache-2.0. The corpus
+author's README says he is considering relicensing to MIT: asking him for
+an MIT/Apache grant would let those two directories rejoin the rest.
 
 ### Versioning
-Tag `v0.1.0` once CI is green. The framework is one module; `examples/`
-replaces it with `../`, so a tagged release needs nothing more. Decide
-whether `markdown/` (the editor chrome) ships in the module or moves out
-before v0.1.0 — it is a `main` package with no tests.
+`v0.1.0` is tagged and public (2026-11-06, github.com/sushvibez/gfx),
+before CI and the licence audit above: both still apply to the next tag.
+The framework is one module; `examples/` replaces it with `../`, so a
+tag needs nothing more. `markdown/` (the editor chrome, a `main`
+package) stays in the module (decided 2026-11-06); it still has no
+tests. The projects in the umbrella keep `replace … => ../gfx` until
+gfx settles and a project is released.
+
+### Sign-off enforcement
+CONTRIBUTING requires a DCO sign-off; nothing checks it yet. Install the
+DCO app and add the ruleset as the README's "Maintainers" section says
+(deferred, 2026-11-06).
 
 ### Sample assets
 `scripts/fetch-fonts.sh` downloads the images the `.gml` gallery pages
@@ -142,10 +155,6 @@ real browser. Win32 `WM_TOUCH` is not handled.
   add `testing.AllocsPerRun` checks for the 2D batcher, property
   re-evaluation and the frame loop.
 - Android and device checks (`examples/devcheck`) are manual.
-- `core`: no tests for `TrackReads`/`ReadSet` (which carries the gml
-  subtree cache), none for `geom.go` (`RayAABB`, `RayTriangle`,
-  `RaySphere`, `ClosestOnSegment`, `ClosestOnTriangle`); `Vec2` and
-  `Vec4` have no direct tests.
 - `render/fbx`, `gpuskin_test.go` and `skin_test.go` skip entirely in
   CI: no self-contained FBX fixture, so `Parse`/`ToGLTF`/`Retarget` are
   never exercised there.
@@ -155,34 +164,7 @@ real browser. Win32 `WM_TOUCH` is not handled.
 Small inconsistencies the documentation pass turned up, each one or two
 lines of work; fix them as they are touched.
 
-- **`core` animation**: `Tween` stops only an earlier tween, not a live
-  spring on the same property (`TweenLoop` and `SpringConfig` stop
-  both), so a tween and a spring can fight over `Set`. `Tween` with
-  `d <= 0` sets immediately while `TweenLoop` clamps to 1 ms. Integer
-  tweens truncate instead of rounding (an `int` tween 0→10 sits at 0 for
-  the first tenth of its duration). `Loop.Step` does not call
-  `TickAnimations`; only `ui/shell` does, so a bare `core.Loop` user gets
-  no animation unless they know to call it.
-- **`core` math**: `Vec2` lacks `Neg`; `Vec4` lacks `Mul`/`Lerp`/
-  `Normalize`; no TRS compose helper and no `Mat4.MulDir` (w = 0).
-- **`ui/shell`**: `RunGame`/`RunGame2` ignore `Options.MaxFPS`,
-  `LineHeight`, `MSDFText`, `Undecorated` and `Transparent` (only
-  `RunUI`/`Run` apply them) and the `Options` comment does not say which
-  runner reads which field. `RunGame` opens the window before the first
-  frame while `Run` opens it hidden and shows after the first present.
-  `Unmovable`/`Unresizable`/`Unminimizable` are Windows-only and
-  `OpenChild` X11-only without saying so at the `app.Window` level.
-- **`ui`**: `Input` does not scroll long text horizontally (it clips);
-  `TextArea` has no vertical scrollbar. `List.Heights` silently ignores
-  a slice of the wrong length. `GridEl` has no padding and `ScrollEl` no
-  background/rounding (callers wrap a Div). `ui/icons` has 35 glyphs but
-  no exported `Names()` and `icons.SVG` is re-parsed by every caller.
-  `LayerState.Release` is manual, so dynamically created layers leak GPU
-  textures unless the app tracks them.
-- **`gpu`**: `ReadTexture` assumes 4 bytes per texel (`RGBA16Float` and
-  `R8` are unreadable; `BytesPerTexel` knows only R8). `TextureFormat`
-  is `uint32` natively and `string` on js, so a literal breaks one
-  build. No WGSL-reflection codegen for bind-group layouts; the web
+- **`gpu`**: No WGSL-reflection codegen for bind-group layouts; the web
   backend issues one JS call per encoder call; web lacks MSAA textures
   and dual-source blending. `ffi.CallF` has no Windows implementation;
   the `go:embed` distribution of wgpu-native (DESIGN §6.1) is not built.
@@ -210,43 +192,21 @@ lines of work; fix them as they are touched.
   dynamic capsules or hulls); the BVH rebuilds on every mutation instead
   of refitting; tower stacking wanders laterally (no block solver or
   persistent manifolds).
-- **Examples and scripts**: `counter`, `triangle`, `particles` and
-  `devcheck` have no `-screenshot` flag (`-frames` only). Several
-  `linux || windows` examples (`skinned`, `actor`, `actorblend`, `fps`,
-  `partviewer`, `viewport3d`) have no js stub. `scripts/build-web.sh`
-  writes no `index.html`; only `counter`, `cubes`, `kitchensink`,
-  `settings` and `triangle` ship one. `build-apk.sh` and
-  `build-wgpu-android.sh` hard-code the NDK's `linux-x86_64` prebuilt
-  path, so Android packaging is Linux-host only. `GFX_CALLS=1` reports
-  once per second from `Submit`, so a sub-second headless run prints
-  nothing; a one-shot dump at exit would suit `-screenshot` runs. No
-  example demonstrates `app.Headless` with input injection on the 3D
-  path.
-- **`script/gml`** (found while verifying `docs/gml.md`): call-argument
-  spread (`Math.max(...xs)`) is not parsed (spread works only in array
-  literals); array mutators need an assignable receiver
-  (`items.slice().sort()` fails) and `sort(cmp)` ignores its comparator;
-  `qsTr` is not a global; a use-site child with `anchors.centerIn:
-  parent` inside a file component renders off-centre (`parent` resolves
-  to the wrong element; no test covers use-site children with anchors);
-  `ListView.Horizontal` is accepted but renders vertically, `header`/
-  `footer` are rejected on strict `.gml`; `Connections` honours only the
-  Qt 6 `function onX()` form and passes no signal arguments; `Keys`
-  events have no `modifiers`/`accepted` and a 13-code key table;
-  `RegularExpressionValidator` never matches and regex literals cannot
-  be used; silent no-ops: `Settings`, `Shortcut`, `SystemPalette`,
-  `AnimatedImage` (frame 1), `BorderImage` (not 9-patch), tiling fill
-  modes, `MouseArea` drag/wheel/double-click/long-press/`mouseX`, pointer
-  handlers beyond tap/hover, `Dial` drag, `SplitHandle.pressed/hovered`;
-  `LoadString` has no base directory (no imports, singletons or file
-  components; relative sources resolve against the cwd) — add
-  `LoadStringAt(src, baseDir)`; lenient mode is keyed on the `.qml`
-  extension only; Timers advance on the wall clock between `View()`
-  calls so `-screenshot` output of a page with a running Timer is
-  non-deterministic; `Qt.locale(name)` is always en-US. Missing tests:
-  `a?.b()`, `for…of` over a string, `switch` fall-through, `try/catch`
-  with a thrown object, `Qt.callLater` ordering, `Loader { source:
-  "sub/File.qml" }` resolution from a subdirectory.
+- **Examples and scripts**: the web builds of `fps`, `partviewer` and
+  `viewport3d` (and Pointer Lock in the browser) compile but have not
+  been opened in a browser. The macOS and Windows paths of
+  `build-apk.sh`/`build-wgpu-android.sh` are untested (no SDK on the
+  machine that wrote them), and `build-apk.sh` still needs `zip`, which
+  Git Bash lacks. `devcheck` keeps `-frames` only: it is the on-device
+  check, and its pictures are the device's.
+- **`script/gml`** (found while verifying `docs/gml.md`): silent no-ops:
+  `Settings`, `Shortcut`, `SystemPalette`, `AnimatedImage` (frame 1),
+  `BorderImage` (not 9-patch), tiling fill modes, `MouseArea`
+  drag/wheel/double-click/long-press/`mouseX`, pointer handlers beyond
+  tap/hover, `Dial` drag, `SplitHandle.pressed/hovered`. A horizontal
+  `ListView` builds every delegate (no virtualisation), and `header`/
+  `footer` stay at the ends instead of scrolling with the rows. Regex
+  values use Go's RE2: lookaround and backreferences do not compile.
 
 ## Later (deliberately deferred — build when asked)
 
@@ -265,6 +225,72 @@ prototype on the `core` dependency graph first.
 
 Kept as one line each so the next person does not reopen them.
 
+- **`ui/shell` options** (2026-11-06). One mapping (`Options.window`,
+  `withDefaults`, `clearColor`, `resizeBand`) serves every runner, so
+  `Run` now honours `Unmovable`/`Positioned`/`Fullscreen` and `MaxFPS`
+  (it read neither), the game runners honour `Transparent`,
+  `Undecorated` (border resize, `Frame.DragRegion` move), `FontPaths`
+  and the hints, open hidden and show after the first present, and
+  `RunGame2` gained per-window clears, `MaxFPS` and `MaxFrames`. The
+  `Options` comment says which runner reads what; `app`'s package doc
+  has a per-backend support table (child windows are X11 *and* Windows).
+- **`script/gml` doc gaps** (2026-11-06). Spread in call arguments;
+  `sort(compare)`; mutators on a temporary (`xs.slice().sort()`);
+  `qsTr`/`qsTranslate`/`qsTrId` and the `QT_*_NOOP` markers; `o?.f()`
+  on null short-circuits (it errored). Regex literals are RegExp values
+  (`test`, `exec`, `source`/`flags`, `RegExp(src, flags)`) and
+  `replace`/`replaceAll`/`match`/`search`/`split` take them; the
+  validator already matched. `Connections` accepts the Qt 5
+  `onX: …` form and reaches signals declared in markup with their
+  arguments, and a declared signal is callable as `id.signal(…)`. `Keys`
+  events carry `modifiers` (with `Qt.*Modifier`), letters, digits,
+  F-keys, paging and punctuation codes, honour `event.accepted` (an
+  unaccepted key falls through, Qt's rule; ui gained
+  `DivEl.OnKeyAccept`), and `Keys.onLeftPressed` and the other
+  key-specific handlers exist. `ListView.Horizontal` (now Qt's value, 1)
+  lays out sideways, and `header`/`footer` build. `LoadStringAt` and
+  `Document.SetLenient`; a `Loader` source resolves against the
+  directory of the file it is written in (it used the document's).
+  `Qt.locale(name)` knows common locales. Tests now cover the statement
+  forms, `Qt.callLater` order and use-site anchors (which were already
+  right). Timers were already deterministic under `-screenshot` (the
+  virtual clock).
+- **Examples and scripts** (2026-11-06). `counter`, `triangle` and
+  `particles` have `-screenshot` (the raw-GPU two through
+  `examples/internal/shot`). `fps` (level embedded), `partviewer` and
+  `viewport3d` build for the web, helped by a js `Device.ReadTexture`
+  that returns an error and web `SetPointerCapture`/`PointerCaptured`
+  (Pointer Lock); `skinned`, `actor` and `actorblend` get a web main
+  that says they need files from disk. `build-web.sh` writes an
+  `index.html` when an example has none. The Android scripts find the
+  NDK's host toolchain and the SDK's default place on Linux, macOS and
+  Windows. `GFX_CALLS` flushes on `Device.Release` and at the end of the
+  shell's screenshot paths (`gpu.FlushCallTrace`), and averages to a
+  tenth (one draw a frame used to print 0). `fps -screenshot` walks by
+  keys injected into an `app.Headless` host.
+- **`gpu` readback and format names** (2026-11-06). `ReadTexture`
+  packs rows by the texture's own texel size (R8, RGBA8, RGBA16Float
+  all read back; `BytesPerTexel` knows RGBA16Float), and
+  `FormatName`/`FormatByName` convert a format to and from its WebGPU
+  name the same way on every build.
+- **`ui` small gaps** (2026-11-06). `List.Heights` takes a slice of any
+  length (rows past it fall back to the uniform or measured height);
+  `GridEl.P` pads a grid; `ScrollEl.Bg`/`Rounded` paint its background;
+  `icons.Names` lists the glyphs and `icons.Parse` caches the parsed,
+  tinted glyph (the gml `icon:` source uses it). A focused `Input`
+  scrolls long text to keep the caret in view and clips at its padding;
+  `TextArea` keeps its scroll in `InputState`, scrolls by the wheel,
+  follows the caret only while focused and draws a draggable scrollbar.
+  A `UI` frees layer targets unpainted for 300 frames
+  (`LayerState.Release` is optional now, and also clears `ready`, which
+  used to leave a released layer blank), and a closed child window
+  frees its own (`UI.ReleaseLayers`).
+- **`core` animation, math and tests** (2026-11-06). `Tween` stops a
+  live spring too; `Tween` and `TweenLoop` both set at once for
+  `d <= 0`; integer tweens round; `Loop.Step` ticks animations. Added
+  `Vec2.Neg`, `Vec4` `Mul`/`Neg`/`Length`/`Lerp`/`Normalize`,
+  `Mat4.MulDir` and `Mat4TRS`. `core/coverage_test.go` covers them,
+  `geom.go` and `TrackReads`/`ReadSet`.
 - **Open-source split** (2026-10-31). The framework moved to its own
   repository and one Go module (`github.com/sushvibez/gfx`); the
   applications built on it live in their own repositories. The layering
