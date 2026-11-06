@@ -4882,6 +4882,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	var onClicked, keysPressed, keysReleased []stmt
 	var keysSpecific map[float64][]stmt // Keys.onLeftPressed and friends, by Qt key code
 	var onEntered, onExited, onPressed, onReleased []stmt
+	var gestures mouseGestures // MouseArea's double-click, hold, wheel, position (mousearea.go)
 	// rotation/scale apply about transformOrigin, which may be declared
 	// after them, so they are collected and applied at the end.
 	var rotateDeg, scaleBy float32
@@ -5085,6 +5086,14 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			onPressed = a.stmt
 		case "onReleased":
 			onReleased = a.stmt
+		case "onDoubleClicked":
+			gestures.doubleClicked = a.stmt
+		case "onPressAndHold":
+			gestures.pressAndHold = a.stmt
+		case "onWheel":
+			gestures.wheel = a.stmt
+		case "onPositionChanged":
+			gestures.positionChanged = a.stmt
 		case "cursorShape":
 			if v, err := a.expr.eval(env); err == nil {
 				d.Cursor(cursorFromQt(v))
@@ -5149,8 +5158,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			"topPadding", "bottomPadding",
 			// MouseArea interactions beyond click/hover/press (drag, move
 			// tracking, long-press) aren't modeled yet:
-			"onPositionChanged", "onDoubleClicked", "onPressAndHold",
-			"onWheel", "drag.target", "drag.axis", "preventStealing",
+			"drag.target", "drag.axis", "preventStealing",
 			"onActiveChanged", "onGrabChanged", "onCanceled",
 			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY",
 			"drag.filterChildren", "drag.smoothed", "drag.threshold",
@@ -5209,6 +5217,11 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 		d.OnKeyAccept(kh)
 	}
 	doc.wireHoverPress(n, d, env, onEntered, onExited, onPressed, onReleased)
+	if gestures.any() || n.typeName == "MouseArea" {
+		gestures.hoverEnabled = attrIsTrue(n, "hoverEnabled", env)
+		_, pressRef := doc.hoverPressRefs(doc.keyID(n))
+		doc.wireMouseGestures(n, d, env, &gestures, pressRef)
+	}
 	return nil
 }
 

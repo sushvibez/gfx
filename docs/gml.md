@@ -450,7 +450,7 @@ positioners, layouts and Controls containers):
 | `layer.enabled` with `layer.effect` blur (`MultiEffect.blurEnabled`, `GaussianBlur`, `FastBlur`, `RecursiveBlur`), `DropShadow`/`Glow` shadow | honoured as an offscreen layer |
 | `Component.onCompleted` | runs once, after the first laid-out frame (so geometry reads work) |
 | `ToolTip.text`, `ToolTip.visible`, `ToolTip.delay`, `ToolTip.timeout` | honoured (attached tooltip floated over the item) |
-| `enabled`, `z`, `antialiasing`, `smooth`, `activeFocusOnTab`, `objectName`, `parent`, `baselineOffset`, `on<Geometry>Changed`, `onVisibleChanged`, `onOpacityChanged`, `onActiveFocusChanged`, `title`, `flags`, `modality`, `visibility`, `hoverEnabled`, `focusPolicy`, `*Padding` on plain items, `Component.onDestruction`, `onPositionChanged`, `onDoubleClicked`, `onPressAndHold`, `onWheel`, `drag.*`, `acceptedButtons`, `propagateComposedEvents`, `preventStealing`, `onCanceled`, `xAxis.*`/`yAxis.*`, `gesturePolicy`, `onTranslationChanged` | accepted, not modelled |
+| `enabled`, `z`, `antialiasing`, `smooth`, `activeFocusOnTab`, `objectName`, `parent`, `baselineOffset`, `on<Geometry>Changed`, `onVisibleChanged`, `onOpacityChanged`, `onActiveFocusChanged`, `title`, `flags`, `modality`, `visibility`, `hoverEnabled`, `focusPolicy`, `*Padding` on plain items, `Component.onDestruction`, `drag.*`, `acceptedButtons`, `propagateComposedEvents`, `preventStealing`, `onCanceled`, `xAxis.*`/`yAxis.*`, `gesturePolicy`, `onTranslationChanged` | accepted, not modelled |
 
 Extensions beyond QML, used by the GPUI-port examples: `justify`, `items`
 (flexbox alignment on a box), `grow`, `spacing` and `padding` on a plain
@@ -463,7 +463,7 @@ on Button, `Spacer { }`.
 | element | notes |
 | --- | --- |
 | `Item`, `Rectangle`, `FocusScope` | a box; no implicit size inside a layout, as in Qt |
-| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed` live. Drag, wheel, double-click, long-press and `mouseX/Y` are accepted no-ops |
+| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed`, `mouseX`, `mouseY` live; `onDoubleClicked`, `onPressAndHold` (Qt's 800 ms; the release is then not a click), `onWheel` (`wheel.angleDelta`, `pixelDelta`; setting `wheel.accepted = false` lets the wheel scroll the view behind), `onPositionChanged` (while pressed, or hovering with `hoverEnabled`); handlers get `mouse`/`wheel`, by that name or as an arrow function's parameter. `drag.target` is an accepted no-op |
 | `TapHandler`, `HoverHandler`, `DragHandler`, `PinchHandler`, `WheelHandler`, `PointHandler` | rewritten to a MouseArea on the parent: `onTapped`/`onSingleTapped` → click, hover works; drag, pinch, wheel do nothing |
 | `DropArea` | built; drops are not delivered |
 | `Row`, `Column`, `Flow`, `Grid` | positioners: `spacing`, `padding`; `Grid` takes `columns`, `rows`, `rowSpacing`, `columnSpacing`; `flow` accepted |

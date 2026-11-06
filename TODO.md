@@ -202,7 +202,7 @@ lines of work; fix them as they are touched.
 - **`script/gml`** (found while verifying `docs/gml.md`): silent no-ops:
   `Settings`, `Shortcut`, `SystemPalette`, `AnimatedImage` (frame 1),
   `BorderImage` (not 9-patch), tiling fill modes, `MouseArea`
-  drag/wheel/double-click/long-press/`mouseX`, pointer handlers beyond
+  `drag.target`, pointer handlers beyond
   tap/hover, `Dial` drag, `SplitHandle.pressed/hovered`. A horizontal
   `ListView` builds every delegate (no virtualisation), and `header`/
   `footer` stay at the ends instead of scrolling with the rows. Regex
@@ -234,6 +234,12 @@ Kept as one line each so the next person does not reopen them.
   `RunGame2` gained per-window clears, `MaxFPS` and `MaxFrames`. The
   `Options` comment says which runner reads what; `app`'s package doc
   has a per-backend support table (child windows are X11 *and* Windows).
+- **`MouseArea` gestures** (2026-11-06). `onDoubleClicked`,
+  `onPressAndHold`, `onWheel` (Qt's angleDelta/pixelDelta, `accepted`)
+  and `onPositionChanged` run with their `mouse`/`wheel` objects, and
+  `mouseX`/`mouseY` are live, on the ui layer's new DivEl gesture
+  handlers (`OnDoubleClick`, `OnPressAndHold`, `OnWheel`,
+  `OnHoverMove`).
 - **`script/gml` doc gaps** (2026-11-06). Spread in call arguments;
   `sort(compare)`; mutators on a temporary (`xs.slice().sort()`);
   `qsTr`/`qsTranslate`/`qsTrId` and the `QT_*_NOOP` markers; `o?.f()`
