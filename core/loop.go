@@ -37,14 +37,17 @@ func (l *Loop) Post(fn func()) {
 // Connect Process-style callbacks here.
 func (l *Loop) Frame() *Signal[time.Duration] { return &l.frame }
 
-// Step runs one frame: drain posted work, emit Frame, then flush property
-// bindings so layout/paint observe a consistent world.
+// Step runs one frame: drain posted work, advance the tweens and springs
+// by dt, emit Frame, then flush property bindings so layout/paint observe a
+// consistent world. (ui/shell runs its own frame loop and ticks the
+// animations itself; it does not call Step.)
 func (l *Loop) Step(dt time.Duration) {
 	for {
 		select {
 		case fn := <-l.posted:
 			fn()
 		default:
+			TickAnimations(dt)
 			l.frame.Emit(dt)
 			FlushBindings()
 			return

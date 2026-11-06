@@ -11,6 +11,7 @@ func (a Vec2) Add(b Vec2) Vec2      { return Vec2{a.X + b.X, a.Y + b.Y} }
 func (a Vec2) Sub(b Vec2) Vec2      { return Vec2{a.X - b.X, a.Y - b.Y} }
 func (a Vec2) Mul(b Vec2) Vec2      { return Vec2{a.X * b.X, a.Y * b.Y} }
 func (a Vec2) Scale(s float32) Vec2 { return Vec2{a.X * s, a.Y * s} }
+func (a Vec2) Neg() Vec2            { return Vec2{-a.X, -a.Y} }
 func (a Vec2) Dot(b Vec2) float32   { return a.X*b.X + a.Y*b.Y }
 func (a Vec2) Length() float32      { return sqrt(a.Dot(a)) }
 func (a Vec2) Lerp(b Vec2, t float32) Vec2 {
@@ -64,6 +65,18 @@ func (a Vec4) Sub(b Vec4) Vec4      { return Vec4{a.X - b.X, a.Y - b.Y, a.Z - b.
 func (a Vec4) Scale(s float32) Vec4 { return Vec4{a.X * s, a.Y * s, a.Z * s, a.W * s} }
 func (a Vec4) Dot(b Vec4) float32   { return a.X*b.X + a.Y*b.Y + a.Z*b.Z + a.W*b.W }
 func (a Vec4) XYZ() Vec3            { return Vec3{a.X, a.Y, a.Z} }
+func (a Vec4) Mul(b Vec4) Vec4      { return Vec4{a.X * b.X, a.Y * b.Y, a.Z * b.Z, a.W * b.W} }
+func (a Vec4) Neg() Vec4            { return Vec4{-a.X, -a.Y, -a.Z, -a.W} }
+func (a Vec4) Length() float32      { return sqrt(a.Dot(a)) }
+func (a Vec4) Lerp(b Vec4, t float32) Vec4 {
+	return Vec4{lerp(a.X, b.X, t), lerp(a.Y, b.Y, t), lerp(a.Z, b.Z, t), lerp(a.W, b.W, t)}
+}
+func (a Vec4) Normalize() Vec4 {
+	if l := a.Length(); l > 0 {
+		return a.Scale(1 / l)
+	}
+	return Vec4{}
+}
 
 func sqrt(x float32) float32       { return math32.Sqrt(x) }
 func lerp(a, b, t float32) float32 { return a + (b-a)*t }

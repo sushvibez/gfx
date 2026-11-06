@@ -45,6 +45,25 @@ func (a Mat4) MulPoint(p Vec3) Vec3 {
 	return a.MulVec4(Vec4{p.X, p.Y, p.Z, 1}).XYZ()
 }
 
+// MulDir transforms a direction (w=0): rotation and scale apply,
+// translation does not. (Normals want the inverse transpose instead
+// under non-uniform scale.)
+func (a Mat4) MulDir(d Vec3) Vec3 {
+	return a.MulVec4(Vec4{d.X, d.Y, d.Z, 0}).XYZ()
+}
+
+// Mat4TRS composes translation, rotation and scale as T·R·S: a point is
+// scaled, then rotated, then moved — the usual node transform.
+func Mat4TRS(t Vec3, r Quat, s Vec3) Mat4 {
+	m := r.Mat4()
+	ks := [3]float32{s.X, s.Y, s.Z}
+	for c, k := range ks {
+		m[4*c], m[4*c+1], m[4*c+2] = m[4*c]*k, m[4*c+1]*k, m[4*c+2]*k
+	}
+	m[12], m[13], m[14] = t.X, t.Y, t.Z
+	return m
+}
+
 func (a Mat4) Transpose() Mat4 {
 	var out Mat4
 	for c := range 4 {

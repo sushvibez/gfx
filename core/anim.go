@@ -3,6 +3,8 @@ package core
 import (
 	"math"
 	"time"
+
+	"github.com/chewxy/math32"
 )
 
 // Property animation: Tween drives a property toward a target over time,
@@ -241,43 +243,55 @@ type tween struct {
 
 var tweens []*tween
 
-// Tween animates p from its current value to target over d. A zero or
-// negative duration sets the value immediately.
+// Tween animates p from its current value to target over d, replacing any
+// tween or spring already driving p. A zero or negative duration sets the
+// value immediately.
 func Tween[T Animatable](p *Property[T], target T, d time.Duration, e Easing) {
 	if e == nil {
 		e = EaseInOutQuad
 	}
+	stopTween(p)
+	stopSpring(p)
 	if d <= 0 {
 		p.Set(target)
-		stopTween(p)
 		return
 	}
 	from := p.Get()
 	tw := &tween{key: p, dur: d}
-	tw.step = func(t float32) {
-		t = e(t)
-		p.Set(T(float32(from) + (float32(target)-float32(from))*t))
-	}
-	stopTween(p)
+	tw.step = func(t float32) { p.Set(between(from, target, e(t))) }
 	tweens = append(tweens, tw)
 }
 
 // TweenLoop animates p between its current value and target over d,
-// repeating per mode (Loop restarts, PingPong reverses). Cancel with
-// StopTween.
+// repeating per mode (Loop restarts, PingPong reverses), replacing any
+// tween or spring already driving p. Cancel with StopTween. Like Tween, a
+// zero or negative duration sets the value immediately (there is no loop
+// to run).
 func TweenLoop[T Animatable](p *Property[T], target T, d time.Duration, e Easing, mode LoopMode) {
 	if e == nil {
 		e = EaseInOutQuad
 	}
-	from := p.Get()
-	tw := &tween{key: p, dur: max(d, time.Millisecond), mode: mode}
-	tw.step = func(t float32) {
-		t = e(t)
-		p.Set(T(float32(from) + (float32(target)-float32(from))*t))
-	}
 	stopTween(p)
 	stopSpring(p)
+	if d <= 0 {
+		p.Set(target)
+		return
+	}
+	from := p.Get()
+	tw := &tween{key: p, dur: d, mode: mode}
+	tw.step = func(t float32) { p.Set(between(from, target, e(t))) }
 	tweens = append(tweens, tw)
+}
+
+// between is from + (to − from)·t in T: rounded to the nearest whole
+// number for an integer type (truncating would hold an int tween 0→10 at
+// 0 for the first tenth of its run), exact for a float.
+func between[T Animatable](from, to T, t float32) T {
+	v := float32(from) + (float32(to)-float32(from))*t
+	if half := float32(0.5); T(half) == 0 {
+		return T(math32.Round(v))
+	}
+	return T(v)
 }
 
 // StopTween cancels any running tween or spring on p, leaving its current
