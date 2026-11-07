@@ -55,7 +55,7 @@ ecs ────┤
         gpu (WebGPU: wgpu-native via ffi natively, syscall/js on web; gpu/plat surfaces)
 app (window, input, lifecycle, headless backend)      physics/p3     audio
 ffi (purego / syscall / asm trampolines — the cgo replacement)
-core (math, Property/Signal, event loop, animation)    mem (arenas, pools, handles — stub)
+core (math, Property/Signal, event loop, animation; core/settings: saved settings)    mem (arenas, pools, handles — stub)
 ```
 
 Cross-cutting rules that shape most code here:
