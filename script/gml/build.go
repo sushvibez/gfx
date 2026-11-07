@@ -6644,33 +6644,7 @@ func buildSlider(n *node, env *Env, doc *docState) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: Slider has no attribute %q", a.line, a.name)
 		}
 	}
-	pr, broke, ok := propOf[float32](ref)
-	var writeBack func(float32)
-	if !ok {
-		if ref == nil {
-			// `Slider { }` with no value attribute: the control still owns
-			// value state, readable as id.value.
-			ref = doc.floatProp(doc.key(n)+".value", 0)
-			doc.exposeIDProp(n, "value", ref)
-			pr, broke, ok = propOf[float32](ref)
-		} else {
-			// Bound to a non-real property (`value: someIntProp`): mirror it
-			// through the slider's own real state — re-seeded from the
-			// property every build, written back on drag. QML converts
-			// between value types silently.
-			cur, _ := toFloat32(ref.get())
-			mirror := doc.floatProp(doc.key(n)+".value~real", cur)
-			if mp, _, mok := propOf[float32](mirror); mok {
-				mp.p.Set(cur)
-				pr, ok = mp, true
-			}
-			target := ref
-			writeBack = func(v float32) { _ = target.set(v) }
-			if t, isTracked := ref.(trackedRef); isTracked {
-				broke = t.name
-			}
-		}
-	}
+	ref, pr, broke, writeBack, ok := realValueProp(doc, n, ref)
 	if !ok {
 		return nil, fmt.Errorf("gml:%d: Slider value wants a real property", n.line)
 	}
@@ -7127,12 +7101,26 @@ func buildSeparator(n *node, env *Env) (ui.Element, error) {
 func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var value, from, to float32 = 0, 0, 1
 	size := float32(64)
+	var ref Ref
+	var step float32
+	var onMoved []stmt
+	enabled := true
 	for _, a := range n.attrs {
 		switch a.name {
 		case "id":
 		case "value":
 			// Own live state, exposed as id.value like the other controls.
-			_, value = floatBinding(doc, n, a, env)
+			ref, value = floatBinding(doc, n, a, env)
+		case "stepSize":
+			if f, err := attrFloat(a, env); err == nil {
+				step = f
+			}
+		case "enabled":
+			if b, err := attrBool(a, env); err == nil {
+				enabled = b
+			}
+		case "onMoved":
+			onMoved = a.stmt
 		case "from":
 			f, err := attrFloat(a, env)
 			if err != nil {
@@ -7153,12 +7141,12 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if f > 0 {
 				size = f
 			}
-		case "stepSize", "wrap", "snapMode", "live", "enabled", "inputMode",
+		case "wrap", "snapMode", "live", "inputMode",
 			"suffix", "prefix", "opacity", "scale", "visible", "hoverEnabled",
 			"font.pixelSize", "font.pointSize", "background", "handle",
 			// style extensions the corpus sets on its Dial:
 			"progressColor", "trackColor", "handleColor", "startAngle",
-			"endAngle", "onMoved", "onValueChanged", "z",
+			"endAngle", "onValueChanged", "z",
 			"trackWidth", "showTicks", "tickCount", "valueDecimals",
 			"valueSuffix", "label", "labelColor", "implicitWidth",
 			"implicitHeight", "inputMode2":
@@ -7169,13 +7157,17 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	// A Qt Dial is a rotary track with the value drawn as an arc plus a
 	// handle: sweep -140°..140° from 12 o'clock, like Quick Controls.
-	// (Rotary dragging is not modeled — the value follows its binding.)
+	// Turning it is ui.Dial's, laid over the drawing (dialInteraction).
+	ref, pr, broke, writeBack, ok := realValueProp(doc, n, ref)
+	if ok && ref != nil {
+		value = pr.p.Get()
+	}
 	pos := float32(0)
 	if to != from {
 		pos = (value - from) / (to - from)
 	}
 	pos = min(max(pos, 0), 1)
-	return ui.NewCanvas(size, size, func(r *render.Renderer2D, rect ui.Rect) {
+	drawn := ui.NewCanvas(size, size, func(r *render.Renderer2D, rect ui.Rect) {
 		d := min(rect.W, rect.H)
 		if d <= 0 {
 			return
@@ -7206,7 +7198,31 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 			hp.LineTo(hx+lw*0.75*float32(math.Cos(a)), hy+lw*0.75*float32(math.Sin(a)))
 		}
 		r.FillPath(hp.Close(), ui.RGB(0xffffff))
-	}), nil
+	})
+	if !ok || !enabled {
+		return drawn, nil
+	}
+	dl := ui.Dial(pr.p, from, to).Step(step, snapAlways(n, env))
+	if onMoved != nil || broke != "" || writeBack != nil {
+		run := doc.handlerRunner(env)
+		p := pr.p
+		dl.OnMoved(func() {
+			if writeBack != nil {
+				writeBack(p.Get())
+			}
+			if broke != "" {
+				doc.assigned[broke] = true // turning it breaks the bound default
+			}
+			if onMoved != nil {
+				env.vars["value"] = float64(p.Get())
+				run(onMoved, "onMoved")
+				delete(env.vars, "value")
+			}
+		})
+	}
+	return ui.Div().Size(size, size).AnchorMode().Children(
+		ui.Anchored(drawn, "", ui.Anchors{Fill: "parent"}),
+		ui.Anchored(dl, "", ui.Anchors{Fill: "parent"})), nil
 }
 
 // buildSpinBox is a Qt Quick Controls SpinBox: a value box flanked by - / +
@@ -8767,4 +8783,38 @@ func listHeaderFooter(doc *docState, env *Env, header, footer *node, height floa
 		}
 	}
 	return ui.Div().Col().H(height).Children(parts...)
+}
+
+// realValueProp resolves a value control's (Slider, Dial) value to the
+// real property its ui widget drives. ref is the value attribute's
+// binding, or nil when there is none: the control then owns value state,
+// readable as id.value. A binding to a non-real property (`value:
+// someIntProp`) is mirrored through the control's own real state —
+// re-seeded from the property every build, written back by writeBack on
+// a move (QML converts between value types silently). broke names the
+// declared property a user move breaks the binding of ("" for none).
+func realValueProp(doc *docState, n *node, ref Ref) (Ref, propRef[float32], string, func(float32), bool) {
+	pr, broke, ok := propOf[float32](ref)
+	var writeBack func(float32)
+	if ok {
+		return ref, pr, broke, nil, true
+	}
+	if ref == nil {
+		ref = doc.floatProp(doc.key(n)+".value", 0)
+		doc.exposeIDProp(n, "value", ref)
+		pr, broke, ok = propOf[float32](ref)
+		return ref, pr, broke, nil, ok
+	}
+	cur, _ := toFloat32(ref.get())
+	mirror := doc.floatProp(doc.key(n)+".value~real", cur)
+	if mp, _, mok := propOf[float32](mirror); mok {
+		mp.p.Set(cur)
+		pr, ok = mp, true
+	}
+	target := ref
+	writeBack = func(v float32) { _ = target.set(v) }
+	if t, isTracked := ref.(trackedRef); isTracked {
+		broke = t.name
+	}
+	return ref, pr, broke, writeBack, ok
 }

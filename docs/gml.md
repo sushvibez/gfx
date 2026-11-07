@@ -486,7 +486,7 @@ on Button, `Spacer { }`.
 | `Button`, `ToolButton`, `DelayButton`, `RoundButton`, `TabButton`, `MenuItem`, `MenuBarItem` | `text`, `icon.source/name/color/width/height`, `width`, `height`, `color`, `radius`, `flat`, `highlighted`, `checkable`, `checked`, `down`, `onClicked`, `onToggled`, `palette.button/buttonText`, `background`/`contentItem` via a style module | `autoRepeat`, `display`, `action` beyond text, `DelayButton.delay` progress |
 | `ItemDelegate`, `SwipeDelegate`, `CheckDelegate`, `RadioDelegate`, `SwitchDelegate` | a row with text, highlight, `onClicked` | swipe actions |
 | `CheckBox`, `Switch`, `RadioButton` | `text`, `checked`, `onToggled`/`onClicked`, `enabled` | `tristate`/`checkState`, `autoExclusive`, `ButtonGroup` exclusivity |
-| `Slider`, `RangeSlider`, `Dial` | `value`, `from`, `to`, `stepSize`, `snapMode`, `orientation`, `onMoved`, `onValueChanged`, `live`; RangeSlider `first.value`/`second.value` with non-crossing drag | Dial dragging (value follows its binding), `wheelEnabled`, `touchDragThreshold` |
+| `Slider`, `RangeSlider`, `Dial` | `value`, `from`, `to`, `stepSize`, `snapMode`, `orientation`, `onMoved`, `onValueChanged`, `live`; RangeSlider `first.value`/`second.value` with non-crossing drag; a Dial turns to the pointer's angle (`ui.Dial`: press and drag, 280° sweep from 12 o'clock, `stepSize` with `Dial.SnapAlways`, `onMoved` reading `value`, a bound non-real value written back) | `wheelEnabled`, `touchDragThreshold`, Dial `inputMode` (always circular) and `wrap` |
 | `SpinBox` | `value`, `from`, `to`, `stepSize`, `editable`, `textFromValue`/`valueFromText` via a style | `wrap`, `inputMode`, `validator` |
 | `ComboBox` | `model`, `currentIndex`, `textRole`, `valueRole`, `currentText`, `currentValue`, `displayText`, `editable`, `onActivated`, `onCurrentIndexChanged`, `popup` via a style | `editText` round-trip, `find()` |
 | `ProgressBar`, `BusyIndicator` | `value`, `from`, `to`, `indeterminate`, `running` | |
@@ -834,7 +834,7 @@ Not implemented (summarised from `script/TODO.md` and the findings log):
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,
   `ObjectModel`, `Instantiator`, `XmlListModel`, `WorkerScript`.
 - Controls: native file/colour/font/message dialogs, popup enter/exit
-  transitions, Dial dragging, SpinBox wrap/validator, ComboBox editable
+  transitions, SpinBox wrap/validator, ComboBox editable
   round-trip, TextField selection and `inputMask`, ButtonGroup exclusivity,
   `Settings` persistence, `SystemPalette` colours, Page/ApplicationWindow
   `header`/`footer`/`menuBar`, locale-aware calendars.
