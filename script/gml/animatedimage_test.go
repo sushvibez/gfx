@@ -8,52 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/sushvibez/gfx/ui"
 )
-
-func TestGIFClock(t *testing.T) {
-	c := &gifClock{speed: 1, setTo: -1,
-		delays: []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 100 * time.Millisecond}}
-	c.total = 400 * time.Millisecond
-	t0 := time.Unix(1000, 0)
-	c.origin = t0
-	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
-
-	c.update(animatedImageAttrs{}, t0) // playing by default, from frame 0
-	for ms, want := range map[int]int{0: 0, 99: 0, 100: 1, 299: 1, 300: 2, 400: 0, 550: 1} {
-		if got := c.frameAt(at(ms)); got != want {
-			t.Errorf("frameAt(%d ms) = %d, want %d", ms, got, want)
-		}
-	}
-	// Paused at 150 ms: frame 1 holds.
-	c.update(animatedImageAttrs{paused: true}, at(150))
-	if got := c.frameAt(at(5000)); got != 1 {
-		t.Errorf("paused frame = %d, want 1", got)
-	}
-	// Resumed at 5000 ms: from frame 1's start.
-	c.update(animatedImageAttrs{}, at(5000))
-	if got := c.frameAt(at(5000 + 200)); got != 2 {
-		t.Errorf("resumed +200 ms = %d, want 2", got)
-	}
-	// currentFrame written: jumps.
-	c.update(animatedImageAttrs{frame: 2, hasFrame: true}, at(6000))
-	if got := c.frameAt(at(6000)); got != 2 {
-		t.Errorf("after currentFrame = 2: %d", got)
-	}
-	// Double speed: frame 2 (100 ms) passes in 50 ms.
-	c.update(animatedImageAttrs{speed: 2, hasSpeed: true, frame: 2, hasFrame: true}, at(6000))
-	if got := c.frameAt(at(6000 + 60)); got != 0 {
-		t.Errorf("speed 2, +60 ms = %d, want 0", got)
-	}
-	// Stopped, then playing again: from the first frame.
-	c.update(animatedImageAttrs{playing: false, hasPlaying: true}, at(7000))
-	c.update(animatedImageAttrs{playing: true, hasPlaying: true}, at(9000))
-	if got := c.frameAt(at(9000)); got != 0 {
-		t.Errorf("restarted = %d, want 0", got)
-	}
-}
 
 func TestAnimatedImageAttrs(t *testing.T) {
 	dir := t.TempDir()

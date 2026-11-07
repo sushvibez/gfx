@@ -1,22 +1,16 @@
 package gml
 
 import (
-	"bytes"
-	"image/gif"
-	"time"
-
 	"github.com/sushvibez/gfx/render"
 	"github.com/sushvibez/gfx/ui"
 )
 
-// AnimatedImage's playback: playing, paused, speed and currentFrame drive
-// a per-element clock, which the image asks for its frame at paint time
-// (ui.LazyImageEl.FrameClock), so a playing GIF does not rebuild the page
-// every frame. Playing restarts from the first frame, as QMovie does;
-// paused holds the frame and resumes from it; writing currentFrame jumps
-// there. frameCount and currentFrame are on the id object, read at build.
-// The frame delays come from decoding the GIF on the CPU (image/gif), with
-// the same 0 → 100 ms rule the texture decode uses.
+// AnimatedImage's playback over ui.ImagePlayer (the Go API for the same):
+// each build turns the playing, paused, speed and currentFrame attributes
+// into player calls when they change — playing restarts from the first
+// frame, as QMovie does; paused holds the frame and resumes from it;
+// writing currentFrame seeks. frameCount, currentFrame, playing and
+// paused are on the id object, read at build.
 
 // animatedImageAttrs are an AnimatedImage's playback attributes.
 type animatedImageAttrs struct {
@@ -55,145 +49,66 @@ func (a *animatedImageAttrs) read(at attr, env *Env) error {
 	return nil
 }
 
-// gifClock is one AnimatedImage's playback state, kept across builds.
-type gifClock struct {
-	delays  []time.Duration // per frame
-	total   time.Duration
-	origin  time.Time // when frame 0 started, at speed
+// animPlayer is one AnimatedImage's player and the attribute values its
+// calls were made for, kept across builds.
+type animPlayer struct {
+	p       *ui.ImagePlayer
+	playing bool
+	paused  bool
 	speed   float64
-	held    bool // stopped or paused: showing heldAt
-	heldAt  int
-	playing bool // the last build's playing
-	setTo   int  // the last currentFrame written by markup (-1: none)
+	setTo   int // the last currentFrame written by markup (-1: none)
+	started bool
 }
 
-// frameAt is the frame at now.
-func (c *gifClock) frameAt(now time.Time) int {
-	if c.held || c.total <= 0 || len(c.delays) == 0 {
-		return c.heldAt
+// animPlayer returns the element's player, brought up to this build's
+// attributes.
+func (doc *docState) animPlayer(n *node, src string, a animatedImageAttrs) *ui.ImagePlayer {
+	if doc.animPlayers == nil {
+		doc.animPlayers = map[string]*animPlayer{}
 	}
-	pos := time.Duration(float64(now.Sub(c.origin)) * c.speed)
-	pos %= c.total
-	if pos < 0 {
-		pos += c.total
+	key := doc.key(n) + "\x00" + src
+	ap := doc.animPlayers[key]
+	if ap == nil {
+		ap = &animPlayer{p: ui.NewImagePlayer(doc.imageCell(src)), playing: true, speed: 1, setTo: -1}
+		doc.animPlayers[key] = ap
 	}
-	for i, d := range c.delays {
-		if pos < d {
-			return i
-		}
-		pos -= d
-	}
-	return len(c.delays) - 1
-}
-
-// offset is where frame i starts in the cycle.
-func (c *gifClock) offset(i int) time.Duration {
-	var t time.Duration
-	for j := 0; j < i && j < len(c.delays); j++ {
-		t += c.delays[j]
-	}
-	return t
-}
-
-// startAt runs the clock from frame i at now.
-func (c *gifClock) startAt(i int, now time.Time) {
-	c.held = false
-	c.origin = now.Add(-time.Duration(float64(c.offset(i)) / c.speed))
-}
-
-// update applies one build's attributes at now.
-func (c *gifClock) update(a animatedImageAttrs, now time.Time) {
+	p := ap.p
 	playing := !a.hasPlaying || a.playing
+	if a.paused != ap.paused || !ap.started {
+		p.SetPaused(a.paused)
+		ap.paused = a.paused
+	}
+	if playing != ap.playing || !ap.started {
+		if playing {
+			p.Play()
+		} else {
+			p.Stop()
+		}
+		ap.playing = playing
+	}
 	speed := 1.0
 	if a.hasSpeed && a.speed > 0 {
 		speed = a.speed
 	}
-	cur := c.frameAt(now)
-	if speed != c.speed {
-		c.speed = speed
-		if !c.held {
-			c.startAt(cur, now) // the new speed from the frame showing
-		}
+	if speed != ap.speed {
+		p.SetSpeed(speed)
+		ap.speed = speed
 	}
-	switch run := playing && !a.paused; {
-	case playing && !c.playing:
-		c.heldAt = 0 // (re)started: from the first frame
-		if run {
-			c.startAt(0, now)
-		} else {
-			c.held = true
-		}
-	case run && c.held:
-		c.startAt(c.heldAt, now) // resumed
-	case !run && !c.held:
-		c.heldAt, c.held = cur, true
+	// A currentFrame the markup wrote seeks, after the run state: it wins
+	// over a (re)start's first frame.
+	if a.hasFrame && a.frame != ap.setTo {
+		p.Seek(a.frame)
+		ap.setTo = a.frame
 	}
-	// A currentFrame the markup wrote jumps there, after the run state:
-	// it wins over a (re)start's first frame.
-	if a.hasFrame && a.frame != c.setTo && len(c.delays) > 0 {
-		c.setTo = a.frame
-		cur = min(max(a.frame, 0), len(c.delays)-1)
-		if c.held {
-			c.heldAt = cur
-		} else {
-			c.startAt(cur, now)
-		}
-	}
-	c.playing = playing
+	ap.started = true
+	return p
 }
 
-// animClock returns the element's clock, updated for this build.
-func (doc *docState) animClock(n *node, src string, a animatedImageAttrs) *gifClock {
-	if doc.gifClocks == nil {
-		doc.gifClocks = map[string]*gifClock{}
-	}
-	key := doc.key(n) + "\x00" + src
-	c := doc.gifClocks[key]
-	now := time.Now()
-	if c == nil {
-		c = &gifClock{speed: 1, setTo: -1}
-		c.delays = doc.gifDelays(src)
-		for _, d := range c.delays {
-			c.total += d
-		}
-		c.origin = now
-		doc.gifClocks[key] = c
-	}
-	c.update(a, now)
-	return c
-}
-
-// gifDelays decodes a GIF source's frame delays once (nil for a source
-// that is not a multi-frame GIF).
-func (doc *docState) gifDelays(src string) []time.Duration {
-	if doc.gifDelayCache == nil {
-		doc.gifDelayCache = map[string][]time.Duration{}
-	}
-	if d, ok := doc.gifDelayCache[src]; ok {
-		return d
-	}
-	var out []time.Duration
-	if c := doc.imageCell(src); c != nil && len(c.Data) > 0 {
-		if g, err := gif.DecodeAll(bytes.NewReader(c.Data)); err == nil && len(g.Image) > 1 {
-			for _, cs := range g.Delay {
-				if cs <= 0 {
-					cs = 10
-				}
-				out = append(out, time.Duration(cs)*10*time.Millisecond)
-			}
-		}
-	}
-	doc.gifDelayCache[src] = out
-	return out
-}
-
-// wireAnimatedImage gives the image its clock and the id object its
+// wireAnimatedImage gives the image its player and the id object its
 // frameCount, currentFrame, playing and paused.
 func (doc *docState) wireAnimatedImage(n *node, img *ui.LazyImageEl, src string, a animatedImageAttrs) {
-	c := doc.animClock(n, src, a)
-	img.FrameClock(func() (int, bool) {
-		return c.frameAt(time.Now()), !c.held
-	})
+	p := doc.animPlayer(n, src, a)
+	img.Player(p)
 	id := nodeID(n)
 	if id == "" {
 		return
@@ -202,14 +117,10 @@ func (doc *docState) wireAnimatedImage(n *node, img *ui.LazyImageEl, src string,
 	if obj == nil {
 		return
 	}
-	count := len(c.delays)
-	if count == 0 {
-		count = 1
-	}
-	obj.setProp("frameCount", float64(count))
-	obj.setProp("currentFrame", float64(c.frameAt(time.Now())))
-	obj.setProp("playing", c.playing)
-	obj.setProp("paused", c.held && c.playing)
+	obj.setProp("frameCount", float64(p.FrameCount()))
+	obj.setProp("currentFrame", float64(p.Frame()))
+	obj.setProp("playing", p.Playing())
+	obj.setProp("paused", p.Paused())
 }
 
 // fillModeTile maps Image.fillMode's tiling values (Tile 3,
