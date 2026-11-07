@@ -122,6 +122,10 @@ type Context struct {
 	// scrubber) in layout order; a press picks the deepest one under it and
 	// follows the pointer until release.
 	drags []dragRegion
+
+	// pinches collects the frame's pinch regions (OnPinch) in layout
+	// order; a pinch goes to the deepest one under its centre.
+	pinches []*DivEl
 }
 
 // swipeRegion is anything that consumes a horizontal swipe within a rect.

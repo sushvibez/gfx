@@ -87,10 +87,10 @@ func (doc *docState) wireMouseGestures(n *node, d *ui.DivEl, env *Env, g *mouseG
 }
 
 // runEvent runs a handler with its event object bound under name (mouse,
-// wheel). A handler written as a function value — `onWheel: (wheel) =>
+// wheel, event, delta). A handler written as a function value — `onWheel: (wheel) =>
 // { … }`, `function(ev) { … }` — is called with the object instead, under
 // whatever name it declares.
-func runEvent(run func([]stmt, string), env *Env, stmts []stmt, what, name string, obj map[string]any) {
+func runEvent(run func([]stmt, string), env *Env, stmts []stmt, what, name string, obj any) {
 	if len(stmts) == 1 {
 		if es, ok := stmts[0].(*exprStmt); ok {
 			if fe, ok := es.e.(*funcExpr); ok {

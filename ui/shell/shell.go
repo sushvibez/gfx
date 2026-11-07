@@ -365,6 +365,7 @@ func Run(o Options, hooks Hooks) error {
 			hooks.FrameStart(a, dt, mouse, keys)
 		}
 		u.Mouse(mouse)
+		u.Touch(a.Touches) // pinches (OnPinch)
 		for _, k := range keys {
 			u.Key(k)
 		}

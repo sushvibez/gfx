@@ -1798,13 +1798,14 @@ type docState struct {
 	idKeys        ccol[keyID]
 	timers        map[string]*gmlTimer
 	frameAnims    map[string]*frameAnim
-	baseDir       string                      // directory of the source .gml, for resolving Image sources
-	settings      *settingsState              // Settings files loaded, changed (settings.go)
-	settingsStore settings.Store              // where Settings values persist; nil = settings.DefaultStore()
-	animPlayers   map[string]*animPlayer      // AnimatedImage players, by element (animatedimage.go)
-	dragStates    map[string]*dragTargetState // MouseArea drags, by element (dragtarget.go)
-	lastView      time.Time                   // wall clock of the previous frame, for timers
-	lastClock     time.Duration               // ... and the frame loop's animation clock
+	baseDir       string                        // directory of the source .gml, for resolving Image sources
+	settings      *settingsState                // Settings files loaded, changed (settings.go)
+	settingsStore settings.Store                // where Settings values persist; nil = settings.DefaultStore()
+	animPlayers   map[string]*animPlayer        // AnimatedImage players, by element (animatedimage.go)
+	dragStates    map[string]*dragTargetState   // MouseArea drags, by element (dragtarget.go)
+	handlerStates map[string]*inputHandlerState // Wheel/Pinch/PointHandler state (inputhandlers.go)
+	lastView      time.Time                     // wall clock of the previous frame, for timers
+	lastClock     time.Duration                 // ... and the frame loop's animation clock
 	listSeq       int
 
 	// Element geometry for parent/id.width refs. elems collects this frame's
@@ -5672,7 +5673,17 @@ func buildBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 				return nil, err
 			}
 		} else if isPointerHandler(c) {
-			if err := boxAttrs(pointerHandlerAsMouseArea(c, n, doc), d, env, doc); err != nil {
+			// Inside a handler `parent` is the item it sits in — this box
+			// — where this scope's `parent` is one level further out.
+			var err error
+			withVar(env, "parent", parentObject(n, env, doc), func() {
+				if isWiredHandler(c) {
+					doc.wireInputHandler(c, n, d, env)
+					return
+				}
+				err = boxAttrs(pointerHandlerAsMouseArea(c, n, doc), d, env, doc)
+			})
+			if err != nil {
 				return nil, err
 			}
 		}

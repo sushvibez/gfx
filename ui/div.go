@@ -75,12 +75,13 @@ type DivEl struct {
 	focusC                 RGBA
 	focusVisW              float32 // border shown only for keyboard focus (.focus_visible)
 	focusVisC              RGBA
-	focusSlot              int                       // 1-based index into ctx.focusables this frame; 0 = none
-	tabIdx                 int                       // Tab traversal rank (GPUI tab_index); ties resolve in layout order
-	wantFocus              bool                      // requests initial keyboard focus (QML focus: true)
-	keyFn                  func(app.KeyEvent)        // raw key handler (QML Keys.onPressed/onReleased)
-	keyAccept              func(app.KeyEvent) bool   // OnKeyAccept: the handler says whether it took the key
-	shortcutFns            []func(app.KeyEvent) bool // OnShortcut: window-wide key shortcut handlers
+	focusSlot              int                                           // 1-based index into ctx.focusables this frame; 0 = none
+	tabIdx                 int                                           // Tab traversal rank (GPUI tab_index); ties resolve in layout order
+	wantFocus              bool                                          // requests initial keyboard focus (QML focus: true)
+	keyFn                  func(app.KeyEvent)                            // raw key handler (QML Keys.onPressed/onReleased)
+	keyAccept              func(app.KeyEvent) bool                       // OnKeyAccept: the handler says whether it took the key
+	shortcutFns            []func(app.KeyEvent) bool                     // OnShortcut: window-wide key shortcut handlers
+	pinchFn                func(factor, cx, cy float32, phase DragPhase) // OnPinch
 	cursor                 app.Cursor
 	justify                Align   // main axis
 	items                  Align   // cross axis
@@ -1144,6 +1145,9 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 	}
 	if d.dragFn != nil || d.flingFn != nil || d.pointerFn != nil {
 		ctx.drags = append(ctx.drags, d)
+	}
+	if d.pinchFn != nil {
+		ctx.pinches = append(ctx.pinches, d)
 	}
 	if len(d.children) == 0 {
 		return

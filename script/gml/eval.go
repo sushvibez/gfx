@@ -959,6 +959,14 @@ func (o *elemObject) member(name string) (any, bool) {
 			return float64(r.Y - oy + r.H), true
 		}
 	}
+	// An attribute assigned imperatively (`item.scale = 2`, a handler
+	// driving it) reads back as assigned: the override wins over the
+	// markup, as it does when the element builds.
+	if o.doc != nil && o.key != 0 {
+		if v, ok := o.doc.attrOverride(o.key, name); ok {
+			return v, true
+		}
+	}
 	// A plain visual attribute of the element itself, evaluated from the
 	// markup: `radius: parent.radius` copies the value its parent was
 	// given. Geometry is handled above — its live value beats the markup.
@@ -972,7 +980,13 @@ func (o *elemObject) member(name string) (any, bool) {
 			}
 		}
 	}
-
+	// Every Item has these, at their defaults when the markup is silent.
+	switch name {
+	case "scale", "opacity":
+		return 1.0, true
+	case "rotation":
+		return 0.0, true
+	}
 	return nil, false
 }
 

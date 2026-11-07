@@ -68,7 +68,11 @@ type UI struct {
 	// source; once the pointer moves past a threshold dragging begins and
 	// dragGhost (a snapshot of the source's child) follows the cursor.
 	// gestures: the last click and a held press (pointer.go).
-	gestures     gestureState
+	gestures gestureState
+	// touch folds touchscreen events; pinching is the region a touch
+	// pinch is driving (pinch.go).
+	touch        app.Gestures
+	pinching     *DivEl
 	pendDrag     *DraggableEl
 	dragging     bool
 	dragPayload  any
@@ -173,6 +177,8 @@ func (u *UI) build(width, height float32) {
 	u.ctx.dropZones = u.ctx.dropZones[:0]
 	u.ctx.layers = u.ctx.layers[:0]
 	u.ctx.swipes = u.ctx.swipes[:0]
+	u.ctx.drags = u.ctx.drags[:0]
+	u.ctx.pinches = u.ctx.pinches[:0]
 	u.ctx.opacity, u.ctx.opacityInit = 1, false
 	u.ctx.winW, u.ctx.winH = width, height
 	u.ctx.frame++
@@ -414,6 +420,11 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 		u.ctx.MouseX, u.ctx.MouseY = m.X, m.Y
 		switch m.Kind {
 		case app.MouseScroll:
+			// A touchpad pinch arrives as Ctrl+wheel: a pinch region under
+			// the pointer takes it (pinch.go) before any scrolling.
+			if u.wheelPinch(m) {
+				continue
+			}
 			// Deepest scroll region under the pointer wins (layout order
 			// means parents come before children); a delta the region can't
 			// consume (already at its limit, or no overflow on that axis)
