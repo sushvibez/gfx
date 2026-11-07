@@ -1,6 +1,11 @@
 package gml
 
-import "github.com/sushvibez/gfx/ui"
+import (
+	"fmt"
+	"time"
+
+	"github.com/sushvibez/gfx/ui"
+)
 
 // Keyboard focus for QML pages, over ui's FocusID / KeyNav / RequestFocus /
 // OnFocusChange (ui/focus.go):
@@ -95,7 +100,17 @@ func (doc *docState) stampFocus(key keyID, el ui.Element) {
 	ref := doc.focusRefs[key]
 	var report func(bool)
 	if ref != nil {
-		report = func(on bool) { setBool(ref, on) }
+		report = func(on bool) {
+			setBool(ref, on)
+			// Reports run outer to inner, so the last item that has focus
+			// is the innermost: Window.activeFocusItem.
+			cur := doc.focusedKey()
+			if on && cur != key {
+				_ = doc.focusedRef().set(float64(key))
+			} else if !on && cur == key {
+				_ = doc.focusedRef().set(0.0)
+			}
+		}
 	}
 	switch e := el.(type) {
 	case *ui.DivEl:
@@ -133,7 +148,7 @@ func (doc *docState) requestFocus(key keyID) {
 // created on first read; a late first read rebuilds so the element
 // starts reporting.
 func (doc *docState) activeFocusRef(key keyID) Ref {
-	r, fresh := doc.trackFocus(key)
+	r, fresh := doc.trackFocus(key, nil)
 	if fresh {
 		doc.invalidateCache()
 	}
@@ -141,8 +156,15 @@ func (doc *docState) activeFocusRef(key keyID) Ref {
 }
 
 // trackFocus is activeFocusRef for an element being declared, which
-// builds fresh anyway: the id objects seed activeFocus with it.
-func (doc *docState) trackFocus(key keyID) (r Ref, fresh bool) {
+// builds fresh anyway: the id objects seed activeFocus with it, and obj
+// is what activeFocusItem names while the element holds focus.
+func (doc *docState) trackFocus(key keyID, obj any) (r Ref, fresh bool) {
+	if obj != nil {
+		if doc.focusObjs == nil {
+			doc.focusObjs = map[keyID]any{}
+		}
+		doc.focusObjs[key] = obj
+	}
 	if doc.focusRefs == nil {
 		doc.focusRefs = map[keyID]Ref{}
 	}
@@ -180,3 +202,43 @@ func (doc *docState) focusScope(n *node, env *Env) *Env {
 	s.vars["activeFocus"] = doc.activeFocusRef(doc.keyID(n))
 	return s
 }
+
+// activeFocusItem is the id object (or a text field's state) of the
+// innermost tracked item holding focus, or nil.
+func (doc *docState) activeFocusItem() any {
+	if k := doc.focusedKey(); k != 0 {
+		return doc.focusObjs[k]
+	}
+	return nil
+}
+
+// focusedRef holds the innermost tracked focused item's key: a document
+// property, so a binding reading activeFocusItem follows focus moves.
+func (doc *docState) focusedRef() Ref { return doc.floatProp("__activeFocusItem", 0) }
+
+func (doc *docState) focusedKey() keyID {
+	f, _ := toFloat64(doc.focusedRef().get())
+	return keyID(f)
+}
+
+// windowAttached is QML's attached Window object, readable from any item:
+// Window.activeFocusItem, and the QWindow::Visibility values pages state
+// (`visibility: Window.Maximized`).
+func (doc *docState) windowAttached() map[string]any {
+	return map[string]any{
+		"activeFocusItem": computedRef{fn: doc.activeFocusItem},
+		"Hidden":          float64(0), "AutomaticVisibility": float64(1), "Windowed": float64(2),
+		"Minimized": float64(3), "Maximized": float64(4), "FullScreen": float64(5),
+	}
+}
+
+// computedRef is a read-only Ref whose value is computed on each read; the
+// computation's own property reads record the dependencies.
+type computedRef struct{ fn func() any }
+
+func (r computedRef) get() any { return r.fn() }
+func (r computedRef) set(any) error {
+	return fmt.Errorf("gml: a read-only property cannot be assigned")
+}
+func (r computedRef) animate(any, time.Duration) error { return nil }
+func (r computedRef) onChange(func())                  {}

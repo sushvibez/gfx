@@ -68,3 +68,49 @@ func TestKeyNavAndFocusRequests(t *testing.T) {
 		t.Errorf("after RequestFocus: %q, %v; want b", got, focused)
 	}
 }
+
+// A FocusScope passes focus to the focusable inside it that asked for it,
+// and reports focus while anything inside it holds it; a plain parent
+// reports only its own.
+func TestFocusScope(t *testing.T) {
+	seen := map[string]bool{}
+	reqScope := false
+	u := New(nil, nil, func() Element {
+		inner1 := Div().Size(30, 30).Focusable().FocusID("in1")
+		inner2 := Div().Size(30, 30).Focus().FocusID("in2")
+		scope := Div().Row().FocusScope().FocusID("scope").
+			OnFocusChange(func(on bool) { seen["scope"] = on }).Children(inner1, inner2)
+		if reqScope {
+			scope.RequestFocus()
+		}
+		plain := Div().Row().FocusID("plain").OnFocusChange(func(on bool) { seen["plain"] = on }).
+			Children(Div().Size(30, 30).Focusable().FocusID("p1"))
+		start := Div().Size(30, 30).Focusable().FocusID("start").KeyNav(NavRight, "scope")
+		return Div().Col().Children(start, scope, plain)
+	})
+	frame := func() { u.Layout(300, 200) }
+	frame()
+	u.FocusID("start")
+	frame()
+	u.Key(app.KeyEvent{Down: true, Key: app.KeyRight}) // KeyNav to the scope
+	frame()
+	if got := u.FocusedID(); got != "in2" {
+		t.Errorf("KeyNav to the scope focused %q, want in2 (its Focus child)", got)
+	}
+	if !seen["scope"] {
+		t.Error("the scope does not report the focus inside it")
+	}
+	u.FocusID("p1")
+	frame()
+	if seen["plain"] {
+		t.Error("a plain parent reported its child's focus as its own")
+	}
+	if seen["scope"] {
+		t.Error("the scope still reports focus after it left")
+	}
+	reqScope = true // RequestFocus on the scope: inside again
+	frame()
+	if got := u.FocusedID(); got != "in2" {
+		t.Errorf("RequestFocus on the scope focused %q, want in2", got)
+	}
+}

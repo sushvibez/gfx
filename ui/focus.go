@@ -3,12 +3,18 @@ package ui
 import "github.com/sushvibez/gfx/app"
 
 // Keyboard focus beyond Tab order: an element can be named (FocusID) so
-// focus can be moved to it across frames â the tree is rebuilt every
+// focus can be moved to it across frames — the tree is rebuilt every
 // frame, so focus is otherwise only a position in the frame's focusables
-// â and can name where the arrow keys and Tab take focus from it (KeyNav,
+// — and can name where the arrow keys and Tab take focus from it (KeyNav,
 // QML's KeyNavigation). RequestFocus takes focus on the frame it is built
-// (QML's forceActiveFocus()), and OnFocusChange reports whether the
-// element holds focus after every layout (QML's activeFocus).
+// (QML's forceActiveFocus()), and OnFocusChange reports whether focus is
+// on the element or inside it after every layout (QML's activeFocus).
+//
+// A focus scope (FocusScope, QML's FocusScope) passes focus on: focus sent
+// to it — a RequestFocus, a KeyNav or FocusID naming it — goes to the
+// focusable inside it that asked for the initial focus (Focus), or else
+// its first focusable, and it reports focus while anything inside it
+// holds it. Any other element takes focus itself.
 
 // NavDir is a direction KeyNav moves focus in.
 type NavDir int
@@ -23,25 +29,31 @@ const (
 	navDirs
 )
 
-// focusMeta is an element's focus identity and navigation.
+// focusMeta is an element's focus identity and navigation, and the run of
+// the frame's focusables that it and its descendants registered
+// ([start, end), filled in during layout).
 type focusMeta struct {
-	id       string
-	nav      [navDirs]string
-	request  bool
-	onChange func(bool)
+	id         string
+	nav        [navDirs]string
+	request    bool
+	onChange   func(bool)
+	scope      bool
+	start, end int
 }
+
+// active reports whether the element takes part in focus resolution.
+func (m *focusMeta) active() bool { return m.id != "" || m.request || m.onChange != nil }
 
 func (d *DivEl) meta() *focusMeta   { return &d.fm }
 func (e *InputEl) meta() *focusMeta { return &e.fm }
 
 // FocusID names the element for focus moves (KeyNav, UI.FocusID). The name
-// must be stable across frames and unique among the frame's focusables.
+// must be stable across frames and unique in the frame.
 func (d *DivEl) FocusID(id string) *DivEl { d.fm.id = id; return d }
 
-// KeyNav makes the key for dir move focus from this element to the
-// focusable named id (FocusID), before the element's own key handlers
-// see it (QML's KeyNavigation with its default BeforeItem priority).
-// Implies Focusable.
+// KeyNav makes the key for dir move focus from this element to the one
+// named id (FocusID), before the element's own key handlers see it (QML's
+// KeyNavigation with its default BeforeItem priority). Implies Focusable.
 func (d *DivEl) KeyNav(dir NavDir, id string) *DivEl {
 	d.fm.nav[dir] = id
 	d.focusable = true
@@ -49,16 +61,23 @@ func (d *DivEl) KeyNav(dir NavDir, id string) *DivEl {
 }
 
 // RequestFocus takes keyboard focus on the frame this element is built,
-// from whatever holds it (QML forceActiveFocus()). Implies Focusable.
+// once, from whatever holds it (QML forceActiveFocus()). It makes the
+// element focusable, except a FocusScope, which passes focus inside.
 func (d *DivEl) RequestFocus() *DivEl {
 	d.fm.request = true
-	d.focusable = true
+	if !d.fm.scope {
+		d.focusable = true
+	}
 	return d
 }
 
-// OnFocusChange reports, after every layout, whether the element holds
-// keyboard focus. It does not make the element focusable: one that is not
-// (Focusable, OnKey, KeyNav, …) is never told anything.
+// FocusScope makes the element a focus scope (see above). Call it before
+// RequestFocus.
+func (d *DivEl) FocusScope() *DivEl { d.fm.scope = true; return d }
+
+// OnFocusChange reports, after every layout, whether focus is on the
+// element (or, for a FocusScope, inside it). It does not make the element
+// focusable.
 func (d *DivEl) OnFocusChange(fn func(focused bool)) *DivEl {
 	d.fm.onChange = fn
 	return d
@@ -82,13 +101,48 @@ func metaOf(el Element) *focusMeta {
 	return nil
 }
 
-// FocusID focuses the focusable named id among the last layout's,
-// reporting whether there was one.
+// beginFocus is called by an element's layout before it registers itself
+// as focusable; the returned func, deferred, closes its run of focusables
+// once its children are laid out. Nothing happens for an element without
+// focus metadata.
+func (ctx *Context) beginFocus(el Element, m *focusMeta) func() {
+	if !m.active() {
+		return noFocusEnd
+	}
+	m.start = len(ctx.focusables)
+	ctx.focusMetas = append(ctx.focusMetas, el)
+	return func() { m.end = len(ctx.focusables) }
+}
+
+func noFocusEnd() {}
+
+// target is the focusable index focus sent to m goes to, or -1: the
+// element itself, else (a scope) what asked for the initial focus inside
+// it, else its first focusable.
+func (u *UI) target(el Element, m *focusMeta) int {
+	if m.start >= m.end || m.end > len(u.ctx.focusables) {
+		return -1
+	}
+	if u.ctx.focusables[m.start] == el {
+		return m.start
+	}
+	for i := m.start; i < m.end; i++ {
+		if wf, ok := u.ctx.focusables[i].(interface{ wantsInitialFocus() bool }); ok && wf.wantsInitialFocus() {
+			return i
+		}
+	}
+	return m.start
+}
+
+// FocusID focuses the element named id in the last layout (or, for a
+// scope, the focusable inside it), reporting whether there was one.
 func (u *UI) FocusID(id string) bool {
-	for i, f := range u.ctx.focusables {
-		if m := metaOf(f); m != nil && m.id == id {
-			u.setFocusIdx(i)
-			return true
+	for _, el := range u.ctx.focusMetas {
+		if m := metaOf(el); m != nil && m.id == id {
+			if i := u.target(el, m); i >= 0 {
+				u.setFocusIdx(i)
+				return true
+			}
 		}
 	}
 	return false
@@ -117,19 +171,27 @@ func (u *UI) setFocusIdx(i int) {
 // resolveFocusRequests runs after layout: a RequestFocus takes focus (the
 // last one built wins), then every OnFocusChange hears the outcome.
 func (u *UI) resolveFocusRequests() {
-	for i, f := range u.ctx.focusables {
-		if m := metaOf(f); m != nil && m.request {
-			u.focusIdx = i
+	for _, el := range u.ctx.focusMetas {
+		if m := metaOf(el); m != nil && m.request {
 			m.request = false // one-shot: an element kept across frames asks once
+			if i := u.target(el, m); i >= 0 {
+				u.focusIdx = i
+			}
 		}
+	}
+	for i, f := range u.ctx.focusables {
 		if in, ok := f.(*InputEl); ok && in.state != nil && in.state.focusReq {
 			u.focusIdx = i
 			in.state.focusReq = false
 		}
 	}
-	for i, f := range u.ctx.focusables {
-		if m := metaOf(f); m != nil && m.onChange != nil {
-			m.onChange(i == u.focusIdx)
+	for _, el := range u.ctx.focusMetas {
+		if m := metaOf(el); m != nil && m.onChange != nil {
+			in := u.focusIdx >= m.start && u.focusIdx < m.end
+			if !m.scope {
+				in = in && u.ctx.focusables[u.focusIdx] == el // on it, not inside it
+			}
+			m.onChange(in)
 		}
 	}
 }

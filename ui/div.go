@@ -1148,6 +1148,9 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 		}
 	}
 	ctx.shortcuts = append(ctx.shortcuts, d.shortcutFns...)
+	// This element's run of focusables, itself and everything inside it
+	// (focus.go): closed when layout returns, whichever way it does.
+	defer ctx.beginFocus(d, &d.fm)()
 	if d.focusable {
 		d.focusSlot = len(ctx.focusables) + 1
 		ctx.focusables = append(ctx.focusables, d)

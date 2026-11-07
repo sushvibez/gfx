@@ -62,6 +62,11 @@ func loadSource(src string, env *Env, baseDir string) (*Document, error) {
 	if baseDir != "" {
 		d.doc.resolveImports(root, env)
 	}
+	// QML's attached Window object (focus.go), unless the host or the page
+	// claims the name.
+	if _, taken := env.vars["Window"]; !taken {
+		env.vars["Window"] = d.doc.windowAttached()
+	}
 	// Soft pass only: a default referencing a control's own live state
 	// (msgIdSpin.value, ma.containsMouse) can't resolve until that control
 	// has been built at least once — View() retries for real, once, right

@@ -508,7 +508,7 @@ on Button, `Spacer { }`.
 | element | notes |
 | --- | --- |
 | `ListModel`, `ListElement` | rows of named roles; runtime `append insert remove clear set get count` work from handlers and mark readers dirty; `setProperty`, `move`, `sync` are not modelled |
-| `ListView` | `model`, `delegate`, `currentIndex`, `highlight`, `spacing`, `height`/`rowHeight`, `section.property`/`section.delegate`, `verticalLayoutDirection`, `onAtYEndChanged`/`onAtYBeginningChanged`; delegates read `ListView.isCurrentItem`, `ListView.view`; `orientation: ListView.Horizontal` (delegates side by side at their own width, scrolling sideways, every delegate built); `header`/`footer` (above and below the rows, not scrolling with them). `add`/`remove`/`move`/`displaced`/`populate` transitions, `highlightRangeMode`, `cacheBuffer`, `keyNavigationEnabled`, `snapMode` are not modelled |
+| `ListView` | `model`, `delegate`, `currentIndex`, `highlight`, `spacing`, `height`/`rowHeight`, `section.property`/`section.delegate`, `verticalLayoutDirection`, `onAtYEndChanged`/`onAtYBeginningChanged`; delegates read `ListView.isCurrentItem`, `ListView.view`; `orientation: ListView.Horizontal` (delegates side by side at their own width and height, scrolling sideways under the wheel, only those in view built — `ui.ListEl.Horizontal`); `header`/`footer` (before the first row and after the last, scrolling with them — `ui.ListEl.Header`/`Footer`). `add`/`remove`/`move`/`displaced`/`populate` transitions, `highlightRangeMode`, `cacheBuffer`, `keyNavigationEnabled`, `snapMode` are not modelled |
 | `GridView` | `model`, `delegate`, `cellWidth`, `cellHeight`, `currentIndex`, `highlight`; `flow`, `snapMode`, `cacheBuffer` accepted |
 | `PathView` with `Path` | `model`, `delegate`, `path` (`PathLine`, `PathQuad`, `PathCubic`, `PathArc`, `PathAttribute`, `PathPercent`), `currentIndex`, `preferredHighlightBegin`, `dragMargin`; drag and flick turn the carousel; `PathView.isCurrentItem`, `PathView.onPath` and `PathAttribute` values in delegates |
 | `TableView`, `TableModel`, `TableModelColumn`, `HorizontalHeaderView`, `ItemSelectionModel`, `DelegateChooser`, `DelegateChoice` | one delegate per cell with `row`, `column`, `display`, `selected`, `current`; `editDelegate` commits into a TableModel; `selectionModel` enables tap-to-select a row; `syncView` headers. Column widths come from the delegate; `columnWidthProvider` and `TableView.*` attached editing flags are accepted |
@@ -564,7 +564,14 @@ order; `activeFocusOnTab: true` puts a plain item in that chain.
 `forceActiveFocus()`, and `item.focus = true` from a handler, focus the
 item on the next frame; `focus: true` asks for the initial focus.
 `activeFocus` reads whether an item holds focus, by id or bare inside the
-item; an item that is first read late starts reporting a frame later.
+item; an item that is first read late starts reporting a frame later. A
+`FocusScope` passes focus on: focus sent to it (`forceActiveFocus()`,
+`KeyNavigation` naming it) goes to the item inside it with `focus: true`,
+or else its first focusable, and its `activeFocus` is true while anything
+inside it holds focus. `Window.activeFocusItem` (the attached `Window`,
+readable from any item, or `activeFocusItem` on a window) is the innermost
+id'd item or text field holding focus; `Window` also carries the
+`Visibility` values. `===` between two objects compares identity.
 
 `Shortcut { sequence; sequences; enabled; onActivated }` (over
 `ui.DivEl.Shortcut`, `ui.ParseKeySequence` and `ui.StandardKey`, the Go
@@ -839,9 +846,9 @@ Semantics that differ by design:
 
 Not implemented (summarised from `script/TODO.md` and the findings log):
 
-- Interaction: `FocusScope` (focus is one window-wide chain),
-  `Window.activeFocusItem`.
-- Views: horizontal ListView, `header`/`footer`, view transitions, Flickable
+- Interaction: `focus: true` asks for the window's initial focus wherever
+  it is, inside a `FocusScope` or not.
+- Views: view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,
   `ObjectModel`, `Instantiator`, `XmlListModel`, `WorkerScript`.
 - Controls: native file/colour/font/message dialogs, popup enter/exit

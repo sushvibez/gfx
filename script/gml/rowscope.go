@@ -174,7 +174,7 @@ func declareRowScope(delegate *node, env *Env, doc *docState, row map[string]any
 		obj.setProp("containsMouse", hover)
 		obj.setProp("hovered", hover)
 		obj.setProp("pressed", doc.boolProp(key+".pressed", false))
-		fr, _ := doc.trackFocus(doc.intern(key)) // keyboard focus (focus.go)
+		fr, _ := doc.trackFocus(doc.intern(key), obj) // keyboard focus (focus.go)
 		obj.setProp("activeFocus", fr)
 		// Text fields own live input state; attach it so this instance's
 		// siblings can read field.text / .activeFocus before it builds.

@@ -107,6 +107,11 @@ type Context struct {
 	// focused element.
 	shortcuts []func(app.KeyEvent) bool
 
+	// focusMetas collects the frame's elements with focus metadata
+	// (FocusID, RequestFocus, OnFocusChange), with the run of focusables
+	// each one spans (focus.go).
+	focusMetas []Element
+
 	// dropZones collects drag-and-drop targets registered this frame.
 	dropZones []*DropZoneEl
 

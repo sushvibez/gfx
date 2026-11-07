@@ -174,6 +174,7 @@ func (u *UI) build(width, height float32) {
 	u.ctx.overlays = u.ctx.overlays[:0]
 	u.ctx.focusables = u.ctx.focusables[:0]
 	u.ctx.shortcuts = u.ctx.shortcuts[:0]
+	u.ctx.focusMetas = u.ctx.focusMetas[:0]
 	u.ctx.dropZones = u.ctx.dropZones[:0]
 	u.ctx.layers = u.ctx.layers[:0]
 	u.ctx.swipes = u.ctx.swipes[:0]

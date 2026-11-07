@@ -484,7 +484,9 @@ func (e *InputEl) measure(ctx *Context) (float32, float32) {
 
 func (e *InputEl) layout(ctx *Context, r Rect) {
 	e.rect = r
+	end := ctx.beginFocus(e, &e.fm)            // focus.go
 	ctx.focusables = append(ctx.focusables, e) // text fields are focusable
+	end()
 	if e.area {
 		ctx.scrolls = append(ctx.scrolls, e) // the wheel and the thumb scroll it
 	}

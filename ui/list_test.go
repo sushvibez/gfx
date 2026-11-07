@@ -1,6 +1,10 @@
 package ui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/sushvibez/gfx/app"
+)
 
 // A sectioned list has rows of differing heights: a header row of its own
 // size in front of each group. Positions come from walking the heights, so
@@ -134,5 +138,59 @@ func TestListMeasuredRowsUseTheirOwnHeight(t *testing.T) {
 	plain.layout(&Context{}, Rect{0, 0, 200, 400})
 	if h := plain.rows[1].bounds().H; h != 40 {
 		t.Errorf("uniform row 1 is %v tall, want 40", h)
+	}
+}
+
+// A Horizontal list lays its rows out left to right, builds only those in
+// view, and scrolls sideways under the wheel.
+func TestListHorizontal(t *testing.T) {
+	var st ListState
+	built := map[int]bool{}
+	var cells []*DivEl
+	l := List(&st, 50, 1000, func(i int) Element {
+		built[i] = true
+		d := Div().W(50)
+		cells = append(cells, d)
+		return d
+	}).Horizontal().H(40)
+	u := New(nil, nil, func() Element { return Div().Children(l.W(200)) })
+	u.Layout(400, 100)
+	if len(built) > 8 {
+		t.Errorf("a 200 px window over 50 px rows built %d of 1000", len(built))
+	}
+	r0, r1 := cells[0].Rect(), cells[1].Rect()
+	if r1.X-r0.X != 50 || r0.Y != r1.Y || r0.H != 40 {
+		t.Errorf("rows at %+v and %+v, want side by side, 50 apart, 40 tall", r0, r1)
+	}
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseScroll, X: 100, Y: 20, ScrollY: 120}})
+	if st.scroll.X != 120 {
+		t.Errorf("the wheel scrolled X to %v, want 120", st.scroll.X)
+	}
+	cells, built = nil, map[int]bool{}
+	u.Layout(400, 100)
+	if !built[3] || built[0] {
+		t.Errorf("after scrolling 120 px built rows %v, want 3 in and 0 out", built)
+	}
+}
+
+// A header and footer are part of the content: they scroll with the rows.
+func TestListHeaderFooterScroll(t *testing.T) {
+	var st ListState
+	head, foot := Div().H(30), Div().H(20)
+	l := List(&st, 25, 10, func(i int) Element { return Div() }).Header(head).Footer(foot).H(100)
+	u := New(nil, nil, func() Element { return Div().Children(l.W(200)) })
+	u.Layout(400, 200)
+	if head.Rect().Y != 0 || st.scroll.contentH != 30+250+20 {
+		t.Fatalf("header at %v, content %v; want 0 and 300", head.Rect().Y, st.scroll.contentH)
+	}
+	st.SetOffset(40)
+	u.Layout(400, 200)
+	if head.Rect().Y != -40 {
+		t.Errorf("header at %v after scrolling 40, want -40 (it scrolls away)", head.Rect().Y)
+	}
+	st.SetOffset(st.MaxY())
+	u.Layout(400, 200)
+	if got := foot.Rect().Y + foot.Rect().H; got != 100 {
+		t.Errorf("footer ends at %v at the bottom, want the view's 100", got)
 	}
 }

@@ -1824,6 +1824,7 @@ type docState struct {
 	focusRefs     map[keyID]Ref                 // tracked activeFocus, by element (focus.go)
 	readsFocus    map[*node]bool                // items whose own attributes read activeFocus (focus.go)
 	inputKeys     map[*ui.InputState]keyID      // the element key a text field's state was built under (focus.go)
+	focusObjs     map[keyID]any                 // what activeFocusItem names, by element (focus.go)
 	handlerStates map[string]*inputHandlerState // Wheel/Pinch/PointHandler state (inputhandlers.go)
 	pointerSeen   map[string]*[2]float32        // MouseArea: the pointer's last window position (mousearea.go)
 	geomWritten   map[geomKey]int               // frame an x/y/width/height override was written (setAttrOverride)
@@ -3461,7 +3462,7 @@ func declareProps(n *node, env *Env, doc *docState) error {
 				idObj.setProp("pressed", doc.boolProp(ikey+".pressed", false))
 				// Keyboard focus, tracked from the element's own layout
 				// (focus.go); a text input claims its id with its own state.
-				fr, _ := doc.trackFocus(idObj.key)
+				fr, _ := doc.trackFocus(idObj.key, idObj)
 				idObj.setProp("activeFocus", fr)
 			}
 		}
@@ -4914,6 +4915,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 		env = doc.mouseAreaScope(n, env)
 	}
 	env = doc.focusScope(n, env)
+	if n.typeName == "FocusScope" {
+		d.FocusScope() // focus sent to it goes inside (focus.go)
+	}
 	var borderW float32
 	var borderDashed bool
 	var borderC ui.RGBA
@@ -7517,6 +7521,12 @@ func wireScrollEdge(n *node, env *Env, doc *docState, st *ui.ListState, handlers
 // so a binding on a model role resolves. Zero when it cannot be read (the
 // caller keeps its default).
 func delegateHeight(delegate *node, rows []map[string]any, env *Env, doc *docState, viewKey string) float32 {
+	return delegateExtent(delegate, rows, env, doc, viewKey, "height", "implicitHeight")
+}
+
+// delegateExtent is a delegate's size as its first row states it: the
+// first of names it gives a positive value for.
+func delegateExtent(delegate *node, rows []map[string]any, env *Env, doc *docState, viewKey string, names ...string) float32 {
 	var row map[string]any
 	if len(rows) > 0 {
 		row = rows[0]
@@ -7525,7 +7535,7 @@ func delegateHeight(delegate *node, rows []map[string]any, env *Env, doc *docSta
 	defer restore()
 	restoreGeom := shadowSelfGeometry(delegate, env, doc)
 	defer restoreGeom()
-	for _, name := range []string{"height", "implicitHeight"} {
+	for _, name := range names {
 		for _, a := range delegate.attrs {
 			if a.name != name {
 				continue
@@ -7843,6 +7853,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 		doc.inputKeys = map[*ui.InputState]keyID{}
 	}
 	doc.inputKeys[state] = doc.keyID(n) // KeyNavigation to it (focus.go)
+	doc.trackFocus(doc.keyID(n), state) // so activeFocusItem can name it
 	if area {
 		if areaH <= 0 {
 			areaH = 4*20 + 12
@@ -8331,7 +8342,7 @@ func buildList(n *node, env *Env, doc *docState) (ui.Element, error) {
 	curRef := doc.intProp(doc.key(n)+"|currentIndex", seed)
 	doc.exposeIDProp(n, "currentIndex", curRef)
 	if horizontal {
-		return buildHorizontalList(n, env, doc, delegate, rows, count, rowSpacing, height, curRef, highlight), nil
+		return buildHorizontalList(n, env, doc, delegate, rows, count, rowSpacing, height, curRef, highlight, headerNode, footerNode), nil
 	}
 	st := listStateFor(n, doc)
 	exposeListMethods(n, env, doc, st, count, rowHeight)
@@ -8772,78 +8783,74 @@ func (doc *docState) signalMethod(id, name string, fn any) {
 }
 
 // buildHorizontalList is a ListView with orientation: ListView.Horizontal:
-// the delegates side by side, each at its own width, in a view that
-// scrolls sideways. It builds every delegate (no virtualisation): the
-// horizontal lists markup writes are carousels and tab strips of a few
-// dozen items, not the long vertical feeds ui.List exists for.
+// the delegates side by side, each at its own width, in a ui.List that
+// scrolls sideways (Horizontal): only the delegates in view are built, the
+// wheel scrolls it, and its header and footer scroll with the rows.
 func buildHorizontalList(n *node, env *Env, doc *docState, delegate *node, rows []map[string]any,
-	count int, spacing, height float32, curRef Ref, highlight *node) ui.Element {
+	count int, spacing, height float32, curRef Ref, highlight, header, footer *node) ui.Element {
 	viewKey := doc.key(n)
 	rowEnv := doc.scopeSnapshot(env, "rows|"+viewKey)
-	items := make([]ui.Element, 0, count)
-	cur := -1
-	if ci, err := toInt(curRef.get()); err == nil {
-		cur = ci
+	st := listStateFor(n, doc)
+	// The width estimate for rows not built yet; each built row's own
+	// width is learned (Measured), as a vertical list learns heights.
+	est := delegateExtent(delegate, rows, env, doc, viewKey, "width", "implicitWidth")
+	if est <= 0 {
+		est = 80
 	}
-	for i := 0; i < count; i++ {
+	l := ui.List(st, est, count, func(i int) ui.Element {
 		var row map[string]any
 		if rows != nil {
 			row = rows[i]
 		}
 		restore := enterRow(viewKey, delegate, rowEnv, doc, row, i)
+		defer restore()
 		el, err := build(delegate, rowEnv, doc)
 		if err != nil {
-			el = ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
-		} else if highlight != nil && i == cur {
-			if hl, err := build(highlight, rowEnv, doc); err == nil {
-				el = ui.Div().AnchorMode().Children(
-					ui.Anchored(hl, "", ui.Anchors{Fill: "parent"}),
-					ui.Anchored(el, "", ui.Anchors{Fill: "parent"}),
-				)
+			return ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
+		}
+		if highlight != nil {
+			if ci, err := toInt(curRef.get()); err == nil && ci == i {
+				if hl, err := build(highlight, rowEnv, doc); err == nil {
+					return ui.Div().AnchorMode().Children(
+						ui.Anchored(hl, "", ui.Anchors{Fill: "parent"}),
+						ui.Anchored(el, "", ui.Anchors{Fill: "parent"}),
+					)
+				}
 			}
 		}
-		restore()
-		items = append(items, el)
-	}
-	st := doc.scrollFor(doc.rowPrefix + "__hlist|" + viewKey)
-	sc := ui.Scroll(st).ContentSized().H(height).AutoHideBar()
+		return el
+	}).Horizontal().Measured().Spacing(spacing).H(height).AutoHideBar()
 	for _, a := range n.attrs {
 		if a.name == "width" {
 			if w, err := attrFloat(a, env); err == nil && w > 0 {
-				sc.W(w)
+				l.W(w)
 			}
 		}
 	}
-	return sc.Children(
-		ui.Div().Row().Gap(spacing).Children(items...))
+	return listHeaderFooter(doc, env, header, footer, height, l)
 }
 
-// listHeaderFooter puts a ListView's header and footer components above
-// and below its rows, the three sharing the list's height. In QML they
-// scroll with the content; here they stay put at the ends, which is how a
-// list shorter than its view (the usual case for a titled list) looks
-// either way.
-func listHeaderFooter(doc *docState, env *Env, header, footer *node, height float32, l *ui.ListEl) ui.Element {
-	if header == nil && footer == nil {
-		return l
-	}
-	parts := make([]ui.Element, 0, 3)
+// listHeaderFooter builds a ListView's header and footer components into
+// the list, before its first row and after its last (above and below a
+// vertical list, left and right of a horizontal one), scrolling with them.
+func listHeaderFooter(doc *docState, env *Env, header, footer *node, _ float32, l *ui.ListEl) ui.Element {
+	// Part of the list's content (ui.ListEl.Header/Footer), so they scroll
+	// away with the rows, as Qt's do.
 	if header != nil {
 		if el, err := build(header, env, doc); err == nil {
-			parts = append(parts, el)
+			l.Header(el)
 		} else {
 			logf("gml: ListView header: %v", err)
 		}
 	}
-	parts = append(parts, l.H(0).Grow())
 	if footer != nil {
 		if el, err := build(footer, env, doc); err == nil {
-			parts = append(parts, el)
+			l.Footer(el)
 		} else {
 			logf("gml: ListView footer: %v", err)
 		}
 	}
-	return ui.Div().Col().H(height).Children(parts...)
+	return l
 }
 
 // realValueProp resolves a value control's (Slider, Dial) value to the

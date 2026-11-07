@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
@@ -847,6 +848,8 @@ func (o *elemObject) member(name string) (any, bool) {
 		case "forceActiveFocus":
 			doc, key := o.doc, o.doc.focusKeyOf(o)
 			return jsFunc(func([]any) (any, error) { doc.requestFocus(key); return nil, nil }), true
+		case "activeFocusItem": // Window's, readable on any item
+			return o.doc.activeFocusItem(), true
 		case "activeFocus":
 			if o.input == nil {
 				b, _ := toBool(o.doc.activeFocusRef(o.doc.focusKeyOf(o)).get())
@@ -1389,6 +1392,18 @@ func (x *binExpr) eval(env *Env) (any, error) {
 				eq = !eq
 			}
 			return eq, nil
+		}
+		// Objects (an item, a text field's state, an array) are equal when
+		// they are the same object, as in JS: `Window.activeFocusItem ===
+		// field`. Only values that are not numbers get here.
+		if _, errL := toFloat64(l); errL != nil {
+			if _, errR := toFloat64(r); errR != nil {
+				eq := sameObject(l, r)
+				if x.op == "!=" {
+					eq = !eq
+				}
+				return eq, nil
+			}
 		}
 	}
 	lf, err := toFloat64(l)
@@ -2642,4 +2657,21 @@ func (o *elemObject) parentOrigin() (float32, float32) {
 		}
 	}
 	return 0, 0
+}
+
+// sameObject is JS object identity: the same pointer, map, slice or
+// function, or equal comparable values otherwise.
+func sameObject(a, b any) bool {
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() {
+		return false
+	}
+	switch va.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+		return va.Pointer() == vb.Pointer()
+	}
+	if va.Comparable() {
+		return va.Equal(vb)
+	}
+	return false
 }

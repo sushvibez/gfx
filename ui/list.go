@@ -111,6 +111,12 @@ type ListEl struct {
 	autoHide bool // the bar shows only while the list moves (QML views)
 	bottomUp bool // index 0 at the BOTTOM (see BottomUp)
 	measure_ bool // rows carry their own height (see Measured)
+	horiz    bool // rows run left to right (see Horizontal)
+
+	// header and footer scroll with the rows, before the first and after
+	// the last (see Header); their sizes along the list, this layout.
+	header, footer Element
+	headSz, footSz float32
 }
 
 // Measured lets each row be as tall as it builds itself — QML's ListView,
@@ -130,6 +136,20 @@ func (e *ListEl) AutoHideBar() *ListEl { e.autoHide = true; return e }
 // message appears at the bottom. A list shorter than its view sits at the
 // bottom of it rather than the top.
 func (e *ListEl) BottomUp() *ListEl { e.bottomUp = true; return e }
+
+// Horizontal lays the rows out left to right and scrolls sideways (QML's
+// `orientation: ListView.Horizontal`): a row's height (List's rowHeight,
+// Heights, a Measured row) is then its WIDTH, every row is as tall as the
+// list unless it measures shorter, and the wheel scrolls it sideways, as
+// Qt's does. BottomUp mirrors it right to left.
+func (e *ListEl) Horizontal() *ListEl { e.horiz = true; return e }
+
+// Header and Footer put an element before the first row and after the
+// last (QML's ListView.header / footer): part of the content, so they
+// scroll away with the rows. Each is as tall (wide, for a Horizontal
+// list) as it measures.
+func (e *ListEl) Header(el Element) *ListEl { e.header = el; return e }
+func (e *ListEl) Footer(el Element) *ListEl { e.footer = el; return e }
 
 func (e *ListEl) W(px float32) *ListEl { e.w = px; return e }
 func (e *ListEl) H(px float32) *ListEl { e.h = px; return e }
@@ -158,19 +178,79 @@ func (e *ListEl) measure(*Context) (float32, float32) {
 	return w, h
 }
 
+// mainOf picks the along-the-list component of a (w, h) pair.
+func (e *ListEl) mainOf(w, h float32) float32 {
+	if e.horiz {
+		return w
+	}
+	return h
+}
+
+// offset is the scroll position along the list.
+func (e *ListEl) offset() float32 {
+	if e.horiz {
+		return e.st.scroll.X
+	}
+	return e.st.scroll.Y
+}
+
+// setExtent records the content and view lengths along the list and
+// clamps the offset to them.
+func (e *ListEl) setExtent(content float32, r Rect) {
+	s := &e.st.scroll
+	if e.horiz {
+		s.contentW, s.viewW = content, r.W
+		s.contentH, s.viewH = r.H, r.H
+		s.X = min(max(s.X, 0), s.maxX())
+		return
+	}
+	s.contentH, s.viewH = content, r.H
+	s.Y = min(max(s.Y, 0), s.maxY())
+}
+
+// place lays el out at content position pos (along the list, from the
+// content start) with length size, mirrored for BottomUp.
+func (e *ListEl) place(ctx *Context, el Element, r Rect, off, pos, size float32) {
+	view := e.mainOf(r.W, r.H)
+	p := pos - off
+	if e.bottomUp {
+		p = view - (pos + size) + off
+	}
+	if e.horiz {
+		// Across the list a row keeps its own height (a QML delegate is not
+		// stretched), filling the list only when it states none.
+		h := r.H
+		if _, mh := el.measure(ctx); mh > 0 && mh < r.H {
+			h = mh
+		}
+		el.layout(ctx, Rect{r.X + p, r.Y, size, h})
+		return
+	}
+	el.layout(ctx, Rect{r.X, r.Y + p, r.W, size})
+}
+
 func (e *ListEl) layout(ctx *Context, r Rect) {
 	e.rect = r
 	pitch := e.rowH + e.gap
-	total := e.contentHeight()
-	e.st.scroll.contentH, e.st.scroll.viewH = total, r.H
-	e.st.scroll.Y = min(max(e.st.scroll.Y, 0), e.st.scroll.maxY())
-	off := e.st.scroll.Y
+	view := e.mainOf(r.W, r.H)
+	// The header and footer, measured for their length along the list.
+	e.headSz, e.footSz = 0, 0
+	if e.header != nil {
+		e.headSz = e.mainOf(e.header.measure(ctx))
+	}
+	if e.footer != nil {
+		e.footSz = e.mainOf(e.footer.measure(ctx))
+	}
+	rowsLen := e.contentHeight()
+	e.setExtent(e.headSz+rowsLen+e.footSz, r)
+	off := e.offset()
+	rowsOff := off - e.headSz // the scroll offset within the rows
 
 	// Visible row range, with one row of overscan each side.
-	first := max(int(off/pitch)-1, 0)
-	last := min(int((off+r.H)/pitch)+1, e.count)
+	first := max(int(rowsOff/pitch)-1, 0)
+	last := min(int((rowsOff+view)/pitch)+1, e.count)
 	if e.heights != nil || e.measure_ {
-		// Rows differ in height, so the visible range is found by walking
+		// Rows differ in size, so the visible range is found by walking
 		// them; a sectioned list is short enough that this is cheaper than
 		// keeping a prefix-sum index up to date. A measured list walks the
 		// same way, on what it has learned so far (the uniform estimate
@@ -179,10 +259,10 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 		var y float32
 		for i := 0; i < e.count; i++ {
 			h := e.rowHeightAt(i)
-			if y+h < off {
+			if y+h < rowsOff {
 				first = i + 1
 			}
-			if y > off+r.H {
+			if y > rowsOff+view {
 				last = i
 				break
 			}
@@ -191,6 +271,7 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 		first = max(first-1, 0)
 		last = min(last+1, e.count)
 	}
+	first = min(first, max(last, 0))
 
 	e.first = first
 	// Before the rows: see ScrollEl.layout — regions register
@@ -202,24 +283,26 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 		row := e.build(i)
 		built = append(built, row)
 		if e.measure_ {
-			// Learn this row's own height BEFORE anything is positioned, so
-			// the rows below it land where they belong on this very frame
-			// (a height learned a frame late shows as a jump).
-			if _, mh := row.measure(ctx); mh > 0 {
+			// Learn this row's own size BEFORE anything is positioned, so
+			// the rows after it land where they belong on this very frame
+			// (a size learned a frame late shows as a jump).
+			if ms := e.mainOf(row.measure(ctx)); ms > 0 {
 				if e.st.measured == nil {
 					e.st.measured = map[int]float32{}
 				}
-				e.st.measured[i] = mh
+				e.st.measured[i] = ms
 			}
 		}
 	}
 	if e.measure_ {
-		// The content height and the scroll clamp move with what was just
+		// The content length and the scroll clamp move with what was just
 		// measured.
-		total = e.contentHeight()
-		e.st.scroll.contentH = total
-		e.st.scroll.Y = min(max(e.st.scroll.Y, 0), e.st.scroll.maxY())
-		off = e.st.scroll.Y
+		rowsLen = e.contentHeight()
+		e.setExtent(e.headSz+rowsLen+e.footSz, r)
+		off = e.offset()
+	}
+	if e.header != nil {
+		e.place(ctx, e.header, r, off, 0, e.headSz)
 	}
 	for k, row := range built {
 		i := first + k
@@ -227,14 +310,11 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 		if e.heights == nil && !e.measure_ {
 			h = e.rowH
 		}
-		y := r.Y - off + top
-		if e.bottomUp {
-			// Mirror the content window: index 0 takes the bottom of the
-			// view and later rows stack above it.
-			y = r.Y + r.H - (top + h) + off
-		}
-		row.layout(ctx, Rect{r.X, y, r.W, h})
+		e.place(ctx, row, r, off, e.headSz+top, h)
 		e.rows = append(e.rows, row)
+	}
+	if e.footer != nil {
+		e.place(ctx, e.footer, r, off, e.headSz+rowsLen, e.footSz)
 	}
 }
 
@@ -256,6 +336,7 @@ func (e *ListEl) paintSig() uint64 {
 	h := newSig(0x115)
 	h.ptr(unsafe.Pointer(e.st))
 	h.f32(e.st.scroll.Y)
+	h.f32(e.st.scroll.X)
 	h.col(e.barC)
 	h.b(e.hasBarC)
 	h.b(e.autoHide)
@@ -267,10 +348,29 @@ func (e *ListEl) paint(ctx *Context) {
 		return
 	}
 	ctx.R.PushClip(e.rect.X, e.rect.Y, e.rect.W, e.rect.H)
+	if e.header != nil {
+		e.header.paint(ctx)
+	}
 	for _, row := range e.rows {
 		row.paint(ctx)
 	}
-	if m := e.st.scroll.maxY(); m > 0 {
+	if e.footer != nil {
+		e.footer.paint(ctx)
+	}
+	if m := e.st.scroll.maxX(); e.horiz && m > 0 {
+		// A horizontal list's bar runs along the bottom.
+		barW := max(24, e.rect.W*e.st.scroll.viewW/e.st.scroll.contentW)
+		barX := e.rect.X + (e.rect.W-barW)*(e.st.scroll.X/m)
+		bc := RGBA{R: 1, G: 1, B: 1, A: 0.25}
+		if e.hasBarC {
+			bc = e.barC
+		}
+		if e.autoHide {
+			bc.A *= e.st.scroll.barAlpha()
+		}
+		ctx.R.FillRoundRect(barX, e.rect.Y+e.rect.H-5, barW, 3, 1.5, bc)
+	}
+	if m := e.st.scroll.maxY(); !e.horiz && m > 0 {
 		barH := max(24, e.rect.H*e.st.scroll.viewH/e.st.scroll.contentH)
 		barY := e.rect.Y + (e.rect.H-barH)*(e.st.scroll.Y/m)
 		bc := RGBA{R: 1, G: 1, B: 1, A: 0.25}
@@ -295,6 +395,13 @@ func (e *ListEl) hit(x, y float32) Element {
 			return h
 		}
 	}
+	for _, el := range []Element{e.footer, e.header} {
+		if el != nil {
+			if h := el.hit(x, y); h != nil {
+				return h
+			}
+		}
+	}
 	return nil
 }
 
@@ -303,15 +410,49 @@ func (e *ListEl) onClick() func() { return nil }
 // childElems exposes the rows built for the visible range, so a walk of a
 // built tree (ui.Children — tooling and tests) reaches a list's delegates
 // instead of stopping at the view.
-func (e *ListEl) childElems() []Element { return e.rows }
-func (e *ListEl) bounds() Rect          { return e.rect }
+func (e *ListEl) childElems() []Element {
+	if e.header == nil && e.footer == nil {
+		return e.rows
+	}
+	out := make([]Element, 0, len(e.rows)+2)
+	if e.header != nil {
+		out = append(out, e.header)
+	}
+	out = append(out, e.rows...)
+	if e.footer != nil {
+		out = append(out, e.footer)
+	}
+	return out
+}
+func (e *ListEl) bounds() Rect { return e.rect }
 
 // scrollTarget implementation.
 func (e *ListEl) contains(x, y float32) bool { return e.rect.contains(x, y) }
-func (e *ListEl) scroll(dy float32) bool     { return e.st.scroll.scrollBy(dy) }
-func (e *ListEl) viewRect() Rect             { return e.rect }
-func (e *ListEl) thumbRect() Rect            { return thumbRectFor(e.rect, &e.st.scroll) }
-func (e *ListEl) scrollToY(y float32)        { scrollToYFor(e.rect, &e.st.scroll, y) }
+
+// scroll takes the wheel: a Horizontal list scrolls sideways by it, as
+// Qt's does.
+func (e *ListEl) scroll(dy float32) bool {
+	if e.horiz {
+		return e.st.scroll.scrollByX(dy)
+	}
+	return e.st.scroll.scrollBy(dy)
+}
+
+// scrollX takes a sideways wheel (Shift+wheel, a tilt wheel).
+func (e *ListEl) scrollX(dx float32) bool {
+	if e.horiz {
+		return e.st.scroll.scrollByX(dx)
+	}
+	return false
+}
+func (e *ListEl) viewRect() Rect { return e.rect }
+func (e *ListEl) thumbRect() Rect {
+	if e.horiz {
+		return Rect{} // no draggable thumb along the bottom
+	}
+	return thumbRectFor(e.rect, &e.st.scroll)
+}
+func (e *ListEl) scrollToY(y float32) { scrollToYFor(e.rect, &e.st.scroll, y) }
 
 // VisibleRange reports the row indices built this frame, for tests.
 func (e *ListEl) VisibleRange() (first, count int) { return e.first, len(e.rows) }
