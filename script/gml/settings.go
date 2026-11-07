@@ -2,44 +2,26 @@ package gml
 
 import (
 	"strings"
+
+	"github.com/sushvibez/gfx/core/settings"
 )
 
-// QtCore's Settings: the properties declared on a Settings element keep
-// their values across runs. When a property is created its saved value,
-// if any, replaces the default (as an assignment would, so the default's
-// binding is broken); every change is written back, once per frame, to
-// the document's SettingsStore. Keys are QSettings', "category/name" or
-// the bare name. value(key, default), setValue(key, value) and sync() are
-// the element's methods.
+// QtCore's Settings over core/settings (the Go API for the same): the
+// properties declared on a Settings element keep their values across
+// runs. When a property binds its saved value, if any, replaces the
+// default (as an assignment would, so the default's binding is broken);
+// every change is set in its settings.File and written once per frame.
+// Keys are QSettings', "category/name" or the bare name; the file is the
+// element's location or fileName ("" for the program's default).
+// value(key, default), setValue(key, value) and sync() are the element's
+// methods.
 
-// SettingsStore keeps Settings values between runs. file is the
-// Settings element's location or fileName ("" for the default file); the
-// values are a flat map from "category/name" keys to JSON-compatible
-// values (numbers, strings, bools, arrays, objects).
-type SettingsStore interface {
-	Load(file string) map[string]any
-	Save(file string, values map[string]any) error
-}
-
-// defaultSettingsStore is the store a Document starts with: a JSON file
-// per settings file natively, localStorage on the web (settings_*.go).
-var defaultSettingsStore SettingsStore = platformSettingsStore{}
-
-// SetDefaultSettingsStore replaces the store Documents loaded afterwards
-// use (tests, or a host that keeps its settings elsewhere). nil keeps
-// Settings values in memory only.
-func SetDefaultSettingsStore(s SettingsStore) {
+// SetSettingsStore replaces this document's settings store (the default
+// is settings.DefaultStore()). Call it before the first frame: Settings
+// properties load their values on it. nil keeps them in memory only.
+func (d *Document) SetSettingsStore(s settings.Store) {
 	if s == nil {
-		s = &MemorySettingsStore{}
-	}
-	defaultSettingsStore = s
-}
-
-// SetSettingsStore replaces this document's store. Call it before the
-// first frame: Settings properties load their values on it.
-func (d *Document) SetSettingsStore(s SettingsStore) {
-	if s == nil {
-		s = &MemorySettingsStore{}
+		s = &settings.Memory{}
 	}
 	d.doc.settingsStore = s
 }
@@ -48,75 +30,43 @@ func (d *Document) SetSettingsStore(s SettingsStore) {
 // start of the next frame (a host about to exit calls it).
 func (d *Document) SaveSettings() { d.doc.flushSettings() }
 
-// MemorySettingsStore keeps values in memory, per file: Settings work
-// within a run and are forgotten after it.
-type MemorySettingsStore struct {
-	files map[string]map[string]any
-}
-
-func (m *MemorySettingsStore) Load(file string) map[string]any {
-	out := map[string]any{}
-	for k, v := range m.files[file] {
-		out[k] = v
-	}
-	return out
-}
-
-func (m *MemorySettingsStore) Save(file string, values map[string]any) error {
-	if m.files == nil {
-		m.files = map[string]map[string]any{}
-	}
-	cp := make(map[string]any, len(values))
-	for k, v := range values {
-		cp[k] = v
-	}
-	m.files[file] = cp
-	return nil
-}
-
-// settingsState is a document's loaded settings files.
+// settingsState is a document's open settings files and bound properties.
 type settingsState struct {
-	files map[string]map[string]any
-	dirty map[string]bool
+	files map[string]*settings.File
 	// pending are the properties still to bind: all of them until the
 	// first frame (the host may set the store after loading), then an
 	// alias whose target needs the first build (`property alias winX:
 	// window.x`).
 	pending []func() bool
-	// watch compares each bound property with its last value, marking
-	// its file dirty when it changed.
+	// watch compares each bound property with its last value and sets it
+	// in its file when it changed.
 	watch []func()
 }
 
 func (doc *docState) settingsFiles() *settingsState {
 	if doc.settings == nil {
-		doc.settings = &settingsState{files: map[string]map[string]any{}, dirty: map[string]bool{}}
+		doc.settings = &settingsState{files: map[string]*settings.File{}}
 	}
 	return doc.settings
 }
 
-func (doc *docState) store() SettingsStore {
-	if doc.settingsStore == nil {
-		doc.settingsStore = defaultSettingsStore
-	}
-	return doc.settingsStore
-}
-
-// settingsValues returns the loaded values of file, loading it once.
-func (doc *docState) settingsValues(file string) map[string]any {
+// settingsFile returns the document's settings file name, opening it once.
+func (doc *docState) settingsFile(name string) *settings.File {
 	s := doc.settingsFiles()
-	vals, ok := s.files[file]
-	if !ok {
-		vals = doc.store().Load(file)
-		if vals == nil {
-			vals = map[string]any{}
+	f := s.files[name]
+	if f == nil {
+		store := doc.settingsStore
+		if store == nil {
+			store = settings.DefaultStore()
 		}
-		s.files[file] = vals
+		f = settings.OpenIn(store, name)
+		s.files[name] = f
 	}
-	return vals
+	return f
 }
 
-// flushSettings saves every file changed since the last flush.
+// flushSettings sets every bound property that changed and saves the
+// files that did.
 func (doc *docState) flushSettings() {
 	s := doc.settings
 	if s == nil {
@@ -125,15 +75,11 @@ func (doc *docState) flushSettings() {
 	for _, w := range s.watch {
 		w()
 	}
-	if len(s.dirty) == 0 {
-		return
-	}
-	for file := range s.dirty {
-		if err := doc.store().Save(file, s.files[file]); err != nil {
+	for _, f := range s.files {
+		if err := f.Save(); err != nil {
 			logf("gml: Settings: %v", err)
 		}
 	}
-	clear(s.dirty)
 }
 
 // settingsWhere reads a Settings element's file and category.
@@ -167,9 +113,10 @@ func settingsKey(category, name string) string {
 	return category + "/" + name
 }
 
-// bindSetting gives a Settings property its saved value and saves its
-// changes. ref is the property as declared (an alias resolves to its
-// target; one that cannot resolve yet waits for the first build).
+// bindSetting queues a Settings property to bind on the first frame: its
+// saved value loads, and its changes are saved. ref is the property as
+// declared (an alias resolves to its target; one that cannot resolve yet
+// waits for the first build).
 func (doc *docState) bindSetting(n *node, name string, ref Ref, env *Env) {
 	file, category := settingsWhere(n, env)
 	key := settingsKey(category, name)
@@ -182,8 +129,8 @@ func (doc *docState) bindSetting(n *node, name string, ref Ref, env *Env) {
 			}
 			target = r
 		}
-		vals := doc.settingsValues(file)
-		if v, ok := vals[key]; ok {
+		f := doc.settingsFile(file)
+		if v, ok := f.Get(key); ok {
 			if err := target.set(v); err != nil {
 				logf("gml: Settings %s: %v", key, err)
 			}
@@ -196,8 +143,7 @@ func (doc *docState) bindSetting(n *node, name string, ref Ref, env *Env) {
 			v := settingsJSON(target.get())
 			if sv := str(v); sv != last {
 				last = sv
-				vals[key] = v
-				s.dirty[file] = true
+				f.Set(key, v)
 			}
 		})
 		return true
@@ -229,7 +175,8 @@ func (doc *docState) bindPendingSettings(final bool) {
 }
 
 // settingsJSON turns a property value into one a store can keep: JSON's
-// own kinds pass, anything else (a color, a url) is kept as its string.
+// own kinds pass, anything else (a color, a url) is kept as its string —
+// the form the property reads back.
 func settingsJSON(v any) any {
 	switch v := v.(type) {
 	case nil, float64, string, bool:
@@ -267,20 +214,17 @@ func (doc *docState) seedSettingsMethods(n *node, env *Env, obj *elemObject) {
 		if len(args) == 0 {
 			return nil, nil
 		}
-		if v, ok := doc.settingsValues(file)[settingsKey(category, str(args[0]))]; ok {
-			return v, nil
-		}
+		var def any
 		if len(args) > 1 {
-			return args[1], nil
+			def = args[1]
 		}
-		return nil, nil
+		return doc.settingsFile(file).Value(settingsKey(category, str(args[0])), def), nil
 	})
 	obj.methods["setValue"] = jsFunc(func(args []any) (any, error) {
 		if len(args) < 2 {
 			return nil, nil
 		}
-		doc.settingsValues(file)[settingsKey(category, str(args[0]))] = settingsJSON(args[1])
-		doc.settingsFiles().dirty[file] = true
+		doc.settingsFile(file).Set(settingsKey(category, str(args[0])), settingsJSON(args[1]))
 		return nil, nil
 	})
 	obj.methods["sync"] = jsFunc(func([]any) (any, error) {

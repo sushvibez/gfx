@@ -1,17 +1,17 @@
 //go:build js
 
-package gml
+package settings
 
 import (
 	"encoding/json"
 	"syscall/js"
 )
 
-// platformSettingsStore keeps each settings file as one JSON entry in the
+// platformStore keeps each settings file as one JSON entry in the
 // page's localStorage, under "gfx.settings:" + the file name. Storage
 // that is missing or refuses (a private window) leaves Settings working
 // for the session only.
-type platformSettingsStore struct{}
+type platformStore struct{}
 
 func localStorage() (v js.Value, ok bool) {
 	defer func() {
@@ -23,7 +23,7 @@ func localStorage() (v js.Value, ok bool) {
 	return ls, ls.Truthy()
 }
 
-func (platformSettingsStore) Load(file string) map[string]any {
+func (platformStore) Load(file string) map[string]any {
 	ls, ok := localStorage()
 	if !ok {
 		return nil
@@ -41,7 +41,7 @@ func (platformSettingsStore) Load(file string) map[string]any {
 	return vals
 }
 
-func (platformSettingsStore) Save(file string, values map[string]any) error {
+func (platformStore) Save(file string, values map[string]any) error {
 	ls, ok := localStorage()
 	if !ok {
 		return nil

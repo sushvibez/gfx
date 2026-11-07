@@ -576,11 +576,12 @@ value shows from the second frame. `value(key, default)`,
 `setValue(key, value)` and `sync()` are its methods. Values are kept as
 JSON: natively one file per settings file in `<user config dir>/gfx/`
 (`<program name>.json` by default; an absolute `location` is used as
-given), on the web in `localStorage` under `gfx.settings:<file>`. A host
-picks another place with `Document.SetSettingsStore` (before the first
-frame) or `gml.SetDefaultSettingsStore`; `MemorySettingsStore` forgets
-everything at exit, and `Document.SaveSettings` writes pending changes at
-once. Declared properties share one document-wide name space, so a
+given), on the web in `localStorage` under `gfx.settings:<file>`. The
+storage is `core/settings`, which Go code uses directly (`settings.Open`,
+`Get`/`Set`/`Save`, `settings.Bind` for a `core.Property`). A host picks
+another place with `Document.SetSettingsStore` (before the first frame)
+or `settings.SetDefault`; `settings.Memory` forgets everything at exit,
+and `Document.SaveSettings` writes pending changes at once. Declared properties share one document-wide name space, so a
 Settings property should not reuse a name another element declares.
 
 ### Canvas 2D context

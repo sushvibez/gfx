@@ -16,6 +16,7 @@ import (
 
 	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/core"
+	"github.com/sushvibez/gfx/core/settings"
 	"github.com/sushvibez/gfx/render"
 	"github.com/sushvibez/gfx/ui"
 )
@@ -1799,7 +1800,7 @@ type docState struct {
 	frameAnims    map[string]*frameAnim
 	baseDir       string                      // directory of the source .gml, for resolving Image sources
 	settings      *settingsState              // Settings files loaded, changed (settings.go)
-	settingsStore SettingsStore               // where Settings values persist; nil = defaultSettingsStore
+	settingsStore settings.Store              // where Settings values persist; nil = settings.DefaultStore()
 	animPlayers   map[string]*animPlayer      // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState // MouseArea drags, by element (dragtarget.go)
 	lastView      time.Time                   // wall clock of the previous frame, for timers

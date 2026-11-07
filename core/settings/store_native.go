@@ -1,6 +1,6 @@
 //go:build !js
 
-package gml
+package settings
 
 import (
 	"encoding/json"
@@ -11,12 +11,11 @@ import (
 	"strings"
 )
 
-// platformSettingsStore keeps each settings file as JSON. A Settings
-// element without a location or fileName uses <user config dir>/gfx/
-// <program name>.json, the program's own settings as QSettings keeps
-// them per application; a relative location sits in that directory too,
-// and an absolute one is used as given.
-type platformSettingsStore struct{}
+// platformStore keeps each settings file as JSON. The file with no name
+// is <user config dir>/gfx/<program name>.json, the program's own
+// settings as QSettings keeps them per application; another relative name
+// sits in that directory too, and an absolute one is used as given.
+type platformStore struct{}
 
 func settingsPath(file string) (string, error) {
 	if filepath.IsAbs(file) {
@@ -39,7 +38,7 @@ func settingsPath(file string) (string, error) {
 	return filepath.Join(dir, "gfx", file), nil
 }
 
-func (platformSettingsStore) Load(file string) map[string]any {
+func (platformStore) Load(file string) map[string]any {
 	path, err := settingsPath(file)
 	if err != nil {
 		return nil
@@ -47,19 +46,19 @@ func (platformSettingsStore) Load(file string) map[string]any {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		if !errors.Is(err, fs.ErrNotExist) {
-			logf("gml: Settings: %v", err)
+			logf("settings: %v", err)
 		}
 		return nil
 	}
 	var vals map[string]any
 	if err := json.Unmarshal(b, &vals); err != nil {
-		logf("gml: Settings: %s: %v", path, err)
+		logf("settings: %s: %v", path, err)
 		return nil
 	}
 	return vals
 }
 
-func (platformSettingsStore) Save(file string, values map[string]any) error {
+func (platformStore) Save(file string, values map[string]any) error {
 	path, err := settingsPath(file)
 	if err != nil {
 		return err

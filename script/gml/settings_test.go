@@ -1,10 +1,9 @@
 package gml
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
+	"github.com/sushvibez/gfx/core/settings"
 	"github.com/sushvibez/gfx/ui"
 )
 
@@ -26,7 +25,7 @@ Item {
     Rectangle { id: box; width: 40; height: 20 }
 }`
 
-func loadSettingsDoc(t *testing.T, store SettingsStore) (*Document, *Env, func()) {
+func loadSettingsDoc(t *testing.T, store settings.Store) (*Document, *Env, func()) {
 	t.Helper()
 	env := NewEnv()
 	d, err := LoadString(settingsSrc, env)
@@ -41,7 +40,7 @@ func loadSettingsDoc(t *testing.T, store SettingsStore) (*Document, *Env, func()
 }
 
 func TestSettingsPersist(t *testing.T) {
-	store := &MemorySettingsStore{}
+	store := &settings.Memory{}
 	store.Save("", map[string]any{"view/theme": "dark", "view/boxWidth": float64(90)})
 
 	_, env, frame := loadSettingsDoc(t, store)
@@ -112,25 +111,6 @@ func TestSettingsPersist(t *testing.T) {
 	}
 	if v, _ := evalString("prefs.grid", env2); str(v) != "false" {
 		t.Errorf("second run grid = %v, want false", v)
-	}
-}
-
-// The native store writes a JSON file and reads it back.
-func TestSettingsFileStore(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "prefs.json")
-	var s platformSettingsStore
-	if got := s.Load(path); got != nil {
-		t.Fatalf("Load of a missing file = %v, want nil", got)
-	}
-	if err := s.Save(path, map[string]any{"view/zoom": 2.0, "name": "x"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	}
-	got := s.Load(path)
-	if got["view/zoom"] != 2.0 || got["name"] != "x" {
-		t.Errorf("Load = %v", got)
 	}
 }
 
