@@ -1856,7 +1856,8 @@ Item {
 func TestTransitionAnimates(t *testing.T) {
 	src := `
 Item {
-    state: ""
+    property string mode: ""
+    state: mode
     states: [ State { name: "x"; PropertyChanges { target: b; height: 100 } } ]
     transitions: [
         Transition { NumberAnimation { properties: "height,width"; duration: 200 } }
@@ -1868,15 +1869,23 @@ Item {
 	if err != nil {
 		t.Fatalf("LoadString: %v", err)
 	}
+	// The first state shown is not animated; a change runs the transition.
+	if ctx, err := computeStateCtx(d.root, env, d.doc); err != nil || len(ctx.anims) != 0 {
+		t.Fatalf("initial state: anims %v err %v, want none", ctx, err)
+	}
+	if _, err := evalString(`mode = "x"`, env); err != nil {
+		t.Fatal(err)
+	}
 	ctx, err := computeStateCtx(d.root, env, d.doc)
 	if err != nil {
 		t.Fatalf("computeStateCtx: %v", err)
 	}
-	if !ctx.animated["height"] || !ctx.animated["width"] {
-		t.Fatalf("animated set = %v", ctx.animated)
+	a := ctx.animFor("b", "height")
+	if a == nil || ctx.animFor("b", "width") == nil {
+		t.Fatalf("anims = %+v, want height and width", ctx.anims)
 	}
-	if ctx.duration != 200*time.Millisecond {
-		t.Fatalf("duration = %v", ctx.duration)
+	if a.dur != 200*time.Millisecond {
+		t.Fatalf("duration = %v", a.dur)
 	}
 
 	// numAttr tweens when the target changes under an active transition.

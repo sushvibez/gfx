@@ -287,9 +287,8 @@ func parseAnchors(n *node, env *Env) (ui.Anchors, error) {
 			if err != nil {
 				return a, fmt.Errorf("gml:%d: %v", at.line, err)
 			}
-			if l == nil {
-				continue // `undefined`: this edge is not anchored
-			}
+			// `undefined` (l nil) releases the edge: an AnchorChanges does that
+			// to an anchor the markup set, so it must clear, not be skipped.
 			switch at.name {
 			case "anchors.left":
 				a.Left = l
@@ -373,6 +372,9 @@ func dropXY(attrs []attr, keep bool) []attr {
 func buildAnchorChildren(parent *node, env *Env, doc *docState) ([]ui.Element, error) {
 	var out []ui.Element
 	for _, c := range parent.children {
+		if doc.state.movedAway(c, parent) {
+			continue // a ParentChange has it under another item
+		}
 		switch {
 		case isBareMouseArea(c) || isPointerHandler(c):
 			// Hoisted onto the parent box by buildBox — not a visual child.
@@ -427,6 +429,15 @@ func buildAnchoredChild(c *node, env *Env, doc *docState) (ui.Element, error) {
 	// animated, a frame at a time — has to be visible to this pass
 	// too. Without it the element built with the new x but stayed
 	// anchored at the old one, and animating `x` moved nothing.
+	// The active state's changes count the same way: a PropertyChanges
+	// on x, an AnchorChanges.
+	if doc.state != nil {
+		if id := nodeID(c); id != "" {
+			if ov := doc.state.overridesFor(id); len(ov) > 0 {
+				c = c.merged(ov)
+			}
+		}
+	}
 	c = doc.withAttrOverrides(c)
 	attrs, ownXY := anchorAttrsOfSrc(c, doc)
 	restoreGeom := shadowSelfGeometry(c, env, doc)
@@ -434,6 +445,15 @@ func buildAnchoredChild(c *node, env *Env, doc *docState) (ui.Element, error) {
 	restoreGeom()
 	if err != nil {
 		return nil, err
+	}
+	// A transition tweens the position as it does any other property.
+	if id := nodeID(c); id != "" {
+		if a.HasX {
+			a.X, _ = doc.stateTween(id, "x", a.X)
+		}
+		if a.HasY {
+			a.Y, _ = doc.stateTween(id, "y", a.Y)
+		}
 	}
 	// The anchors were just parsed OUT of the child, so record
 	// what they impose on it: an item anchored to both sides (or

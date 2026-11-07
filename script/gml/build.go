@@ -1040,7 +1040,10 @@ func buildFresh(n *node, env *Env, doc *docState) (ui.Element, error) {
 	// Apply active-state property overrides targeting this element by id.
 	if doc.state != nil {
 		if id := nodeID(n); id != "" {
-			if ov := doc.state.overrides[id]; len(ov) > 0 {
+			// Its anchors are the anchor pass's (buildAnchoredChild merges the
+			// state there, before they are parsed and stripped): an
+			// AnchorChanges must not come back here as attributes.
+			if ov := withoutAnchors(doc.state.overridesFor(id)); len(ov) > 0 {
 				n = n.merged(ov)
 			}
 		}
@@ -1815,21 +1818,24 @@ type docState struct {
 	idKeys        ccol[keyID]
 	timers        map[string]*gmlTimer
 	frameAnims    map[string]*frameAnim
-	baseDir       string                        // directory of the source .gml, for resolving Image sources
-	settings      *settingsState                // Settings files loaded, changed (settings.go)
-	settingsStore settings.Store                // where Settings values persist; nil = settings.DefaultStore()
-	animPlayers   map[string]*animPlayer        // AnimatedImage players, by element (animatedimage.go)
-	dragStates    map[string]*dragTargetState   // MouseArea drags, by element (dragtarget.go)
-	focusReq      map[keyID]bool                // forceActiveFocus requests, applied on the next build (focus.go)
-	focusRefs     map[keyID]Ref                 // tracked activeFocus, by element (focus.go)
-	readsFocus    map[*node]bool                // items whose own attributes read activeFocus (focus.go)
-	inputKeys     map[*ui.InputState]keyID      // the element key a text field's state was built under (focus.go)
-	focusObjs     map[keyID]any                 // what activeFocusItem names, by element (focus.go)
-	handlerStates map[string]*inputHandlerState // Wheel/Pinch/PointHandler state (inputhandlers.go)
-	pointerSeen   map[string]*[2]float32        // MouseArea: the pointer's last window position (mousearea.go)
-	geomWritten   map[geomKey]int               // frame an x/y/width/height override was written (setAttrOverride)
-	lastView      time.Time                     // wall clock of the previous frame, for timers
-	lastClock     time.Duration                 // ... and the frame loop's animation clock
+	baseDir       string                            // directory of the source .gml, for resolving Image sources
+	settings      *settingsState                    // Settings files loaded, changed (settings.go)
+	settingsStore settings.Store                    // where Settings values persist; nil = settings.DefaultStore()
+	animPlayers   map[string]*animPlayer            // AnimatedImage players, by element (animatedimage.go)
+	dragStates    map[string]*dragTargetState       // MouseArea drags, by element (dragtarget.go)
+	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
+	stateAnims    map[string][]animSpec             // the transition running since that change
+	stateToks     map[string]*core.Property[uint64] // bumped on each change (stateCtx.tok)
+	focusReq      map[keyID]bool                    // forceActiveFocus requests, applied on the next build (focus.go)
+	focusRefs     map[keyID]Ref                     // tracked activeFocus, by element (focus.go)
+	readsFocus    map[*node]bool                    // items whose own attributes read activeFocus (focus.go)
+	inputKeys     map[*ui.InputState]keyID          // the element key a text field's state was built under (focus.go)
+	focusObjs     map[keyID]any                     // what activeFocusItem names, by element (focus.go)
+	handlerStates map[string]*inputHandlerState     // Wheel/Pinch/PointHandler state (inputhandlers.go)
+	pointerSeen   map[string]*[2]float32            // MouseArea: the pointer's last window position (mousearea.go)
+	geomWritten   map[geomKey]int                   // frame an x/y/width/height override was written (setAttrOverride)
+	lastView      time.Time                         // wall clock of the previous frame, for timers
+	lastClock     time.Duration                     // ... and the frame loop's animation clock
 	listSeq       int
 
 	// Element geometry for parent/id.width refs. elems collects this frame's
@@ -5776,6 +5782,29 @@ func buildBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 		els, err = buildChildren(n, env, doc, d.IsRow())
 	}
 
+	// Items a ParentChange moves under this one, built as its own children.
+	// An empty plain box places them by their x/y, as Qt's Item would.
+	if moved := doc.movedInto(n); len(moved) > 0 && err == nil && !anchorMode && len(els) == 0 && !isPositioner(n.typeName) && !isLayoutType(n.typeName) {
+		anchorMode = true
+		d.AnchorMode()
+	}
+	// Items a ParentChange moves under this one, built as its own children.
+	if err == nil {
+		for _, mv := range doc.movedInto(n) {
+			var el ui.Element
+			var e error
+			if anchorMode {
+				el, e = buildAnchoredChild(mv, env, doc)
+			} else {
+				el, e = build(mv, env, doc)
+			}
+			if e != nil {
+				err = e
+				break
+			}
+			els = append(els, el)
+		}
+	}
 	if hadParent {
 		env.vars["parent"] = prevParent
 	} else {
@@ -5871,6 +5900,9 @@ func buildChildren(parent *node, env *Env, doc *docState, row bool) ([]ui.Elemen
 	laysOutChildren := isLayoutType(parent.typeName) || isPositioner(parent.typeName)
 	var out []ui.Element
 	for _, c := range parent.children {
+		if doc.state.movedAway(c, parent) {
+			continue // a ParentChange has it under another item
+		}
 		switch {
 		case isBareMouseArea(c) || isPointerHandler(c):
 			// Hoisted onto the parent box by buildBox — not a visual child.
