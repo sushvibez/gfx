@@ -494,7 +494,7 @@ on Button, `Spacer { }`.
 | `Pane`, `Frame`, `GroupBox`, `Page`, `Control`, `Container`, `ToolBar`, `ApplicationWindow`, `Window` | plain boxes that lay out their children; `padding`, `spacing`, `background` | `title`, `header`/`footer` on Page and ApplicationWindow, `menuBar`, window `flags`/`visibility`, `GroupBox.title` |
 | `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator`, `Action` | menu titles, open-on-click, `popup()`/`open()`/`close()`, `Action { text; checkable; checked; onTriggered }`, checkable items | submenus, `Action.shortcut` (a separate `Shortcut` works), `ActionGroup` |
 | `TabBar`, `TabButton` | `currentIndex` driven by its buttons | `position`, `contentWidth` |
-| `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag | `SplitHandle.pressed/hovered` read false |
+| `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag, and a `handle:` delegate reads `SplitHandle.hovered` and `SplitHandle.pressed` (true from press to release, wherever the pointer goes) | the drag does not stop at `maximum*` |
 | `SwipeView`, `StackView`, `StackLayout` | `currentIndex` (SwipeView slides), `push/pop/replace/clear`, `depth`, `initialItem` | `StackView` transitions, `SwipeView` drag paging |
 | `PageIndicator` | `count`, `currentIndex`, `interactive`, `spacing`, `delegate` | |
 | `ToolSeparator`, `MenuSeparator` | a line | |
@@ -852,8 +852,7 @@ Not implemented (summarised from `script/TODO.md` and the findings log):
   `Qt.binding`, dynamic object creation, `.js` imports.
 - Controls styling: Tumbler keeps the built-in wheel even when a style
   module provides one; hover/press tinting in style files reads the live
-  state but `SplitHandle.pressed/hovered` and `Overlay` beyond `modal` do
-  not.
+  state but `Overlay` beyond `modal` does not.
 
 Where the engine is honest rather than complete, the page still loads: an
 accepted attribute evaluates (so a binding error is still reported) and

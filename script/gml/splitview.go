@@ -101,9 +101,11 @@ func buildSplitView(n *node, env *Env, doc *docState) (ui.Element, error) {
 			gap := i - 1
 			before, after := &panes[gap].hints, &panes[i].hints
 			off := doc.floatProp(fmt.Sprintf("%s|split:%d", key, gap), 0)
-			hel := buildSplitHandle(handle, env, doc, vertical)
+			hover := doc.boolProp(fmt.Sprintf("%s|split:%d.hovered", key, gap), false)
+			press := doc.boolProp(fmt.Sprintf("%s|split:%d.pressed", key, gap), false)
+			hel := buildSplitHandle(handle, env, doc, vertical, hover, press)
 			if hel != nil {
-				box.Children(splitDragger(hel, off, before, after, vertical))
+				box.Children(splitDragger(hel, off, before, after, vertical, press))
 			}
 		}
 		applySplitHints(panes[i].el, panes[i].hints, vertical,
@@ -136,7 +138,9 @@ func splitOffsetFor(doc *docState, key string, i, n int) float32 {
 // is clamped so neither pane goes under its stated minimum (Qt refuses to
 // drag a handle past a pane's minimumWidth) — and the offset is absolute, so
 // the drag follows the pointer rather than accumulating per event.
-func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertical bool) ui.Element {
+// pressed is the handle's SplitHandle.pressed: true from the press to the
+// release, wherever the pointer goes meanwhile.
+func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertical bool, pressed Ref) ui.Element {
 	minBefore, minAfter := before.minimum, after.minimum
 	prefBefore, prefAfter := before.preferred, after.preferred
 	start := float32(0)
@@ -151,10 +155,14 @@ func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertica
 		if vertical {
 			d = dy
 		}
-		if phase == ui.DragStart {
+		switch phase {
+		case ui.DragStart:
 			f, _ := toFloat32(off.get())
 			start = f
+			setBool(pressed, true)
 			return
+		case ui.DragEnd:
+			setBool(pressed, false)
 		}
 		want := start + d
 		// A pane with no preferred size has no floor to compute against;
@@ -198,7 +206,7 @@ func splitPane(n *node, env *Env) (*node, splitHints) {
 				hints.fill = b
 			}
 		case "SplitView.maximumWidth", "SplitView.maximumHeight":
-			// accepted; only reachable by dragging, which is not modeled
+			// accepted; the handle drag does not stop at a maximum yet
 		default:
 			cp.attrs = append(cp.attrs, a)
 		}
@@ -238,13 +246,23 @@ func applySplitHints(el ui.Element, hints splitHints, vertical bool, dragged flo
 }
 
 // buildSplitHandle draws the divider between two panes: the `handle:`
-// delegate when the markup gives one, else a thin neutral bar.
-func buildSplitHandle(handle *node, env *Env, doc *docState, vertical bool) ui.Element {
+// delegate when the markup gives one, else a thin neutral bar. hovered and
+// pressed are the handle's SplitHandle.hovered / .pressed, kept across
+// builds (splitDragger sets pressed).
+func buildSplitHandle(handle *node, env *Env, doc *docState, vertical bool, hovered, pressed Ref) ui.Element {
+	watch := func(el ui.Element) ui.Element {
+		if d, ok := el.(*ui.DivEl); ok {
+			d.OnHoverChanged(func(on bool) { setBool(hovered, on) })
+		}
+		return el
+	}
 	if handle != nil {
-		// The handle's own attached state. Dragging is not modeled, so it
-		// always reads as untouched — which is the delegate's normal look.
+		// The handle's own attached state, read by the delegate
+		// (`color: SplitHandle.pressed ? … : SplitHandle.hovered ? … : …`).
+		h, _ := toBool(hovered.get())
+		p, _ := toBool(pressed.get())
 		prev, had := env.vars["SplitHandle"]
-		env.vars["SplitHandle"] = map[string]any{"pressed": false, "hovered": false}
+		env.vars["SplitHandle"] = map[string]any{"pressed": p, "hovered": h}
 		defer func() {
 			if had {
 				env.vars["SplitHandle"] = prev
@@ -262,12 +280,20 @@ func buildSplitHandle(handle *node, env *Env, doc *docState, vertical bool) ui.E
 					d.H(0)
 				}
 			}
-			return el
+			return watch(el)
 		}
 	}
 	bar := ui.Div().Bg(ui.RGBA{R: 0.35, G: 0.36, B: 0.4, A: 1})
 	if vertical {
-		return bar.H(4)
+		return watch(bar.H(4))
 	}
-	return bar.W(4)
+	return watch(bar.W(4))
+}
+
+// setBool writes a bool Ref only when it changes, so a hover reported
+// every paint does not rebuild the page every frame.
+func setBool(r Ref, v bool) {
+	if cur, _ := toBool(r.get()); cur != v {
+		_ = r.set(v)
+	}
 }
