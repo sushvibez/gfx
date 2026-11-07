@@ -305,6 +305,10 @@ func registerEnums(vars map[string]any) {
 		standardKeyNS[k] = v
 	}
 	vars["StandardKey"] = standardKeyNS
+	vars["SystemPalette"] = map[string]any{
+		"Active": float64(paletteActive), "Inactive": float64(paletteInactive),
+		"Disabled": float64(paletteDisabled),
+	}
 	vars["Animation"] = animationNS
 	// TextInput/TextEdit: the echo modes a password field states, plus the
 	// Text alignment/wrap members these items share.

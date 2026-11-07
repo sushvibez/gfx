@@ -97,11 +97,13 @@ func templateDefaults() map[string]any {
 		// The palette holds COLOURS, not strings: a style reads
 		// `Qt.rgba(root.palette.button.r, ..., 0.2)` for its hover wash,
 		// and a plain string has no .r (see colorVal).
+		// The roles are SystemPalette's (systempalette.go), so a page that
+		// paints with one matches the controls.
 		"palette": map[string]any{
-			"button": colorVal("#e0e0e0"), "buttonText": colorVal("#1a1a1a"),
-			"window": colorVal("#f0f0f0"), "windowText": colorVal("#1a1a1a"),
-			"base": colorVal("#ffffff"), "text": colorVal("#1a1a1a"),
-			"highlight": colorVal("#308cc6"), "highlightedText": colorVal("#ffffff"),
+			"button": systemPaletteColor(paletteActive, "button"), "buttonText": systemPaletteColor(paletteActive, "buttonText"),
+			"window": systemPaletteColor(paletteActive, "window"), "windowText": systemPaletteColor(paletteActive, "windowText"),
+			"base": systemPaletteColor(paletteActive, "base"), "text": systemPaletteColor(paletteActive, "text"),
+			"highlight": systemPaletteColor(paletteActive, "highlight"), "highlightedText": systemPaletteColor(paletteActive, "highlightedText"),
 		},
 	}
 }

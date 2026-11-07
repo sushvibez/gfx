@@ -514,7 +514,7 @@ on Button, `Spacer { }`.
 | `TableView`, `TableModel`, `TableModelColumn`, `HorizontalHeaderView`, `ItemSelectionModel`, `DelegateChooser`, `DelegateChoice` | one delegate per cell with `row`, `column`, `display`, `selected`, `current`; `editDelegate` commits into a TableModel; `selectionModel` enables tap-to-select a row; `syncView` headers. Column widths come from the delegate; `columnWidthProvider` and `TableView.*` attached editing flags are accepted |
 | `TreeView` | nested `{roles, children: [...]}` array (or an object exposing it as `tree`); delegates get `treeView`, `isTreeNode`, `expanded`, `hasChildren`, `depth`, `row`; `toggleExpanded/expand/collapse`, `currentRow` |
 | `Timer` | see below |
-| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `SystemPalette` has no colours; `Shortcut` fires (see Keys); `Settings` persists (below) |
+| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `Shortcut` fires (see Keys); `Settings` persists (below); `SystemPalette` holds the light palette gml's controls are drawn in (every QPalette role, `colorGroup` Active/Inactive/Disabled, live), not the platform's theme |
 
 A delegate sees `index`, `model` (the row object), `modelData` (for plain
 arrays and numbers) and every role of the row by bare name; `required

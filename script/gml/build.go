@@ -3453,6 +3453,7 @@ func declareProps(n *node, env *Env, doc *docState) error {
 		}
 		seedCanvasMethods(n, env, idObj)
 		doc.seedSettingsMethods(n, env, idObj)
+		seedSystemPalette(n, env, idObj)
 	}
 	if len(n.props) > 0 {
 		// Defaults see this item's own width/height (QML self-geometry).
@@ -5741,6 +5742,10 @@ func (doc *docState) refreshNonVisual(c *node, env *Env) {
 		doc.applyBinding(c, env)
 	case "FrameAnimation":
 		doc.refreshFrameAnimation(c, env)
+	case "SystemPalette":
+		if id := nodeID(c); id != "" {
+			seedSystemPalette(c, env, doc.elemObjs.get(doc.intern(id)))
+		}
 	}
 	if isAnimation(c.typeName) {
 		doc.refreshAnimator(c, env)
