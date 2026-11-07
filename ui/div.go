@@ -75,12 +75,12 @@ type DivEl struct {
 	focusC                 RGBA
 	focusVisW              float32 // border shown only for keyboard focus (.focus_visible)
 	focusVisC              RGBA
-	focusSlot              int                     // 1-based index into ctx.focusables this frame; 0 = none
-	tabIdx                 int                     // Tab traversal rank (GPUI tab_index); ties resolve in layout order
-	wantFocus              bool                    // requests initial keyboard focus (QML focus: true)
-	keyFn                  func(app.KeyEvent)      // raw key handler (QML Keys.onPressed/onReleased)
-	keyAccept              func(app.KeyEvent) bool // OnKeyAccept: the handler says whether it took the key
-	shortcutFn             func(app.KeyEvent) bool // OnShortcut: a window-wide key shortcut handler
+	focusSlot              int                       // 1-based index into ctx.focusables this frame; 0 = none
+	tabIdx                 int                       // Tab traversal rank (GPUI tab_index); ties resolve in layout order
+	wantFocus              bool                      // requests initial keyboard focus (QML focus: true)
+	keyFn                  func(app.KeyEvent)        // raw key handler (QML Keys.onPressed/onReleased)
+	keyAccept              func(app.KeyEvent) bool   // OnKeyAccept: the handler says whether it took the key
+	shortcutFns            []func(app.KeyEvent) bool // OnShortcut: window-wide key shortcut handlers
 	cursor                 app.Cursor
 	justify                Align   // main axis
 	items                  Align   // cross axis
@@ -610,9 +610,10 @@ func (d *DivEl) OnKeyAccept(fn func(app.KeyEvent) bool) *DivEl {
 // element, and the handler reports whether it took the key. A focused
 // text field keeps the plain keys it types (no Ctrl or Alt) for itself,
 // as Qt's text inputs override shortcuts for those. Unlike OnKey it
-// does not make the element focusable.
+// does not make the element focusable, and each call adds a handler. See
+// Shortcut for one given as a key sequence.
 func (d *DivEl) OnShortcut(fn func(app.KeyEvent) bool) *DivEl {
-	d.shortcutFn = fn
+	d.shortcutFns = append(d.shortcutFns, fn)
 	return d
 }
 
@@ -1133,9 +1134,7 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 			d.pressFn(hovered && ctx.MousePressed && r.contains(ctx.pressX, ctx.pressY))
 		}
 	}
-	if d.shortcutFn != nil {
-		ctx.shortcuts = append(ctx.shortcuts, d.shortcutFn)
-	}
+	ctx.shortcuts = append(ctx.shortcuts, d.shortcutFns...)
 	if d.focusable {
 		d.focusSlot = len(ctx.focusables) + 1
 		ctx.focusables = append(ctx.focusables, d)

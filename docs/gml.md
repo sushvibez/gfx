@@ -555,8 +555,9 @@ The key-specific handlers (`Keys.onLeftPressed`, `onRightPressed`,
 `onPressed` runs after one only if it un-accepts the event. `KeyNavigation.*` is not
 modelled.
 
-`Shortcut { sequence; sequences; enabled; onActivated }` fires wherever
-focus is, before the focused item's `Keys` handlers. A sequence is a string
+`Shortcut { sequence; sequences; enabled; onActivated }` (over
+`ui.DivEl.Shortcut`, `ui.ParseKeySequence` and `ui.StandardKey`, the Go
+API for the same) fires wherever focus is, before the focused item's `Keys` handlers. A sequence is a string
 (`"Ctrl+Shift+S"`, `"F5"`, `"Esc"`, `"Ctrl++"`), a `StandardKey`
 (`StandardKey.Save`, with the Windows/Linux bindings) or a key code with
 modifier bits (`Qt.CTRL | Qt.Key_S`); `Connections { onActivated }` on its

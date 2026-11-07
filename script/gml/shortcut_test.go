@@ -7,30 +7,6 @@ import (
 	"github.com/sushvibez/gfx/ui"
 )
 
-func TestParseKeySequence(t *testing.T) {
-	for _, tc := range []struct {
-		in   string
-		want keyCombo
-		ok   bool
-	}{
-		{"Ctrl+S", keyCombo{key: 'S', ctrl: true}, true},
-		{"ctrl+shift+z", keyCombo{key: 'Z', ctrl: true, shift: true}, true},
-		{"F5", keyCombo{key: qtKeyCodes["Key_F5"]}, true},
-		{"Esc", keyCombo{key: qtKeyCodes["Key_Escape"]}, true},
-		{"Alt+Left", keyCombo{key: qtKeyCodes["Key_Left"], alt: true}, true},
-		{"Ctrl++", keyCombo{key: '+', ctrl: true}, true},
-		{"Ctrl+,", keyCombo{key: ',', ctrl: true}, true},
-		{"Space", keyCombo{key: ' '}, true},
-		{"Ctrl+K, Ctrl+C", keyCombo{}, false},
-		{"Meta+X", keyCombo{}, false},
-	} {
-		got, ok := parseKeySequence(tc.in)
-		if ok != tc.ok || ok && got != tc.want {
-			t.Errorf("parseKeySequence(%q) = %+v, %v; want %+v, %v", tc.in, got, ok, tc.want, tc.ok)
-		}
-	}
-}
-
 func TestShortcut(t *testing.T) {
 	src := `
 import QtQuick 2.15
