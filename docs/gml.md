@@ -450,7 +450,7 @@ positioners, layouts and Controls containers):
 | `layer.enabled` with `layer.effect` blur (`MultiEffect.blurEnabled`, `GaussianBlur`, `FastBlur`, `RecursiveBlur`), `DropShadow`/`Glow` shadow | honoured as an offscreen layer |
 | `Component.onCompleted` | runs once, after the first laid-out frame (so geometry reads work) |
 | `ToolTip.text`, `ToolTip.visible`, `ToolTip.delay`, `ToolTip.timeout` | honoured (attached tooltip floated over the item) |
-| `enabled`, `z`, `antialiasing`, `smooth`, `activeFocusOnTab`, `objectName`, `parent`, `baselineOffset`, `on<Geometry>Changed`, `onVisibleChanged`, `onOpacityChanged`, `onActiveFocusChanged`, `title`, `flags`, `modality`, `visibility`, `hoverEnabled`, `focusPolicy`, `*Padding` on plain items, `Component.onDestruction`, `drag.*`, `acceptedButtons`, `propagateComposedEvents`, `preventStealing`, `onCanceled`, `xAxis.*`/`yAxis.*`, `gesturePolicy`, `onTranslationChanged` | accepted, not modelled |
+| `enabled`, `z`, `antialiasing`, `smooth`, `activeFocusOnTab`, `objectName`, `parent`, `baselineOffset`, `on<Geometry>Changed`, `onVisibleChanged`, `onOpacityChanged`, `onActiveFocusChanged`, `title`, `flags`, `modality`, `visibility`, `hoverEnabled`, `focusPolicy`, `*Padding` on plain items, `Component.onDestruction`, `drag.filterChildren`, `drag.smoothed`, `acceptedButtons`, `propagateComposedEvents`, `preventStealing`, `onCanceled`, `xAxis.*`/`yAxis.*`, `gesturePolicy`, `onTranslationChanged` | accepted, not modelled |
 
 Extensions beyond QML, used by the GPUI-port examples: `justify`, `items`
 (flexbox alignment on a box), `grow`, `spacing` and `padding` on a plain
@@ -463,7 +463,7 @@ on Button, `Spacer { }`.
 | element | notes |
 | --- | --- |
 | `Item`, `Rectangle`, `FocusScope` | a box; no implicit size inside a layout, as in Qt |
-| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed`, `mouseX`, `mouseY` live; `onDoubleClicked`, `onPressAndHold` (Qt's 800 ms; the release is then not a click), `onWheel` (`wheel.angleDelta`, `pixelDelta`; setting `wheel.accepted = false` lets the wheel scroll the view behind), `onPositionChanged` (while pressed, or hovering with `hoverEnabled`); handlers get `mouse`/`wheel`, by that name or as an arrow function's parameter. `drag.target` is an accepted no-op |
+| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed`, `mouseX`, `mouseY` live; `onDoubleClicked`, `onPressAndHold` (Qt's 800 ms; the release is then not a click), `onWheel` (`wheel.angleDelta`, `pixelDelta`; setting `wheel.accepted = false` lets the wheel scroll the view behind), `onPositionChanged` (while pressed, or hovering with `hoverEnabled`); handlers get `mouse`/`wheel`, by that name or as an arrow function's parameter. `drag.target` moves the target's `x`/`y` with the pointer (breaking their bindings) once it passes `drag.threshold` (default 10), along `drag.axis` (`Drag.XAxis`, `YAxis`, `XAndYAxis`), inside `drag.minimumX`…`drag.maximumY`; `id.drag.active` reads true meanwhile; a press that never passes the threshold still clicks. A handler inside the MouseArea reads it as `id.drag.active`, not bare `drag.active`; `onPositionChanged` does not fire while the drag carries the area along under the pointer; `drag.filterChildren`, `drag.smoothed` are accepted |
 | `TapHandler`, `HoverHandler`, `DragHandler`, `PinchHandler`, `WheelHandler`, `PointHandler` | rewritten to a MouseArea on the parent: `onTapped`/`onSingleTapped` → click, hover works; drag, pinch, wheel do nothing |
 | `DropArea` | built; drops are not delivered |
 | `Row`, `Column`, `Flow`, `Grid` | positioners: `spacing`, `padding`; `Grid` takes `columns`, `rows`, `rowSpacing`, `columnSpacing`; `flow` accepted |
@@ -826,8 +826,7 @@ Semantics that differ by design:
 
 Not implemented (summarised from `script/TODO.md` and the findings log):
 
-- Interaction: MouseArea drag, wheel, double-click, long-press,
-  `mouseX/Y`; pointer-handler gestures (drag, pinch, wheel); keyboard
+- Interaction: pointer-handler gestures (drag, pinch, wheel); keyboard
   navigation (`KeyNavigation`, tab focus order), `event.modifiers`.
 - Views: horizontal ListView, `header`/`footer`, view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,

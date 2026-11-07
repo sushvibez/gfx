@@ -305,6 +305,9 @@ func registerEnums(vars map[string]any) {
 		standardKeyNS[k] = v
 	}
 	vars["StandardKey"] = standardKeyNS
+	vars["Drag"] = map[string]any{
+		"XAxis": float64(dragXAxis), "YAxis": float64(dragYAxis), "XAndYAxis": float64(dragXAndYAxis),
+	}
 	vars["SystemPalette"] = map[string]any{
 		"Active": float64(paletteActive), "Inactive": float64(paletteInactive),
 		"Disabled": float64(paletteDisabled),

@@ -1797,13 +1797,14 @@ type docState struct {
 	idKeys        ccol[keyID]
 	timers        map[string]*gmlTimer
 	frameAnims    map[string]*frameAnim
-	baseDir       string                     // directory of the source .gml, for resolving Image sources
-	settings      *settingsState             // Settings files loaded, changed (settings.go)
-	settingsStore SettingsStore              // where Settings values persist; nil = defaultSettingsStore
-	gifClocks     map[string]*gifClock       // AnimatedImage playback, by element (animatedimage.go)
-	gifDelayCache map[string][]time.Duration // GIF frame delays, by source
-	lastView      time.Time                  // wall clock of the previous frame, for timers
-	lastClock     time.Duration              // ... and the frame loop's animation clock
+	baseDir       string                      // directory of the source .gml, for resolving Image sources
+	settings      *settingsState              // Settings files loaded, changed (settings.go)
+	settingsStore SettingsStore               // where Settings values persist; nil = defaultSettingsStore
+	gifClocks     map[string]*gifClock        // AnimatedImage playback, by element (animatedimage.go)
+	gifDelayCache map[string][]time.Duration  // GIF frame delays, by source
+	dragStates    map[string]*dragTargetState // MouseArea drags, by element (dragtarget.go)
+	lastView      time.Time                   // wall clock of the previous frame, for timers
+	lastClock     time.Duration               // ... and the frame loop's animation clock
 	listSeq       int
 
 	// Element geometry for parent/id.width refs. elems collects this frame's
@@ -4892,6 +4893,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	var keysSpecific map[float64][]stmt // Keys.onLeftPressed and friends, by Qt key code
 	var onEntered, onExited, onPressed, onReleased []stmt
 	var gestures mouseGestures // MouseArea's double-click, hold, wheel, position (mousearea.go)
+	var drag dragAttrs         // MouseArea drag.target and its limits (dragtarget.go)
 	// rotation/scale apply about transformOrigin, which may be declared
 	// after them, so they are collected and applied at the end.
 	var rotateDeg, scaleBy float32
@@ -4905,6 +4907,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	defer func() { doc.curBehaviors, doc.curKey = prevBeh, prevKey }()
 	for _, a := range n.attrs {
 		switch a.name {
+		case "drag.target", "drag.axis", "drag.threshold",
+			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY":
+			drag.read(a)
 		case "id": // accepted everywhere, no state for plain boxes
 		case "state", "states", "transitions": // handled by computeStateCtx
 		case "implicitWidth", "width":
@@ -5165,12 +5170,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			"hoverEnabled", "focusPolicy", "padding.left", "padding.right",
 			"padding.top", "padding.bottom", "leftPadding", "rightPadding",
 			"topPadding", "bottomPadding",
-			// MouseArea interactions beyond click/hover/press (drag, move
-			// tracking, long-press) aren't modeled yet:
-			"drag.target", "drag.axis", "preventStealing",
-			"onActiveChanged", "onGrabChanged", "onCanceled",
-			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY",
-			"drag.filterChildren", "drag.smoothed", "drag.threshold",
+			// MouseArea extras not modeled (drag.* is dragtarget.go):
+			"preventStealing", "onActiveChanged", "onGrabChanged", "onCanceled",
+			"drag.filterChildren", "drag.smoothed",
 			"acceptedButtons", "propagateComposedEvents",
 			// DragHandler axis limits (hoisted like the handlers above):
 			"xAxis.minimum", "xAxis.maximum", "xAxis.enabled",
@@ -5232,6 +5234,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 		_, pressRef := doc.hoverPressRefs(doc.keyID(n))
 		doc.wireMouseGestures(n, d, env, &gestures, pressRef)
 	}
+	doc.wireDragTarget(n, d, env, &drag)
 	return nil
 }
 
