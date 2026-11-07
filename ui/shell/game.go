@@ -37,6 +37,14 @@ type Input struct {
 	// arrived in the same frame as its press (feedMouse).
 	carry []app.MouseEvent
 
+	// PointerScale converts pointer positions as they are read: they
+	// arrive in the window's logical pixels (physical / window.Scale()),
+	// and a screen that draws at a different scale — a layout capped to
+	// fit, drawn at physical / s — sets PointerScale = window.Scale() / s
+	// before each drain so the pointer lands where it draws. 0 or 1 leaves
+	// positions alone.
+	PointerScale float32
+
 	// Pointer state for the frame.
 	MouseX, MouseY float32 // last cursor position (screen pixels)
 	mouseDown      bool    // primary button currently held
@@ -570,6 +578,14 @@ func RunGame2Deferred(o1, o2 Options, u1, u2 func(*Frame) bool, showSecond func(
 func (in *Input) feedMouse(events []app.MouseEvent) (taken []app.MouseEvent) {
 	if inputTrace {
 		defer func() { in.traceFrame(taken) }()
+	}
+	if f := in.PointerScale; f > 0 && f != 1 && len(events) > 0 {
+		scaled := make([]app.MouseEvent, len(events))
+		for i, m := range events {
+			m.X, m.Y, m.DX, m.DY = m.X*f, m.Y*f, m.DX*f, m.DY*f
+			scaled[i] = m
+		}
+		events = scaled
 	}
 	if len(in.carry) > 0 {
 		events = append(in.carry, events...)

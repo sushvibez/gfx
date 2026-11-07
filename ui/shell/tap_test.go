@@ -48,3 +48,18 @@ func TestTapSpansTwoFrames(t *testing.T) {
 		t.Error("an ordinary click's release was held back")
 	}
 }
+
+// PointerScale moves positions into the units a screen draws in: a 200 %
+// window drawing its layout at 1.6 sees a pointer at logical 210 as 262.5.
+func TestPointerScale(t *testing.T) {
+	in := NewInput()
+	in.PointerScale = 2.0 / 1.6
+	in.DrainEvents(nil, []app.MouseEvent{{Kind: app.MouseDown, Button: 1, X: 210, Y: 400}})
+	if in.MouseX != 262.5 || in.MouseY != 500 {
+		t.Errorf("pointer at %v,%v, want 262.5,500", in.MouseX, in.MouseY)
+	}
+	in.DrainEvents(nil, nil) // nothing new: the position is not scaled again
+	if in.MouseX != 262.5 {
+		t.Errorf("an empty frame moved the pointer to %v", in.MouseX)
+	}
+}

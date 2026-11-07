@@ -164,6 +164,11 @@ real browser. Win32 `WM_TOUCH` is not handled.
 Small inconsistencies the documentation pass turned up, each one or two
 lines of work; fix them as they are touched.
 
+- **`app` on Android**: mouse and touch events arrive in PHYSICAL
+  pixels while `Window.Scale()` reports the density, where every other
+  backend delivers logical pixels (physical / Scale). The games work
+  around it (`pointerScale` in droneswarm and dronedefend); making the
+  backend logical needs a device to verify `ui/shell` and the games on.
 - **`gpu`**: No WGSL-reflection codegen for bind-group layouts; the web
   backend issues one JS call per encoder call; web lacks MSAA textures
   and dual-source blending. `ffi.CallF` has no Windows implementation;
