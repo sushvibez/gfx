@@ -494,7 +494,7 @@ on Button, `Spacer { }`.
 | `Pane`, `Frame`, `GroupBox`, `Page`, `Control`, `Container`, `ToolBar`, `ApplicationWindow`, `Window` | plain boxes that lay out their children; `padding`, `spacing`, `background` | `title`, `header`/`footer` on Page and ApplicationWindow, `menuBar`, window `flags`/`visibility`, `GroupBox.title` |
 | `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator`, `Action` | menu titles, open-on-click, `popup()`/`open()`/`close()`, `Action { text; checkable; checked; onTriggered }`, checkable items | submenus, `Action.shortcut` (a separate `Shortcut` works), `ActionGroup` |
 | `TabBar`, `TabButton` | `currentIndex` driven by its buttons | `position`, `contentWidth` |
-| `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag, and a `handle:` delegate reads `SplitHandle.hovered` and `SplitHandle.pressed` (true from press to release, wherever the pointer goes) | the drag does not stop at `maximum*` |
+| `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag, stopping where a pane with a preferred size would pass its minimum or maximum, and a `handle:` delegate reads `SplitHandle.hovered` and `SplitHandle.pressed` (true from press to release, wherever the pointer goes) | a `fillWidth/Height` pane's maximum (it takes whatever is left) |
 | `SwipeView`, `StackView`, `StackLayout` | `currentIndex` (SwipeView slides), `push/pop/replace/clear`, `depth`, `initialItem` | `StackView` transitions, `SwipeView` drag paging |
 | `PageIndicator` | `count`, `currentIndex`, `interactive`, `spacing`, `delegate` | |
 | `ToolSeparator`, `MenuSeparator` | a line | |

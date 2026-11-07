@@ -135,13 +135,15 @@ func splitOffsetFor(doc *docState, key string, i, n int) float32 {
 }
 
 // splitDragger wraps a handle so dragging it moves the boundary. The offset
-// is clamped so neither pane goes under its stated minimum (Qt refuses to
-// drag a handle past a pane's minimumWidth) — and the offset is absolute, so
+// is clamped so neither pane goes under its stated minimum or over its
+// maximum (Qt refuses to drag a handle past a pane's minimumWidth or
+// maximumWidth) — and the offset is absolute, so
 // the drag follows the pointer rather than accumulating per event.
 // pressed is the handle's SplitHandle.pressed: true from the press to the
 // release, wherever the pointer goes meanwhile.
 func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertical bool, pressed Ref) ui.Element {
 	minBefore, minAfter := before.minimum, after.minimum
+	maxBefore, maxAfter := before.maximum, after.maximum
 	prefBefore, prefAfter := before.preferred, after.preferred
 	start := float32(0)
 	// The drag goes on the handle ITSELF: wrapped in a box, the handle lost
@@ -173,6 +175,14 @@ func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertica
 		if prefAfter > 0 && minAfter > 0 {
 			want = min(want, prefAfter-minAfter)
 		}
+		// Nor past a maximum: the pane before grows by the offset, the
+		// pane after by its negative.
+		if prefBefore > 0 && maxBefore > 0 {
+			want = min(want, maxBefore-prefBefore)
+		}
+		if prefAfter > 0 && maxAfter > 0 {
+			want = max(want, prefAfter-maxAfter)
+		}
 		_ = off.set(want)
 	})
 	return d
@@ -182,6 +192,7 @@ func splitDragger(handle ui.Element, off Ref, before, after *splitHints, vertica
 type splitHints struct {
 	preferred float32
 	minimum   float32
+	maximum   float32 // 0: none
 	fill      bool
 }
 
@@ -206,7 +217,9 @@ func splitPane(n *node, env *Env) (*node, splitHints) {
 				hints.fill = b
 			}
 		case "SplitView.maximumWidth", "SplitView.maximumHeight":
-			// accepted; the handle drag does not stop at a maximum yet
+			if f, err := attrFloat(a, env); err == nil {
+				hints.maximum = f
+			}
 		default:
 			cp.attrs = append(cp.attrs, a)
 		}
@@ -226,6 +239,9 @@ func applySplitHints(el ui.Element, hints splitHints, vertical bool, dragged flo
 		d.Grow()
 	case hints.preferred > 0:
 		size := max(hints.preferred+dragged, 1)
+		if hints.maximum > 0 {
+			size = min(size, hints.maximum)
+		}
 		if vertical {
 			d.H(size)
 		} else {
