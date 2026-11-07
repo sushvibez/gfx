@@ -1,0 +1,121 @@
+package gml
+
+import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/gif"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/sushvibez/gfx/ui"
+)
+
+func TestGIFClock(t *testing.T) {
+	c := &gifClock{speed: 1, setTo: -1,
+		delays: []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 100 * time.Millisecond}}
+	c.total = 400 * time.Millisecond
+	t0 := time.Unix(1000, 0)
+	c.origin = t0
+	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
+
+	c.update(animatedImageAttrs{}, t0) // playing by default, from frame 0
+	for ms, want := range map[int]int{0: 0, 99: 0, 100: 1, 299: 1, 300: 2, 400: 0, 550: 1} {
+		if got := c.frameAt(at(ms)); got != want {
+			t.Errorf("frameAt(%d ms) = %d, want %d", ms, got, want)
+		}
+	}
+	// Paused at 150 ms: frame 1 holds.
+	c.update(animatedImageAttrs{paused: true}, at(150))
+	if got := c.frameAt(at(5000)); got != 1 {
+		t.Errorf("paused frame = %d, want 1", got)
+	}
+	// Resumed at 5000 ms: from frame 1's start.
+	c.update(animatedImageAttrs{}, at(5000))
+	if got := c.frameAt(at(5000 + 200)); got != 2 {
+		t.Errorf("resumed +200 ms = %d, want 2", got)
+	}
+	// currentFrame written: jumps.
+	c.update(animatedImageAttrs{frame: 2, hasFrame: true}, at(6000))
+	if got := c.frameAt(at(6000)); got != 2 {
+		t.Errorf("after currentFrame = 2: %d", got)
+	}
+	// Double speed: frame 2 (100 ms) passes in 50 ms.
+	c.update(animatedImageAttrs{speed: 2, hasSpeed: true, frame: 2, hasFrame: true}, at(6000))
+	if got := c.frameAt(at(6000 + 60)); got != 0 {
+		t.Errorf("speed 2, +60 ms = %d, want 0", got)
+	}
+	// Stopped, then playing again: from the first frame.
+	c.update(animatedImageAttrs{playing: false, hasPlaying: true}, at(7000))
+	c.update(animatedImageAttrs{playing: true, hasPlaying: true}, at(9000))
+	if got := c.frameAt(at(9000)); got != 0 {
+		t.Errorf("restarted = %d, want 0", got)
+	}
+}
+
+func TestAnimatedImageAttrs(t *testing.T) {
+	dir := t.TempDir()
+	pal := color.Palette{color.Black, color.White}
+	g := &gif.GIF{}
+	for i := 0; i < 3; i++ {
+		g.Image = append(g.Image, image.NewPaletted(image.Rect(0, 0, 4, 4), pal))
+		g.Delay = append(g.Delay, 10)
+	}
+	var b bytes.Buffer
+	if err := gif.EncodeAll(&b, g); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spin.gif"), b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := `
+import QtQuick 2.15
+Item {
+    width: 100; height: 100
+    property bool hold: true
+    AnimatedImage { id: spin; source: "spin.gif"; paused: hold; currentFrame: 2 }
+    BorderImage { id: frame; source: "spin.gif"; width: 50; height: 50
+        border.left: 1; border.top: 1; border.right: 1; border.bottom: 1
+        horizontalTileMode: BorderImage.Round; verticalTileMode: BorderImage.Repeat }
+    Image { source: "spin.gif"; width: 20; height: 20; fillMode: Image.Tile }
+}`
+	env := NewEnv()
+	d, err := LoadStringAt(src, dir, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := ui.New(nil, nil, d.View())
+	u.Layout(100, 100)
+	u.Layout(100, 100)
+	for expr, want := range map[string]string{
+		"spin.frameCount":   "3",
+		"spin.currentFrame": "2",
+		"spin.paused":       "true",
+	} {
+		v, err := evalString(expr, env)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		if str(v) != want {
+			t.Errorf("%s = %v, want %s", expr, v, want)
+		}
+	}
+}
+
+// QML's grouped form, border { left: 3; top: 4 }, reaches buildImage as
+// the border.* attributes.
+func TestBorderImageGroupedBorder(t *testing.T) {
+	n, err := Parse(`BorderImage { border { left: 3; top: 4 } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, a := range n.attrs {
+		got[a.name] = true
+	}
+	if !got["border.left"] || !got["border.top"] {
+		t.Errorf("attrs = %v, want border.left and border.top", got)
+	}
+}

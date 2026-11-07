@@ -23,18 +23,22 @@ import (
 // into a retained ImageCell (keyed by source) and decoded+uploaded lazily on
 // first paint, so the per-frame view rebuild doesn't re-read or re-upload.
 // A .svg source renders as vector paths and honors `rotation:` (degrees,
-// around the center — how QML spins an image). fillMode is accepted but v1
-// always fits with preserved aspect ratio.
+// around the center — how QML spins an image). fillMode fits, stretches,
+// crops, tiles or pads; a BorderImage is a 9-patch and an AnimatedImage
+// plays by its own clock (animatedimage.go).
 func buildImage(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var src string
 	var w, h, rotDeg float32
 	var stretch, crop, grow, sized bool
-	// A BorderImage is a 9-patch: the border insets stay fixed while the
-	// middle stretches. Only the stretch is modeled here — the whole image
-	// scales to the box — so the corners round off with it.
+	// A BorderImage is a 9-patch: the border insets (source pixels) keep
+	// their size, and the edges and middle fill by the tile modes.
+	var fill ui.ImageFill
+	var border [4]float32 // left, top, right, bottom
+	hTile, vTile := render.PatchStretch, render.PatchStretch
 	if n.typeName == "BorderImage" {
 		stretch = true
 	}
+	var anim animatedImageAttrs
 	// QML exposes the decoded image's natural size as `sourceSize`, which
 	// styles size their icons from (`width: sourceSize.width`). Resolve it
 	// before the attribute pass, since a size attribute may come first.
@@ -48,9 +52,27 @@ func buildImage(n *node, env *Env, doc *docState) (ui.Element, error) {
 				return nil, err
 			}
 			grow = b
-		case "border.left", "border.right", "border.top", "border.bottom",
-			"horizontalTileMode", "verticalTileMode":
-			// 9-patch insets and tile modes: see the note above.
+		case "border.left", "border.top", "border.right", "border.bottom":
+			f, err := attrFloat(a, env)
+			if err != nil {
+				return nil, err
+			}
+			border[map[string]int{"border.left": 0, "border.top": 1, "border.right": 2, "border.bottom": 3}[a.name]] = f
+		case "horizontalTileMode", "verticalTileMode":
+			if v, err := a.expr.eval(env); err == nil {
+				m := patchModeOf(v)
+				if a.name == "horizontalTileMode" {
+					hTile = m
+				} else {
+					vTile = m
+				}
+			}
+		case "playing", "paused", "speed", "currentFrame":
+			if err := anim.read(a, env); err != nil {
+				return nil, err
+			}
+		case "frameCount", "onFrameChanged", "onCurrentFrameChanged", "onPlayingChanged", "onPausedChanged":
+			// read-only, or handlers this engine does not run
 		case "fillMode":
 			// Image.Stretch fills the box ignoring aspect;
 			// PreserveAspectCrop covers it and clips the overflow;
@@ -60,6 +82,7 @@ func buildImage(n *node, env *Env, doc *docState) (ui.Element, error) {
 			// name as a string is honoured too.
 			if v, err := a.expr.eval(env); err == nil {
 				stretch, crop = fillModeFlags(v)
+				fill = fillModeTile(v)
 			}
 		case "source":
 			v, err := a.expr.eval(env)
@@ -162,6 +185,14 @@ func buildImage(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	if stretch {
 		img.Stretch()
+	}
+	if n.typeName == "BorderImage" {
+		img.NinePatch(border[0], border[1], border[2], border[3], hTile, vTile)
+	} else if fill != ui.FillFit {
+		img.Fill(fill)
+	}
+	if n.typeName == "AnimatedImage" {
+		doc.wireAnimatedImage(n, img, src, anim)
 	}
 	if grow {
 		img.Grow()
@@ -349,7 +380,7 @@ func (doc *docState) rasterSize(src string) (float64, float64) {
 
 // fillModeFlags reads an Image.fillMode value: QML's enum numbers (Stretch
 // 0, PreserveAspectFit 1, PreserveAspectCrop 2) or the name as a string.
-// The tiling modes are not modeled and fall back to a fit.
+// The tiling modes and Pad are fillModeTile's.
 func fillModeFlags(v any) (stretch, crop bool) {
 	if f, err := toFloat32(v); err == nil {
 		if _, isStr := v.(string); !isStr {

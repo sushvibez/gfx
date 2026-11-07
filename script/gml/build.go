@@ -1797,11 +1797,13 @@ type docState struct {
 	idKeys        ccol[keyID]
 	timers        map[string]*gmlTimer
 	frameAnims    map[string]*frameAnim
-	baseDir       string         // directory of the source .gml, for resolving Image sources
-	settings      *settingsState // Settings files loaded, changed (settings.go)
-	settingsStore SettingsStore  // where Settings values persist; nil = defaultSettingsStore
-	lastView      time.Time      // wall clock of the previous frame, for timers
-	lastClock     time.Duration  // ... and the frame loop's animation clock
+	baseDir       string                     // directory of the source .gml, for resolving Image sources
+	settings      *settingsState             // Settings files loaded, changed (settings.go)
+	settingsStore SettingsStore              // where Settings values persist; nil = defaultSettingsStore
+	gifClocks     map[string]*gifClock       // AnimatedImage playback, by element (animatedimage.go)
+	gifDelayCache map[string][]time.Duration // GIF frame delays, by source
+	lastView      time.Time                  // wall clock of the previous frame, for timers
+	lastClock     time.Duration              // ... and the frame loop's animation clock
 	listSeq       int
 
 	// Element geometry for parent/id.width refs. elems collects this frame's

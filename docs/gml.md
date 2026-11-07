@@ -472,7 +472,7 @@ on Button, `Spacer { }`.
 | `Loader` | `sourceComponent` (a Component id or any expression yielding one), `source` (relative file), inline child, `active`; `status`/`item` readable; `asynchronous` accepted |
 | `Flickable`, `ScrollView` | scrolling viewport; `contentWidth/Height`, `contentX/Y` (readable and writable), `interactive`, `padding`, `spacing`; `atYEnd`, `atYBeginning`, `visibleArea`, `moving` readable; `boundsBehavior`, `flickableDirection` accepted |
 | `ScrollBar`, `ScrollIndicator` | ScrollBar renders a bar bound to `position`/`size`; ScrollIndicator is a plain box |
-| `Image`, `AnimatedImage`, `BorderImage` | `source`, `width`, `height`, `fillMode` (Stretch, PreserveAspectFit, PreserveAspectCrop; tiling falls back to fit), `rotation`, `visible`, `sourceSize` readable; `.svg` and `icon:name[/color]` sources render as vectors. `AnimatedImage` shows the first frame; `BorderImage` stretches the whole image (no 9-patch); `asynchronous`, `cache`, `mipmap`, `status`, `progress`, `onStatusChanged`, `horizontalAlignment` accepted |
+| `Image`, `AnimatedImage`, `BorderImage` | `source`, `width`, `height`, `fillMode` (Stretch, PreserveAspectFit, PreserveAspectCrop, Tile, TileVertically, TileHorizontally, Pad; tiles are the source's pixel size, centred), `rotation`, `visible`, `sourceSize` readable; `.svg` and `icon:name[/color]` sources render as vectors (no tiling). `AnimatedImage` plays a GIF with `playing` (restarts from the first frame), `paused` (holds and resumes), `speed`, `currentFrame` (writing jumps) and `frameCount`, read at build (no `onFrameChanged`); `BorderImage` is a 9-patch: `border.left/top/right/bottom` (or `border { … }`) in source pixels, `horizontalTileMode`/`verticalTileMode` Stretch, Repeat (from the top-left edge, the last tile cut) or Round; `asynchronous`, `cache`, `mipmap`, `status`, `progress`, `onStatusChanged`, `horizontalAlignment` accepted |
 | `Text`, `Label` | `text`, `color`, `font.pixelSize/pointSize/bold/italic/weight/family/underline/strikeout/letterSpacing`, `font` (object), `wrapMode`, `elide`, `maximumLineCount`, `horizontalAlignment`, `verticalAlignment`, `textFormat` (PlainText, RichText subset, MarkdownText, StyledText/AutoText as rich), `onLinkActivated`, `renderType`, `opacity`, transforms, `lineHeight` (accepted), `style`/`styleColor`, `font.capitalization`, `fontSizeMode`, `minimumPixelSize`, `textInteractionFlags`, `linkColor` accepted |
 | `Canvas` | `onPaint` with `getContext("2d")`; `requestPaint()` works; `width`, `height`; `renderTarget`, `renderStrategy`, `contextType` accepted |
 | `Shape` with `ShapePath` | `strokeColor`, `strokeWidth`, `fillColor`, `fillGradient` (Linear/Radial/Conical approximated by a 2-stop linear), `fillRule`, `capStyle`, `strokeStyle`/`dashPattern`/`dashOffset`; segments `PathMove`, `PathLine`, `PathQuad`, `PathCubic`, `PathArc`, `PathAngleArc`, `PathSvg`, `PathPolyline`. `joinStyle` and per-path transforms are not modelled |
@@ -839,8 +839,8 @@ Not implemented (summarised from `script/TODO.md` and the findings log):
   `header`/`footer`/`menuBar`, locale-aware calendars.
 - States: `State.when`, Transition `from`/`to`/`reversible`,
   `AnchorChanges`, `ParentChange`, `StateChangeScript`.
-- Graphics: Image tiling modes and 9-patch `BorderImage`, animated GIFs,
-  remote images, `layer.effect` beyond blur/shadow/colorize, the Qt5Compat
+- Graphics: animated PNG/WebP (`AnimatedImage` plays GIFs only), remote
+  images, `layer.effect` beyond blur/shadow/colorize, the Qt5Compat
   effects listed as accepted, Canvas `drawImage`/patterns/pixel access,
   Shape joins/dash on Canvas, `TextMetrics`/`FontMetrics`, Text
   `lineHeight`, `style`, `font.capitalization`.

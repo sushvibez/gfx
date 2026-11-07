@@ -214,10 +214,13 @@ type LazyImageEl struct {
 	colorize bool // tint recolours by luminance instead of multiplying
 	stretch  bool // fillMode: Stretch (default fits with preserved aspect)
 	natW     float32
-	natH     float32 // the SOURCE's own pixel size (see Natural)
-	crop     bool    // fillMode: PreserveAspectCrop — cover the box and clip
-	grow     bool    // expand to fill the parent flex box (both axes)
-	growWt   float32 // Grow WEIGHT (0 = the plain 1); see DivEl.GrowBy
+	natH     float32   // the SOURCE's own pixel size (see Natural)
+	crop     bool      // fillMode: PreserveAspectCrop — cover the box and clip
+	grow     bool      // expand to fill the parent flex box (both axes)
+	growWt   float32   // Grow WEIGHT (0 = the plain 1); see DivEl.GrowBy
+	fill     ImageFill // a tiling or Pad fill mode (zero: the fit/stretch/crop above)
+	patch    *ninePatch
+	frameFn  func() (int, bool) // FrameClock: which GIF frame, and whether it is playing
 	rect     Rect
 }
 
@@ -307,10 +310,34 @@ func (e *LazyImageEl) paintSig() uint64 {
 	h.f32(e.h)
 	h.col(e.tint)
 	h.b(e.colorize)
+	h.u64(uint64(e.fill))
+	if p := e.patch; p != nil {
+		h.f32(p.l)
+		h.f32(p.t)
+		h.f32(p.r)
+		h.f32(p.b)
+		h.u64(uint64(p.hMode)<<8 | uint64(p.vMode))
+	}
+	if e.frameFn != nil {
+		f, _ := e.frameFn()
+		h.i(f) // a held frame that moves (currentFrame written while paused)
+	}
 	return uint64(h)
 }
 
-func (e *LazyImageEl) dirty(*Context) bool { return e.cell != nil && e.cell.Animated() }
+func (e *LazyImageEl) dirty(*Context) bool { return e.playing() }
+
+// playing reports whether the image shows a running animation.
+func (e *LazyImageEl) playing() bool {
+	if e.cell == nil || !e.cell.Animated() {
+		return false
+	}
+	if e.frameFn != nil {
+		_, running := e.frameFn()
+		return running
+	}
+	return true
+}
 
 func (e *LazyImageEl) paint(ctx *Context) {
 	if ctx.culled(e) {
@@ -319,15 +346,25 @@ func (e *LazyImageEl) paint(ctx *Context) {
 	// Decode sized to the display box (2x headroom keeps rescaling crisp);
 	// huge sources are box-downscaled instead of aliasing in the sampler.
 	maxDim := int(2 * max(e.rect.W, e.rect.H))
+	if e.fill != FillFit || e.patch != nil {
+		maxDim = 0 // tiles and 9-patch pieces draw at the source's own scale
+	}
 	now := ctx.animT
 	if now.IsZero() {
 		now = time.Now()
 	}
 	if img := e.cell.ensureAt(ctx.R, maxDim, now); img != nil {
-		if e.cell.Animated() {
+		if e.frameFn != nil && len(e.cell.frames) > 0 {
+			f, _ := e.frameFn()
+			img = e.cell.frames[((f%len(e.cell.frames))+len(e.cell.frames))%len(e.cell.frames)]
+		}
+		if e.playing() {
 			// A playing GIF needs the frame loop running even when nothing
 			// else changes — surface that to the shell's damage check.
 			ctx.wantsFrame = true
+		}
+		if e.paintFill(ctx, img) {
+			return
 		}
 		switch {
 		case e.crop:
@@ -359,4 +396,80 @@ func (e *LazyImageEl) fixedWH() (float32, float32) {
 		return 0, 0 // let the flex box stretch us on the cross axis too
 	}
 	return e.w, e.h
+}
+
+// ImageFill is a LazyImageEl fill mode beyond fit, stretch and crop: QML
+// Image's tiling modes and Pad.
+type ImageFill int
+
+const (
+	FillFit              ImageFill = iota // the default: fit (or Stretch/Crop)
+	FillTile                              // tile both ways at the source's size
+	FillTileVertically                    // stretch to the width, tile down
+	FillTileHorizontally                  // stretch to the height, tile across
+	FillPad                               // the source as it is, centred, clipped
+)
+
+// Fill sets a tiling or Pad fill mode (QML Image.Tile, TileVertically,
+// TileHorizontally, Pad). Tiles are the source's own pixel size (see
+// Natural), centred on the box as QML aligns them by default.
+func (e *LazyImageEl) Fill(f ImageFill) *LazyImageEl { e.fill = f; return e }
+
+// ninePatch is a BorderImage's slicing.
+type ninePatch struct {
+	l, t, r, b   float32
+	hMode, vMode render.PatchMode
+}
+
+// NinePatch draws the image as a 9-patch (QML BorderImage): the borders,
+// in source pixels, keep their size and the edges and middle fill by the
+// tile modes. The source size comes from Natural (the decode's otherwise).
+func (e *LazyImageEl) NinePatch(left, top, right, bottom float32, hMode, vMode render.PatchMode) *LazyImageEl {
+	e.patch = &ninePatch{left, top, right, bottom, hMode, vMode}
+	return e
+}
+
+// FrameClock hands an animated image's frame choice to fn, asked at paint
+// time: the frame to show and whether the animation is running (a held
+// frame lets the window go idle). QML AnimatedImage's playing, paused,
+// speed and currentFrame drive it; without one a GIF loops on the wall
+// clock.
+func (e *LazyImageEl) FrameClock(fn func() (frame int, running bool)) *LazyImageEl {
+	e.frameFn = fn
+	return e
+}
+
+// sourceWH is the source's pixel size: Natural when given, else the
+// decoded texture's.
+func (e *LazyImageEl) sourceWH(img *render.Image) (float32, float32) {
+	if e.natW > 0 && e.natH > 0 {
+		return e.natW, e.natH
+	}
+	return float32(img.W), float32(img.H)
+}
+
+// paintFill draws the 9-patch and the tiling/Pad modes, reporting whether
+// it drew (false leaves the plain fit/stretch/crop paths to the caller).
+func (e *LazyImageEl) paintFill(ctx *Context, img *render.Image) bool {
+	r, c := e.rect, ctx.color(e.tint)
+	sw, sh := e.sourceWH(img)
+	if p := e.patch; p != nil {
+		ctx.R.DrawNinePatch(img, r.X, r.Y, r.W, r.H, sw, sh, p.l, p.t, p.r, p.b, p.hMode, p.vMode, c)
+		return true
+	}
+	switch e.fill {
+	case FillTile:
+		ctx.R.DrawImageTiled(img, r.X, r.Y, r.W, r.H, sw, sh, c)
+	case FillTileVertically:
+		ctx.R.DrawImageTiled(img, r.X, r.Y, r.W, r.H, r.W, sh, c)
+	case FillTileHorizontally:
+		ctx.R.DrawImageTiled(img, r.X, r.Y, r.W, r.H, sw, r.H, c)
+	case FillPad:
+		ctx.R.PushClip(r.X, r.Y, r.W, r.H)
+		ctx.R.DrawImage(img, r.X+(r.W-sw)/2, r.Y+(r.H-sh)/2, sw, sh, c)
+		ctx.R.PopClip()
+	default:
+		return false
+	}
+	return true
 }
