@@ -200,6 +200,7 @@ func (u *UI) build(width, height float32) {
 			}
 		}
 	}
+	u.resolveFocusRequests() // RequestFocus, OnFocusChange (focus.go)
 	u.ctx.setFocus(nil)
 	if el := u.focusedEl(); el != nil {
 		if in, ok := el.(*InputEl); ok {
@@ -713,6 +714,11 @@ func abs32(v float32) float32 {
 // keys go to a focused text field. Reports whether the event was consumed.
 func (u *UI) Key(ev app.KeyEvent) bool {
 	u.ForceFullRedraw() // focus, caret and text can all move
+	// KeyNavigation first (focus.go): it overrides the Tab chain and the
+	// focused element's own handling of the keys it names.
+	if u.keyNav(ev) {
+		return true
+	}
 	if ev.Down && ev.Key == app.KeyTab {
 		if order := u.tabOrder(); len(order) > 0 {
 			pos := slices.Index(order, u.focusIdx) // -1 (nothing focused) starts at 0

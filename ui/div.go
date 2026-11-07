@@ -79,6 +79,7 @@ type DivEl struct {
 	focusSlot              int                       // 1-based index into ctx.focusables this frame; 0 = none
 	tabIdx                 int                       // Tab traversal rank (GPUI tab_index); ties resolve in layout order
 	wantFocus              bool                      // requests initial keyboard focus (QML focus: true)
+	fm                     focusMeta                 // FocusID, KeyNav, RequestFocus, OnFocusChange (focus.go)
 	keyFn                  func(app.KeyEvent)        // raw key handler (QML Keys.onPressed/onReleased)
 	keyAccept              func(app.KeyEvent) bool   // OnKeyAccept: the handler says whether it took the key
 	shortcutFns            []func(app.KeyEvent) bool // OnShortcut: window-wide key shortcut handlers

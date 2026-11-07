@@ -63,11 +63,12 @@ func SetClipboard(get func() string, set func(string)) {
 // work like any other. It supports a selection (caret + anchor) edited by
 // keyboard (shift to extend, Ctrl+A/C/X/V) and mouse drag.
 type InputState struct {
-	Text    core.Property[string]
-	caret   int          // active end, rune index
-	anchor  int          // selection anchor; anchor == caret means no selection
-	submit  func(string) // Enter handler (QML TextField.onAccepted)
-	focused bool         // holds keyboard focus (QML activeFocus)
+	Text     core.Property[string]
+	caret    int          // active end, rune index
+	anchor   int          // selection anchor; anchor == caret means no selection
+	submit   func(string) // Enter handler (QML TextField.onAccepted)
+	focused  bool         // holds keyboard focus (QML activeFocus)
+	focusReq bool         // RequestFocus: take focus at the next layout
 	// accept vets a candidate value BEFORE it is committed (QML's
 	// `validator:`, which rejects a keystroke rather than flagging it
 	// afterwards). nil accepts everything.
@@ -326,6 +327,7 @@ func Input(state *InputState, w float32) *InputEl {
 
 // InputEl is the per-frame element for an InputState.
 type InputEl struct {
+	fm    focusMeta // FocusID, KeyNav, RequestFocus, OnFocusChange (focus.go)
 	state *InputState
 	w     float32
 	rect  Rect

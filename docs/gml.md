@@ -552,8 +552,19 @@ The key-specific handlers (`Keys.onLeftPressed`, `onRightPressed`,
 `onUpPressed`, `onDownPressed`, `onEscapePressed`, `onSpacePressed`,
 `onTabPressed`, `onBacktabPressed`, `onDeletePressed`, `onReturnPressed`,
 `onEnterPressed`, `onDigit0Pressed`…`onDigit9Pressed`) start accepted, and
-`onPressed` runs after one only if it un-accepts the event. `KeyNavigation.*` is not
-modelled.
+`onPressed` runs after one only if it un-accepts the event. `event.modifiers`
+carries the `Qt.*Modifier` bits.
+
+Focus (over `ui`'s `FocusID`, `KeyNav`, `RequestFocus`, `OnFocusChange`):
+`KeyNavigation.left/right/up/down/tab/backtab: someItem` moves focus there
+before the item's own `Keys` handlers see the key (Qt's default
+`BeforeItem`; `priority` and `enabled` are accepted), between plain items
+and text fields alike. Tab and Shift+Tab walk the focusable items in tree
+order; `activeFocusOnTab: true` puts a plain item in that chain.
+`forceActiveFocus()`, and `item.focus = true` from a handler, focus the
+item on the next frame; `focus: true` asks for the initial focus.
+`activeFocus` reads whether an item holds focus, by id or bare inside the
+item; an item that is first read late starts reporting a frame later.
 
 `Shortcut { sequence; sequences; enabled; onActivated }` (over
 `ui.DivEl.Shortcut`, `ui.ParseKeySequence` and `ui.StandardKey`, the Go
@@ -714,7 +725,7 @@ Attached properties honoured: `Layout.*` (in layouts), `anchors.*`,
 / `ListView.view`, `GridView.isCurrentItem`, `PathView.isCurrentItem` /
 `onPath`, `Tumbler.displacement`, `SplitView.*` sizing, `TableView.*`
 editing flags (accepted), `Overlay.modal` in style files. `Drag.*`,
-`KeyNavigation.*`, `Accessible.*`, `LayoutMirroring.*`,
+`Accessible.*`, `LayoutMirroring.*`,
 `EnterKey.*` and `ScrollBar.vertical`/`horizontal` on a Flickable are not
 modelled (the last is accepted).
 
@@ -828,8 +839,8 @@ Semantics that differ by design:
 
 Not implemented (summarised from `script/TODO.md` and the findings log):
 
-- Interaction: keyboard
-  navigation (`KeyNavigation`, tab focus order), `event.modifiers`.
+- Interaction: `FocusScope` (focus is one window-wide chain),
+  `Window.activeFocusItem`.
 - Views: horizontal ListView, `header`/`footer`, view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,
   `ObjectModel`, `Instantiator`, `XmlListModel`, `WorkerScript`.

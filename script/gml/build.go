@@ -183,6 +183,7 @@ func (doc *docState) linkSub(e *subtreeEntry) {
 func (doc *docState) replayRegs(e *subtreeEntry) {
 	for _, r := range e.regs {
 		doc.elems.set(r.key, r.el)
+		doc.stampFocus(r.key, r.el) // a reused element still takes focus requests and reports
 	}
 	for _, sub := range e.subs {
 		doc.replayRegs(sub)
@@ -218,6 +219,7 @@ func (doc *docState) registerElem(key keyID, el ui.Element) {
 		return
 	}
 	doc.elems.set(key, el)
+	doc.stampFocus(key, el)
 	// Into the innermost build only; outer ones reach it through subs.
 	if n := len(doc.capStack); n > 0 {
 		top := doc.capStack[n-1]
@@ -860,6 +862,12 @@ func (doc *docState) setAttrOverride(key keyID, name string, v any) {
 		return
 	}
 	m[name] = v
+	// `item.focus = true` from a handler moves focus there, as Qt's does.
+	if name == "focus" {
+		if b, _ := toBool(v); b {
+			doc.requestFocus(key)
+		}
+	}
 	switch name {
 	case "x", "y", "width", "height":
 		// Geometry is read from the laid-out tree, which lags this write
@@ -1812,6 +1820,10 @@ type docState struct {
 	settingsStore settings.Store                // where Settings values persist; nil = settings.DefaultStore()
 	animPlayers   map[string]*animPlayer        // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState   // MouseArea drags, by element (dragtarget.go)
+	focusReq      map[keyID]bool                // forceActiveFocus requests, applied on the next build (focus.go)
+	focusRefs     map[keyID]Ref                 // tracked activeFocus, by element (focus.go)
+	readsFocus    map[*node]bool                // items whose own attributes read activeFocus (focus.go)
+	inputKeys     map[*ui.InputState]keyID      // the element key a text field's state was built under (focus.go)
 	handlerStates map[string]*inputHandlerState // Wheel/Pinch/PointHandler state (inputhandlers.go)
 	pointerSeen   map[string]*[2]float32        // MouseArea: the pointer's last window position (mousearea.go)
 	geomWritten   map[geomKey]int               // frame an x/y/width/height override was written (setAttrOverride)
@@ -3447,10 +3459,10 @@ func declareProps(n *node, env *Env, doc *docState) error {
 				idObj.setProp("containsMouse", hover)
 				idObj.setProp("hovered", hover)
 				idObj.setProp("pressed", doc.boolProp(ikey+".pressed", false))
-				// Keyboard focus is only modeled for text inputs (which
-				// claim their id with a specialized object): elsewhere
-				// activeFocus reads false rather than failing the binding.
-				idObj.setProp("activeFocus", doc.boolProp(ikey+".activeFocus", false))
+				// Keyboard focus, tracked from the element's own layout
+				// (focus.go); a text input claims its id with its own state.
+				fr, _ := doc.trackFocus(idObj.key)
+				idObj.setProp("activeFocus", fr)
 			}
 		}
 		seedControlState(n, env, doc)
@@ -4901,6 +4913,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	if n.typeName == "MouseArea" {
 		env = doc.mouseAreaScope(n, env)
 	}
+	env = doc.focusScope(n, env)
 	var borderW float32
 	var borderDashed bool
 	var borderC ui.RGBA
@@ -4918,9 +4931,13 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	// Behavior on <prop> declarations on this element tween its own property
 	// changes. Scoped to this element while its attrs are applied.
 	prevBeh, prevKey := doc.curBehaviors, doc.curKey
+	var navs []keyNav // KeyNavigation.* (focus.go)
 	doc.curBehaviors, doc.curKey = collectBehaviors(n, env), doc.key(n)
 	defer func() { doc.curBehaviors, doc.curKey = prevBeh, prevKey }()
 	for _, a := range n.attrs {
+		if doc.readKeyNav(a, env, &navs) {
+			continue
+		}
 		switch a.name {
 		case "drag.target", "drag.axis", "drag.threshold",
 			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY",
@@ -5104,6 +5121,10 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			if b, err := attrBool(a, env); err == nil && b {
 				d.Focus()
 			}
+		case "activeFocusOnTab": // a plain item joins the Tab chain
+			if b, err := attrBool(a, env); err == nil && b {
+				d.Focusable()
+			}
 		case "onEntered":
 			onEntered = append(onEntered, a.stmt...)
 		case "onExited":
@@ -5166,7 +5187,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 				d.Clip()
 			}
 		case "enabled", "z", "antialiasing", "smooth",
-			"visible", "activeFocusOnTab", "objectName",
+			"visible", "objectName",
 			// `parent: someItem` re-parents an item in QML. Ours is laid
 			// out where it was declared; a style that re-parents its
 			// selection band onto the background means the control's box
@@ -5240,6 +5261,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 				connected()
 			}
 		})
+	}
+	for _, kn := range navs {
+		d.KeyNav(kn.dir, kn.id)
 	}
 	// Keys.onPressed / Keys.onReleased → focusable raw key handler.
 	if kh := keyHandlerWith(keysSpecific, keysPressed, keysReleased, env); kh != nil {
@@ -7618,6 +7642,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	var placeholder, initialText string
 	var hasInitial, wantFocus bool
+	var navs []keyNav // KeyNavigation.* (focus.go)
 	var onAccepted []stmt
 	// What the field draws instead of its value (echoMode), how long it may
 	// get, and what it will accept at all.
@@ -7630,6 +7655,9 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	area := n.typeName == "TextArea" || n.typeName == "TextEdit"
 	areaH := float32(0)
 	for _, a := range n.attrs {
+		if doc.readKeyNav(a, env, &navs) {
+			continue
+		}
 		if area && (a.name == "height" || a.name == "implicitHeight") {
 			if f, err := attrFloat(a, env); err == nil && f > 0 {
 				areaH = f
@@ -7811,6 +7839,10 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 		state.OnSubmit(nil)
 	}
 	in := ui.Input(state, w)
+	if doc.inputKeys == nil {
+		doc.inputKeys = map[*ui.InputState]keyID{}
+	}
+	doc.inputKeys[state] = doc.keyID(n) // KeyNavigation to it (focus.go)
 	if area {
 		if areaH <= 0 {
 			areaH = 4*20 + 12
@@ -7840,6 +7872,9 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	if wantFocus {
 		in.Focus()
+	}
+	for _, kn := range navs {
+		in.KeyNav(kn.dir, kn.id)
 	}
 	return in, nil
 }

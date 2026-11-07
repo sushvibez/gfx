@@ -840,6 +840,20 @@ func (o *elemObject) member(name string) (any, bool) {
 			return fn, true
 		}
 	}
+	// Keyboard focus on any item (focus.go): forceActiveFocus() and the
+	// activeFocus it leads to. A text field reports its own below.
+	if o.doc != nil && o.key != 0 {
+		switch name {
+		case "forceActiveFocus":
+			doc, key := o.doc, o.doc.focusKeyOf(o)
+			return jsFunc(func([]any) (any, error) { doc.requestFocus(key); return nil, nil }), true
+		case "activeFocus":
+			if o.input == nil {
+				b, _ := toBool(o.doc.activeFocusRef(o.doc.focusKeyOf(o)).get())
+				return b, true
+			}
+		}
+	}
 	if o.derive != nil {
 		if v, ok := o.derive(name); ok {
 			return v, true
@@ -1220,6 +1234,8 @@ func (x *memberExpr) eval(env *Env) (any, error) {
 				return in.HasFocus(), nil
 			case "acceptableInput":
 				return true, nil
+			case "forceActiveFocus":
+				return jsFunc(func([]any) (any, error) { in.RequestFocus(); return nil, nil }), nil
 			}
 			return nil, fmt.Errorf("gml:%d: no member %q", x.line, x.name)
 		}
