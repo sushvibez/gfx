@@ -297,6 +297,32 @@ func (doc *docState) wirePinchHandler(d *ui.DivEl, env *Env, exprs map[string]ex
 	ty := axis("y", false, 0, doc.handlerRef(st, "ty", 0), doc.handlerRef(st, "pty", 0), "yAxis.enabled",
 		[]string{"yAxis.minimum"}, []string{"yAxis.maximum"})
 	cx, cy := doc.handlerRef(st, "cx", 0), doc.handlerRef(st, "cy", 0)
+	// The target scales and turns about its transformOrigin; to pivot on the
+	// fingers' centre instead, as Qt's PinchHandler does, each step also
+	// moves it so the point under the fingers stays put. That needs where
+	// the target sits in the window: its parent's origin plus its x/y.
+	var pivot *elemObject
+	var pox, poy, ow, oh float32
+	if hasTarget {
+		if v, err := targetExpr.eval(env); err == nil {
+			pivot, _ = v.(*elemObject)
+		}
+	}
+	if pivot != nil {
+		pox, poy = pivot.parentOrigin()
+		fx, fy := float32(0.5), float32(0.5)
+		if v, ok := pivot.member("transformOrigin"); ok {
+			fx, fy = transformOriginFrac(str(v))
+		}
+		if v, ok := pivot.member("width"); ok {
+			w, _ := toFloat32(v)
+			ow = fx * w
+		}
+		if v, ok := pivot.member("height"); ok {
+			h, _ := toFloat32(v)
+			oh = fy * h
+		}
+	}
 	d.OnPinch(func(e ui.PinchEvent) {
 		_ = cx.set(float64(e.CX))
 		_ = cy.set(float64(e.CY))
@@ -314,24 +340,37 @@ func (doc *docState) wirePinchHandler(d *ui.DivEl, env *Env, exprs map[string]ex
 			setActive(false)
 			return
 		}
+		f, r := 1.0, 0.0 // the scale and turn that got through
 		if scale != nil && e.Scale != 1 && e.Scale > 0 {
-			f := scale.apply(float64(e.Scale))
+			f = scale.apply(float64(e.Scale))
 			if body := stmts["onScaleChanged"]; body != nil {
 				runEvent(run, env, body, "onScaleChanged", "delta", f)
 			}
 		}
 		if rot != nil && e.Rotation != 0 {
-			r := rot.apply(float64(e.Rotation))
+			r = rot.apply(float64(e.Rotation))
 			if body := stmts["onRotationChanged"]; body != nil {
 				runEvent(run, env, body, "onRotationChanged", "delta", r)
 			}
 		}
-		var dx, dy float64
-		if tx != nil && e.DX != 0 {
-			dx = tx.apply(float64(e.DX))
+		// The centre's own movement, plus the pivot correction: with v the
+		// vector from the transform origin to where the centre WAS (the
+		// pivot of this step), the item moves by v − f·R(r)·v (R clockwise,
+		// y down).
+		mx, my := float64(e.DX), float64(e.DY)
+		if pivot != nil && (f != 1 || r != 0) && tx != nil && ty != nil {
+			vx := float64(e.CX-e.DX) - (float64(pox) + tx.cur + float64(ow))
+			vy := float64(e.CY-e.DY) - (float64(poy) + ty.cur + float64(oh))
+			sin, cos := math.Sincos(r * math.Pi / 180)
+			mx += vx - f*(cos*vx-sin*vy)
+			my += vy - f*(sin*vx+cos*vy)
 		}
-		if ty != nil && e.DY != 0 {
-			dy = ty.apply(float64(e.DY))
+		var dx, dy float64
+		if tx != nil && mx != 0 {
+			dx = tx.apply(mx)
+		}
+		if ty != nil && my != 0 {
+			dy = ty.apply(my)
 		}
 		if body := stmts["onTranslationChanged"]; body != nil && (dx != 0 || dy != 0) {
 			runEvent(run, env, body, "onTranslationChanged", "delta", map[string]any{"x": dx, "y": dy})

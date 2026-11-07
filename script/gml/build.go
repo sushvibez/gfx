@@ -5595,6 +5595,7 @@ func parentObject(n *node, env *Env, doc *docState) *elemObject {
 		}
 		pe.el, pe.node, pe.nodeEnv = doc.prevElems.get(key), n, env
 		pe.parentObj, pe.natW, pe.natH = nil, 0, 0
+		pe.parentKey = ownerKey(n, doc)
 		pe.props, pe.methods = nil, nil
 		if id := nodeID(n); id != "" {
 			if obj := doc.elemObjs.get(doc.here(id)); obj != nil {
@@ -5603,7 +5604,7 @@ func parentObject(n *node, env *Env, doc *docState) *elemObject {
 		}
 		return pe
 	}
-	pe := &elemObject{el: doc.prevElems.get(key), node: n, nodeEnv: env, doc: doc, key: key}
+	pe := &elemObject{el: doc.prevElems.get(key), node: n, nodeEnv: env, doc: doc, key: key, parentKey: ownerKey(n, doc)}
 	if id := nodeID(n); id != "" {
 		if obj := doc.elemObjs.get(doc.here(id)); obj != nil {
 			// Share the live maps: same refs, so writes stay visible.
@@ -8866,4 +8867,14 @@ func (doc *docState) pendingGeom(key keyID, name string) (float64, bool) {
 	}
 	f, err := toFloat64(v)
 	return f, err == nil
+}
+
+// ownerKey is the element key of the item n was declared inside (0 when it
+// has none): what n's x/y are relative to, for a parent object that is
+// read outside the build that set its parentObj (a handler's target).
+func ownerKey(n *node, doc *docState) keyID {
+	if n.owner == nil {
+		return 0
+	}
+	return doc.keyID(n.owner)
 }

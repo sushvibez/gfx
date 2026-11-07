@@ -928,27 +928,8 @@ func (o *elemObject) member(name string) (any, bool) {
 		if o.ovH > 0 {
 			r.H = o.ovH
 		}
-		// QML's x/y are relative to the parent item. Where the enclosing
-		// item is known — a styled control's delegate, or any element whose
-		// parent view we hold — subtract its origin; window coordinates are
-		// the fallback, not the meaning.
-		ox, oy := o.orgX, o.orgY
-		if ox == 0 && oy == 0 {
-			// The enclosing item's origin, resolved against the live
-			// registry: an object captured at declare time holds no element
-			// (nothing was laid out yet), and without the offset x/y read as
-			// window coordinates — which is what a page positioning
-			// something by `-root.x` inside a component then lands off by.
-			if o.parentObj != nil && o.parentObj.el != nil {
-				pr := ui.Bounds(o.parentObj.el)
-				ox, oy = pr.X, pr.Y
-			} else if o.doc != nil && o.parentKey != 0 {
-				if pe, ok := o.doc.prevElems.get2(o.parentKey); ok {
-					pr := ui.Bounds(pe)
-					ox, oy = pr.X, pr.Y
-				}
-			}
-		}
+		// QML's x/y are relative to the parent item (parentOrigin).
+		ox, oy := o.parentOrigin()
 		switch name {
 		case "width":
 			return float64(r.W), true
@@ -2619,4 +2600,30 @@ func optionalChain(e expr) bool {
 		}
 		e = m.base
 	}
+}
+
+// parentOrigin is the window position of the item this element's x/y are
+// relative to. Where the enclosing item is known — a styled control's
+// delegate, or any element whose parent view we hold — it is that item's
+// origin; window coordinates (0, 0) are the fallback, not the meaning.
+func (o *elemObject) parentOrigin() (float32, float32) {
+	if o.orgX != 0 || o.orgY != 0 {
+		return o.orgX, o.orgY
+	}
+	// The enclosing item's origin, resolved against the live registry: an
+	// object captured at declare time holds no element (nothing was laid
+	// out yet), and without the offset x/y read as window coordinates —
+	// which is what a page positioning something by `-root.x` inside a
+	// component then lands off by.
+	if o.parentObj != nil && o.parentObj.el != nil {
+		pr := ui.Bounds(o.parentObj.el)
+		return pr.X, pr.Y
+	}
+	if o.doc != nil && o.parentKey != 0 {
+		if pe, ok := o.doc.prevElems.get2(o.parentKey); ok {
+			pr := ui.Bounds(pe)
+			return pr.X, pr.Y
+		}
+	}
+	return 0, 0
 }

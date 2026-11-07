@@ -208,3 +208,39 @@ Item {
 		t.Errorf("persistent,active x = %s, want 70,20", got)
 	}
 }
+
+// An item inside an offset parent drags by the pointer's movement alone:
+// its x/y are relative to that parent, and reading them in window terms
+// made it jump by the parent's offset on the first move.
+func TestDragHandlerInOffsetParent(t *testing.T) {
+	src := `
+import QtQuick 2.15
+Item {
+    width: 400; height: 300
+    Item { x: 100; y: 60; width: 300; height: 240
+        Rectangle { id: knob; x: 20; y: 30; width: 60; height: 40
+            DragHandler { } } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(400, 300) }
+	frame()
+	frame()
+	// The knob is at window (120, 90).
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 140, Y: 100}, {Kind: app.MouseDown, X: 140, Y: 100, Button: 1}})
+	frame()
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 180, Y: 120}})
+	frame()
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseUp, X: 180, Y: 120, Button: 1}})
+	frame()
+	frame()
+	x, _ := evalString("knob.x", env)
+	y, _ := evalString("knob.y", env)
+	if str(x)+","+str(y) != "60,50" {
+		t.Errorf("knob at %v,%v, want 60,50 (moved 40,20 within its parent)", x, y)
+	}
+}

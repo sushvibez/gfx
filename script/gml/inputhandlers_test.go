@@ -215,3 +215,31 @@ Item {
 		t.Errorf("activeRotation = %v, want 60", v)
 	}
 }
+
+// A pinch scales about the fingers' centre: pinching out at an item's
+// corner keeps that corner under the fingers. The item sits in an offset
+// parent, so its x/y are relative to that parent.
+func TestPinchHandlerPivotsOnTheFingers(t *testing.T) {
+	u, _, frame, num := loadHandlers(t, `
+import QtQuick 2.15
+Item {
+    width: 400; height: 300
+    Item { x: 20; y: 10; width: 380; height: 290
+        Rectangle { id: card; x: 30; y: 40; width: 200; height: 200
+            PinchHandler { } } }
+}`)
+	// The card's top-left corner is at window (50, 50); its centre, the
+	// transform origin, at (150, 150). One notch out at the corner (+15 %)
+	// would push the corner 15 px up and left; the pivot moves it back.
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 52, Y: 52}, {Kind: app.MouseScroll, X: 52, Y: 52, Ctrl: true, ScrollY: -app.WheelNotchPx}})
+	frame()
+	frame()
+	if s := num("card.scale"); !near(s, ui.PinchStepPerNotch) {
+		t.Fatalf("card.scale = %v", s)
+	}
+	// v = (52,52) − (150,150) = (−98,−98); the move is (1 − 1.15)·v = 14.7.
+	want := 0.15 * 98
+	if x, y := num("card.x"), num("card.y"); !near(x, 30+want) || !near(y, 40+want) {
+		t.Errorf("card at %v,%v, want %v,%v", x, y, 30+want, 40+want)
+	}
+}
