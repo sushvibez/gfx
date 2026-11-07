@@ -106,9 +106,10 @@ func isBareMouseArea(n *node) bool {
 
 // isPointerHandler reports Qt Quick Input Handlers (TapHandler,
 // HoverHandler, ...) — non-visual attachments that always cover their
-// parent item. buildBox hoists the handlers we model onto the parent box
-// via pointerHandlerAsMouseArea; the rest attach nothing (wheel/drag/pinch
-// gestures are not modeled) but must not render as unknown elements.
+// parent item. buildBox hoists them onto the parent box via
+// pointerHandlerAsMouseArea: TapHandler, HoverHandler and DragHandler
+// work; the rest attach nothing (pinch, wheel and point gestures are not
+// modeled) but must not render as unknown elements.
 func isPointerHandler(n *node) bool {
 	switch n.typeName {
 	case "TapHandler", "HoverHandler", "WheelHandler", "DragHandler",
@@ -118,13 +119,25 @@ func isPointerHandler(n *node) bool {
 	return false
 }
 
-// pointerHandlerAsMouseArea rewrites a TapHandler/HoverHandler node as the
-// equivalent bare MouseArea so boxAttrs can hoist its handlers.
-func pointerHandlerAsMouseArea(n *node) *node {
+// pointerHandlerAsMouseArea rewrites an Input Handler node as the
+// equivalent bare MouseArea so boxAttrs can hoist its handlers onto box,
+// the item it sits in. A DragHandler becomes drag.* attributes
+// (dragtarget.go), its target defaulting to box itself.
+func pointerHandlerAsMouseArea(n, box *node, doc *docState) *node {
 	cp := *n
 	cp.typeName = "MouseArea"
 	cp.attrs = nil
+	dragH := n.typeName == "DragHandler"
+	if dragH {
+		cp.attrs = append(cp.attrs, attr{name: "drag.handler", line: n.line},
+			attr{name: "drag.target", line: n.line, expr: &boxObjExpr{box: box, doc: doc}})
+	}
 	for _, a := range n.attrs {
+		if dragH {
+			if to, ok := dragHandlerAttrs[a.name]; ok {
+				a.name = to // a later drag.target (target:) wins over the default
+			}
+		}
 		switch a.name {
 		case "onTapped", "onSingleTapped":
 			a.name = "onClicked"
@@ -444,4 +457,19 @@ func buildAnchoredChild(c *node, env *Env, doc *docState) (ui.Element, error) {
 		}
 	}
 	return ui.Anchored(el, nodeID(c), a), nil
+}
+
+// dragHandlerAttrs renames a DragHandler's attributes to the drag.* ones
+// wireDragTarget reads.
+var dragHandlerAttrs = map[string]string{
+	"target":               "drag.target",
+	"dragThreshold":        "drag.threshold",
+	"xAxis.minimum":        "drag.minimumX",
+	"xAxis.maximum":        "drag.maximumX",
+	"yAxis.minimum":        "drag.minimumY",
+	"yAxis.maximum":        "drag.maximumY",
+	"xAxis.enabled":        "drag.xEnabled",
+	"yAxis.enabled":        "drag.yEnabled",
+	"onTranslationChanged": "drag.onTranslationChanged",
+	"onActiveChanged":      "drag.onActiveChanged",
 }

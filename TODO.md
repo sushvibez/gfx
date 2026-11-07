@@ -205,8 +205,7 @@ lines of work; fix them as they are touched.
   Git Bash lacks. `devcheck` keeps `-frames` only: it is the on-device
   check, and its pictures are the device's.
 - **`script/gml`** (found while verifying `docs/gml.md`): silent no-ops:
-  pointer handlers beyond
-  tap/hover, `Dial` drag, `SplitHandle.pressed/hovered`. A horizontal
+  `PinchHandler`, `WheelHandler`, `PointHandler`, `Dial` drag, `SplitHandle.pressed/hovered`. A horizontal
   `ListView` builds every delegate (no virtualisation), and `header`/
   `footer` stay at the ends instead of scrolling with the rows. Regex
   values use Go's RE2: lookaround and backreferences do not compile.

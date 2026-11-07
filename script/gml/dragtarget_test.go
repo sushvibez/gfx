@@ -113,3 +113,89 @@ Item {
 		t.Errorf("slider at %s, want 70,200 (x only)", got)
 	}
 }
+
+func TestDragHandler(t *testing.T) {
+	src := `
+import QtQuick 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property real panX: 0
+    property real panY: 0
+    property int activations: 0
+    Rectangle {
+        id: knob
+        x: 20; y: 30; width: 60; height: 40
+        DragHandler { id: dh; xAxis.maximum: 100; yAxis.enabled: false
+            onActiveChanged: if (active) root.activations += 1 }
+    }
+    Rectangle {
+        id: map
+        x: 0; y: 150; width: 400; height: 150
+        DragHandler { id: pan; target: null
+            onTranslationChanged: (delta) => { root.panX += delta.x; root.panY += delta.y } }
+    }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(400, 300) }
+	frame()
+	frame()
+	get := func(expr string) string {
+		v, err := evalString(expr, env)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		return str(v)
+	}
+	press := func(x, y float32) {
+		u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: x, Y: y}, {Kind: app.MouseDown, X: x, Y: y, Button: 1}})
+		frame()
+	}
+	move := func(x, y float32) { u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: x, Y: y}}); frame() }
+	release := func(x, y float32) {
+		u.Mouse([]app.MouseEvent{{Kind: app.MouseUp, X: x, Y: y, Button: 1}})
+		frame()
+	}
+
+	// The default target is the item the handler sits in; y is off, x
+	// stops at 100.
+	press(40, 50)
+	move(70, 80)
+	if got := get("dh.active"); got != "true" {
+		t.Errorf("dh.active = %s mid-drag", got)
+	}
+	if got := get("dh.activeTranslation.x"); got != "30" {
+		t.Errorf("activeTranslation.x = %s, want 30", got)
+	}
+	move(200, 90)
+	release(200, 90)
+	if got := get("knob.x") + "," + get("knob.y"); got != "100,30" {
+		t.Errorf("knob at %s, want 100,30 (x capped, y off)", got)
+	}
+	if got := get("dh.active") + "," + get("root.activations"); got != "false,1" {
+		t.Errorf("active,activations = %s, want false,1", got)
+	}
+
+	// target: null moves nothing and reports the deltas.
+	press(100, 200)
+	move(130, 210)
+	move(150, 230)
+	release(150, 230)
+	press(150, 230)
+	move(170, 230)
+	release(170, 230)
+	if got := get("map.x") + "," + get("map.y"); got != "0,150" {
+		t.Errorf("map moved to %s with target: null", got)
+	}
+	if got := get("root.panX") + "," + get("root.panY"); got != "70,30" {
+		t.Errorf("pan = %s, want 70,30 from the deltas", got)
+	}
+	if got := get("pan.persistentTranslation.x") + "," + get("pan.activeTranslation.x"); got != "70,20" {
+		t.Errorf("persistent,active x = %s, want 70,20", got)
+	}
+}

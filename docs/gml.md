@@ -463,8 +463,8 @@ on Button, `Spacer { }`.
 | element | notes |
 | --- | --- |
 | `Item`, `Rectangle`, `FocusScope` | a box; no implicit size inside a layout, as in Qt |
-| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed`, `mouseX`, `mouseY` live; `onDoubleClicked`, `onPressAndHold` (Qt's 800 ms; the release is then not a click), `onWheel` (`wheel.angleDelta`, `pixelDelta`; setting `wheel.accepted = false` lets the wheel scroll the view behind), `onPositionChanged` (while pressed, or hovering with `hoverEnabled`); handlers get `mouse`/`wheel`, by that name or as an arrow function's parameter. `drag.target` moves the target's `x`/`y` with the pointer (breaking their bindings) once it passes `drag.threshold` (default 10), along `drag.axis` (`Drag.XAxis`, `YAxis`, `XAndYAxis`), inside `drag.minimumX`…`drag.maximumY`; `id.drag.active` reads true meanwhile; a press that never passes the threshold still clicks. A handler inside the MouseArea reads it as `id.drag.active`, not bare `drag.active`; `onPositionChanged` does not fire while the drag carries the area along under the pointer; `drag.filterChildren`, `drag.smoothed` are accepted |
-| `TapHandler`, `HoverHandler`, `DragHandler`, `PinchHandler`, `WheelHandler`, `PointHandler` | rewritten to a MouseArea on the parent: `onTapped`/`onSingleTapped` → click, hover works; drag, pinch, wheel do nothing |
+| `MouseArea` | a hit box with click/press/hover; `containsMouse`, `pressed`, `mouseX`, `mouseY` live; `onDoubleClicked`, `onPressAndHold` (Qt's 800 ms; the release is then not a click), `onWheel` (`wheel.angleDelta`, `pixelDelta`; setting `wheel.accepted = false` lets the wheel scroll the view behind), `onPositionChanged` (while pressed, or hovering with `hoverEnabled`); handlers get `mouse`/`wheel`, by that name or as an arrow function's parameter. `drag.target` (over `ui.Mover`, the Go API for the same drag) moves the target's `x`/`y` with the pointer (breaking their bindings) once it passes `drag.threshold` (default 10), along `drag.axis` (`Drag.XAxis`, `YAxis`, `XAndYAxis`), inside `drag.minimumX`…`drag.maximumY`; `id.drag.active` reads true meanwhile; a press that never passes the threshold still clicks. A handler inside the MouseArea reads it as `id.drag.active`, not bare `drag.active`; `onPositionChanged` does not fire while the drag carries the area along under the pointer; `drag.filterChildren`, `drag.smoothed` are accepted |
+| `TapHandler`, `HoverHandler`, `DragHandler`, `PinchHandler`, `WheelHandler`, `PointHandler` | rewritten to a MouseArea on the parent: `onTapped`/`onSingleTapped` → click, hover works. `DragHandler` drags its `target` (the item it sits in by default; `null` moves nothing and only reports) over `ui.Mover`, with `xAxis`/`yAxis` `minimum`/`maximum`/`enabled`, `dragThreshold`, `active`, `activeTranslation`, `persistentTranslation`, `onTranslationChanged(delta)` and `onActiveChanged` (reading bare `active`); pinch, wheel and point handlers do nothing |
 | `DropArea` | built; drops are not delivered |
 | `Row`, `Column`, `Flow`, `Grid` | positioners: `spacing`, `padding`; `Grid` takes `columns`, `rows`, `rowSpacing`, `columnSpacing`; `flow` accepted |
 | `RowLayout`, `ColumnLayout`, `GridLayout`, `StackLayout` | QtQuick.Layouts with the `Layout.*` hints above; `StackLayout` shows `currentIndex` only |
@@ -826,7 +826,7 @@ Semantics that differ by design:
 
 Not implemented (summarised from `script/TODO.md` and the findings log):
 
-- Interaction: pointer-handler gestures (drag, pinch, wheel); keyboard
+- Interaction: pointer-handler gestures (pinch, wheel); keyboard
   navigation (`KeyNavigation`, tab focus order), `event.modifiers`.
 - Views: horizontal ListView, `header`/`footer`, view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,

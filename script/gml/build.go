@@ -4908,7 +4908,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	for _, a := range n.attrs {
 		switch a.name {
 		case "drag.target", "drag.axis", "drag.threshold",
-			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY":
+			"drag.minimumX", "drag.maximumX", "drag.minimumY", "drag.maximumY",
+			"drag.handler", "drag.xEnabled", "drag.yEnabled",
+			"drag.onTranslationChanged", "drag.onActiveChanged":
 			drag.read(a)
 		case "id": // accepted everywhere, no state for plain boxes
 		case "state", "states", "transitions": // handled by computeStateCtx
@@ -5174,14 +5176,15 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			"preventStealing", "onActiveChanged", "onGrabChanged", "onCanceled",
 			"drag.filterChildren", "drag.smoothed",
 			"acceptedButtons", "propagateComposedEvents",
-			// DragHandler axis limits (hoisted like the handlers above):
+			// Axis limits of the handlers not rewritten to drag.* (a
+			// DragHandler's are: pointerHandlerAsMouseArea):
 			"xAxis.minimum", "xAxis.maximum", "xAxis.enabled",
 			"yAxis.minimum", "yAxis.maximum", "yAxis.enabled",
 			// Input Handler (TapHandler/HoverHandler, hoisted here) extras:
 			"gesturePolicy", "grabPermissions", "acceptedDevices",
 			"margin", "longPressThreshold", "target", "point.id",
-			// DragHandler's drag delta (panning a map by hand): dragging is
-			// not modeled, so the handler has nothing to report.
+			// PinchHandler's and PointHandler's reports (a DragHandler's
+			// onTranslationChanged is rewritten to drag.*):
 			"onTranslationChanged", "onCentroidChanged":
 			// accepted, not modeled (kept so real .qml files load)
 		default:
@@ -5669,7 +5672,7 @@ func buildBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 				return nil, err
 			}
 		} else if isPointerHandler(c) {
-			if err := boxAttrs(pointerHandlerAsMouseArea(c), d, env, doc); err != nil {
+			if err := boxAttrs(pointerHandlerAsMouseArea(c, n, doc), d, env, doc); err != nil {
 				return nil, err
 			}
 		}
