@@ -14,11 +14,14 @@ func TestPinch(t *testing.T) {
 	}
 	var calls []call
 	scale := float32(1)
+	var turned, movedX float32
 	u := New(nil, nil, func() Element {
 		return Div().Row().Children(
-			Div().Size(200, 200).OnPinch(func(f, cx, cy float32, phase DragPhase) {
-				calls = append(calls, call{f, phase})
-				scale *= f
+			Div().Size(200, 200).OnPinch(func(e PinchEvent) {
+				calls = append(calls, call{e.Scale, e.Phase})
+				scale *= e.Scale
+				turned += e.Rotation
+				movedX += e.DX
 			}),
 			Div().Size(200, 200), // no pinch region: Ctrl+wheel here is a wheel
 		)
@@ -50,5 +53,14 @@ func TestPinch(t *testing.T) {
 	}
 	if !near(scale, 2) {
 		t.Errorf("touch pinch scale = %v, want 2", scale)
+	}
+
+	// Turning a quarter clockwise while the pair moves 30 right.
+	turned, movedX = 0, 0
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchBegin, X: 80, Y: 100}, {ID: 2, Phase: app.TouchBegin, X: 120, Y: 100}})
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchMove, X: 130, Y: 80}, {ID: 2, Phase: app.TouchMove, X: 130, Y: 120}})
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchEnd, X: 130, Y: 80}, {ID: 2, Phase: app.TouchEnd, X: 130, Y: 120}})
+	if !near(turned, 90) || !near(movedX, 30) {
+		t.Errorf("turned %v moved %v, want 90, 30", turned, movedX)
 	}
 }

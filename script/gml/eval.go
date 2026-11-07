@@ -910,6 +910,11 @@ func (o *elemObject) member(name string) (any, bool) {
 		// goes through the item's geometry token (see trackGeom): the
 		// subtree is stale exactly when this item moved.
 		o.trackGeom()
+		if o.doc != nil && o.key != 0 {
+			if f, ok := o.doc.pendingGeom(o.key, name); ok {
+				return f, true
+			}
+		}
 		var r ui.Rect
 		if o.el != nil {
 			r = ui.Bounds(o.el)

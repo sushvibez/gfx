@@ -6,19 +6,28 @@ import (
 	"github.com/sushvibez/gfx/app"
 )
 
-// Pinching: two fingers spreading or closing over an element (QML's
-// PinchHandler), from either source the platforms have:
+// Pinching: two fingers spreading, closing, turning or moving together
+// over an element (QML's PinchHandler), from either source the platforms
+// have:
 //
 //   - a touchscreen, through UI.Touch: a pinch starts when a second finger
 //     lands (DragStart), reports each frame's change (DragMove) and ends
 //     when the fingers lift (DragEnd);
 //   - a touchpad, whose pinch Windows and the browsers send as Ctrl+wheel:
-//     each event is one step of the pinch, reported as a DragMove alone
-//     (there is no start or end to see).
-//
-// factor is the change in scale since the last call (multiply a scale by
-// it; 1 at DragStart and DragEnd), cx, cy the pinch's centre in window
-// pixels.
+//     each event is one step of scale alone, a DragMove with no start or
+//     end to see.
+
+// PinchEvent is one step of a pinch. Scale is the change in scale since
+// the last step (multiply by it; 1 at DragStart and DragEnd), Rotation the
+// change in angle in degrees clockwise, DX, DY how far the fingers' centre
+// moved, and CX, CY where it is now, in window pixels.
+type PinchEvent struct {
+	Phase    DragPhase
+	Scale    float32
+	Rotation float32
+	DX, DY   float32
+	CX, CY   float32
+}
 
 // PinchStepPerNotch is the scale change of one wheel notch's worth of
 // touchpad pinch: 15 %, the same step the game shell turns a touchscreen
@@ -26,14 +35,14 @@ import (
 const PinchStepPerNotch = 1.15
 
 // OnPinch installs a pinch handler (see above).
-func (d *DivEl) OnPinch(fn func(factor, cx, cy float32, phase DragPhase)) *DivEl {
+func (d *DivEl) OnPinch(fn func(PinchEvent)) *DivEl {
 	d.pinchFn = fn
 	return d
 }
 
-func (d *DivEl) pinch(factor, cx, cy float32, phase DragPhase) {
+func (d *DivEl) pinch(e PinchEvent) {
 	if d.pinchFn != nil {
-		d.pinchFn(factor, cx, cy, phase)
+		d.pinchFn(e)
 	}
 }
 
@@ -59,7 +68,7 @@ func (u *UI) wheelPinch(m app.MouseEvent) bool {
 	}
 	// The wheel turned away (negative ScrollY) is a spread: zoom in.
 	f := float32(math.Pow(PinchStepPerNotch, float64(-m.ScrollY/app.WheelNotchPx)))
-	d.pinch(f, m.X, m.Y, DragMove)
+	d.pinch(PinchEvent{Phase: DragMove, Scale: f, CX: m.X, CY: m.Y})
 	return true
 }
 
@@ -74,14 +83,15 @@ func (u *UI) Touch(events []app.TouchEvent) {
 	case g.Pinching && u.pinching == nil:
 		if d := u.pinchAt(g.CX, g.CY); d != nil {
 			u.pinching = d
-			d.pinch(1, g.CX, g.CY, DragStart)
+			d.pinch(PinchEvent{Phase: DragStart, Scale: 1, CX: g.CX, CY: g.CY})
 		}
 	case g.Pinching:
-		if g.ScaleD > 0 && g.ScaleD != 1 {
-			u.pinching.pinch(g.ScaleD, g.CX, g.CY, DragMove)
+		if g.ScaleD != 1 || g.AngleD != 0 || g.DX != 0 || g.DY != 0 {
+			u.pinching.pinch(PinchEvent{Phase: DragMove, Scale: g.ScaleD, Rotation: g.AngleD,
+				DX: g.DX, DY: g.DY, CX: g.CX, CY: g.CY})
 		}
 	case u.pinching != nil:
-		u.pinching.pinch(1, g.CX, g.CY, DragEnd)
+		u.pinching.pinch(PinchEvent{Phase: DragEnd, Scale: 1, CX: g.CX, CY: g.CY})
 		u.pinching = nil
 	}
 }

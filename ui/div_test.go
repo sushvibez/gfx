@@ -463,3 +463,26 @@ func TestWrappingRowRequiresOnlyItsWidestChild(t *testing.T) {
 		}
 	}
 }
+
+// A growing box with a ceiling stops there and its sibling takes the rest
+// (CSS max-width), in a column too.
+func TestMaxWShare(t *testing.T) {
+	var a, b, c, e *DivEl
+	u := New(nil, nil, func() Element {
+		a = Div().Grow().MaxW(100)
+		b = Div().Grow()
+		c = Div().Grow().MaxH(50)
+		e = Div().Grow()
+		return Div().Col().Size(400, 300).Children(
+			Div().Row().H(100).Children(a, b),
+			Div().Col().Grow().Children(c, e),
+		)
+	})
+	u.Layout(400, 300)
+	if a.Rect().W != 100 || b.Rect().W != 300 {
+		t.Errorf("row: capped %v, other %v; want 100, 300", a.Rect().W, b.Rect().W)
+	}
+	if c.Rect().H != 50 || e.Rect().H != 150 {
+		t.Errorf("column: capped %v, other %v; want 50, 150", c.Rect().H, e.Rect().H)
+	}
+}

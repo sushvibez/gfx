@@ -23,8 +23,10 @@ func (g *mouseGestures) any() bool {
 // wireMouseGestures installs the collected handlers on d and keeps
 // id.mouseX / id.mouseY live. mouseX/mouseY follow the pointer while it is
 // over the area (QML updates them only while pressed unless hoverEnabled;
-// reading them on hover is harmless), and onPositionChanged runs when
-// they change while pressed or, with hoverEnabled, while hovered.
+// reading them on hover is harmless), and onPositionChanged runs when the
+// pointer moves while pressed or, with hoverEnabled, while hovered —
+// judged in window terms too, so a drag that carries the area along under
+// the pointer (drag.target: parent) still reports every move, as Qt does.
 func (doc *docState) wireMouseGestures(n *node, d *ui.DivEl, env *Env, g *mouseGestures, pressRef Ref) {
 	ks := doc.keyStr(doc.keyID(n))
 	mx, my := doc.floatProp(ks+".mouseX", 0), doc.floatProp(ks+".mouseY", 0)
@@ -37,14 +39,20 @@ func (doc *docState) wireMouseGestures(n *node, d *ui.DivEl, env *Env, g *mouseG
 		return map[string]any{"x": x, "y": y, "button": float64(1), "buttons": float64(1),
 			"modifiers": float64(0), "wasHeld": false, "accepted": true}
 	}
+	last := doc.pointerAt(ks)
 	d.OnHoverMove(func(x, y float32) {
+		r := d.Rect()
+		wx, wy := r.X+x, r.Y+y
 		ox, _ := toFloat32(mx.get())
 		oy, _ := toFloat32(my.get())
-		if ox == x && oy == y {
+		if ox == x && oy == y && last[0] == wx && last[1] == wy {
 			return
 		}
-		_ = mx.set(x)
-		_ = my.set(y)
+		last[0], last[1] = wx, wy
+		if ox != x || oy != y {
+			_ = mx.set(x)
+			_ = my.set(y)
+		}
 		pressed, _ := toBool(pressRef.get())
 		if g.positionChanged != nil && (pressed || g.hoverEnabled) {
 			runEvent(run, env, g.positionChanged, "onPositionChanged", "mouse", mouse())
@@ -125,4 +133,39 @@ func attrIsTrue(n *node, name string, env *Env) bool {
 		}
 	}
 	return false
+}
+
+// pointerAt is the window position a MouseArea last saw the pointer at,
+// kept across builds by element.
+func (doc *docState) pointerAt(key string) *[2]float32 {
+	if doc.pointerSeen == nil {
+		doc.pointerSeen = map[string]*[2]float32{}
+	}
+	p := doc.pointerSeen[key]
+	if p == nil {
+		p = &[2]float32{-1, -1}
+		doc.pointerSeen[key] = p
+	}
+	return p
+}
+
+// mouseAreaScope binds a MouseArea's own state by bare name for its
+// attributes and handlers — `onPositionChanged: if (drag.active) …`,
+// `color: pressed ? … : …` — as QML resolves those names against the
+// MouseArea itself. The values are live (Refs), except drag, whose active
+// is a document property: changing it rebuilds, and the scope with it.
+func (doc *docState) mouseAreaScope(n *node, env *Env) *Env {
+	ks := doc.keyStr(doc.keyID(n))
+	hover, press := doc.hoverPressRefs(doc.keyID(n))
+	s := env.child()
+	s.vars["containsMouse"] = hover
+	s.vars["pressed"] = press
+	s.vars["mouseX"] = doc.floatProp(ks+".mouseX", 0)
+	s.vars["mouseY"] = doc.floatProp(ks+".mouseY", 0)
+	active := false
+	if st, ok := doc.dragStates[ks]; ok {
+		active, _ = toBool(st.active.get())
+	}
+	s.vars["drag"] = map[string]any{"active": active}
+	return s
 }

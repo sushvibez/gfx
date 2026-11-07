@@ -210,3 +210,53 @@ Item {
 		t.Errorf("second pane = %v, want its maximum 180", got)
 	}
 }
+
+// A fill pane takes what is left only up to its maximum; a handle dragged
+// to give it more stops giving.
+func TestSplitViewFillMaximum(t *testing.T) {
+	src := `
+import QtQuick
+import QtQuick.Controls
+Item {
+    width: 500; height: 200
+    SplitView {
+        anchors.fill: parent
+        Rectangle { color: "#111111"; SplitView.preferredWidth: 300; SplitView.minimumWidth: 50 }
+        Rectangle { color: "#222222"; SplitView.fillWidth: true; SplitView.maximumWidth: 250 }
+    }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	var tree ui.Element
+	u := ui.New(nil, nil, func() ui.Element { tree = d.View()(); return tree })
+	u.Layout(500, 200)
+	width := func(rgb uint32) float32 {
+		var w float32
+		var walk func(ui.Element)
+		walk = func(e ui.Element) {
+			if e == nil {
+				return
+			}
+			if c, ok := ui.FillColor(e); ok &&
+				uint32(c.R*255+0.5)<<16|uint32(c.G*255+0.5)<<8|uint32(c.B*255+0.5) == rgb {
+				w = ui.Bounds(e).W
+			}
+			for _, ch := range ui.Children(e) {
+				walk(ch)
+			}
+		}
+		walk(tree)
+		return w
+	}
+	if got := width(0x222222); got > 250 || got < 150 {
+		t.Fatalf("fill pane starts at %v, want what is left (about 196)", got)
+	}
+	u.Drag(302, 100, 52, 100) // shrink the first pane by 250
+	u.Layout(500, 200)
+	if got := width(0x222222); got != 250 {
+		t.Errorf("fill pane = %v after the drag, want its maximum 250", got)
+	}
+}

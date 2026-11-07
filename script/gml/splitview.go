@@ -237,6 +237,13 @@ func applySplitHints(el ui.Element, hints splitHints, vertical bool, dragged flo
 	switch {
 	case hints.fill:
 		d.Grow()
+		if hints.maximum > 0 { // it takes what is left, up to its maximum
+			if vertical {
+				d.MaxH(hints.maximum)
+			} else {
+				d.MaxW(hints.maximum)
+			}
+		}
 	case hints.preferred > 0:
 		size := max(hints.preferred+dragged, 1)
 		if hints.maximum > 0 {

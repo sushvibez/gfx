@@ -55,7 +55,6 @@ Item {
 	wheel := func(x, y, dy float32) {
 		u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: x, Y: y}, {Kind: app.MouseScroll, X: x, Y: y, ScrollY: dy}})
 		frame()
-		frame() // geometry (x) reads the laid-out tree, a frame behind the write
 	}
 	wheel(100, 100, -8*app.WheelNotchPx) // eight notches away: the scale doubles
 	if v := num("zoomer.scale"); !near(v, 2) {
@@ -150,5 +149,69 @@ Item {
 	}
 	if v := num("root.seenX"); v < 50 {
 		t.Errorf("onPointChanged saw x %v", v)
+	}
+}
+
+// A handler that writes an item's geometry reads it back as written, in
+// the same statement, though the tree has not been laid out with it yet.
+func TestGeometryWriteReadsBack(t *testing.T) {
+	u, _, frame, num := loadHandlers(t, `
+import QtQuick 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property real seenX: -1
+    property real seenW: -1
+    Rectangle { id: box; x: 10; y: 10; width: 40; height: 40 }
+    MouseArea { x: 200; y: 200; width: 100; height: 100
+        onClicked: { box.x = 120; box.width = 70; root.seenX = box.x; root.seenW = box.width } }
+}`)
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 250, Y: 250}, {Kind: app.MouseDown, X: 250, Y: 250, Button: 1},
+		{Kind: app.MouseUp, X: 250, Y: 250, Button: 1}})
+	if x, w := num("root.seenX"), num("root.seenW"); x != 120 || w != 70 {
+		t.Errorf("read back x %v width %v in the handler, want 120, 70", x, w)
+	}
+	frame()
+	frame()
+	if x := num("box.x"); x != 120 {
+		t.Errorf("box.x = %v once laid out, want 120", x)
+	}
+}
+
+// A pinch that turns and moves: rotation and x/y follow the fingers, within
+// rotationAxis bounds, and the handler reports them.
+func TestPinchHandlerRotatesAndMoves(t *testing.T) {
+	u, _, frame, num := loadHandlers(t, `
+import QtQuick 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property real turned: 0
+    Rectangle { id: card; x: 50; y: 50; width: 200; height: 200
+        PinchHandler { id: ph; rotationAxis.maximum: 60
+            onRotationChanged: (delta) => { root.turned += delta } } }
+}`)
+	// Fingers 40 apart, turned a quarter clockwise and moved 30 right.
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchBegin, X: 130, Y: 150}, {ID: 2, Phase: app.TouchBegin, X: 170, Y: 150}})
+	frame()
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchMove, X: 180, Y: 130}, {ID: 2, Phase: app.TouchMove, X: 180, Y: 170}})
+	frame()
+	u.Touch([]app.TouchEvent{{ID: 1, Phase: app.TouchEnd, X: 180, Y: 130}, {ID: 2, Phase: app.TouchEnd, X: 180, Y: 170}})
+	frame()
+	frame()
+	if v := num("card.rotation"); !near(v, 60) {
+		t.Errorf("card.rotation = %v, want the maximum 60", v)
+	}
+	if v := num("root.turned"); !near(v, 60) {
+		t.Errorf("onRotationChanged deltas sum to %v, want 60", v)
+	}
+	if x, y := num("card.x"), num("card.y"); !near(x, 80) || !near(y, 50) {
+		t.Errorf("card at %v,%v, want 80,50", x, y)
+	}
+	if v := num("ph.persistentTranslation.x"); !near(v, 30) {
+		t.Errorf("persistentTranslation.x = %v, want 30", v)
+	}
+	if v := num("ph.activeRotation"); !near(v, 60) {
+		t.Errorf("activeRotation = %v, want 60", v)
 	}
 }

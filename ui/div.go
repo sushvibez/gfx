@@ -24,6 +24,7 @@ type DivEl struct {
 	hasSelfAl        bool
 	spread           bool    // share leftover space across every child (SpreadCells)
 	minW, minH       float32 // size floors (Layout.minimumWidth/Height)
+	maxW, maxH       float32 // size ceilings for a growing box (MaxW/MaxH; 0 = none)
 	// xforms are the transforms this element (and its subtree) paints
 	// through — QML's rotation / scale / `transform:` list, applied in
 	// list order.
@@ -75,13 +76,13 @@ type DivEl struct {
 	focusC                 RGBA
 	focusVisW              float32 // border shown only for keyboard focus (.focus_visible)
 	focusVisC              RGBA
-	focusSlot              int                                           // 1-based index into ctx.focusables this frame; 0 = none
-	tabIdx                 int                                           // Tab traversal rank (GPUI tab_index); ties resolve in layout order
-	wantFocus              bool                                          // requests initial keyboard focus (QML focus: true)
-	keyFn                  func(app.KeyEvent)                            // raw key handler (QML Keys.onPressed/onReleased)
-	keyAccept              func(app.KeyEvent) bool                       // OnKeyAccept: the handler says whether it took the key
-	shortcutFns            []func(app.KeyEvent) bool                     // OnShortcut: window-wide key shortcut handlers
-	pinchFn                func(factor, cx, cy float32, phase DragPhase) // OnPinch
+	focusSlot              int                       // 1-based index into ctx.focusables this frame; 0 = none
+	tabIdx                 int                       // Tab traversal rank (GPUI tab_index); ties resolve in layout order
+	wantFocus              bool                      // requests initial keyboard focus (QML focus: true)
+	keyFn                  func(app.KeyEvent)        // raw key handler (QML Keys.onPressed/onReleased)
+	keyAccept              func(app.KeyEvent) bool   // OnKeyAccept: the handler says whether it took the key
+	shortcutFns            []func(app.KeyEvent) bool // OnShortcut: window-wide key shortcut handlers
+	pinchFn                func(PinchEvent)          // OnPinch
 	cursor                 app.Cursor
 	justify                Align   // main axis
 	items                  Align   // cross axis
@@ -119,7 +120,17 @@ func (d *DivEl) H(px float32) *DivEl { d.h = px; return d }
 // lays out smaller, but it still stretches and grows, which a fixed W/H
 // would prevent.
 func (d *DivEl) MinW(px float32) *DivEl { d.minW = px; return d }
-func (d *DivEl) MinH(px float32) *DivEl { d.minH = px; return d }
+
+// MaxW caps how wide a growing box gets (CSS max-width): its share of a
+// row stops there and the rest goes to the other growing children.
+func (d *DivEl) MaxW(px float32) *DivEl { d.maxW = px; return d }
+
+// MaxH caps how tall a growing box gets in a column, as MaxW.
+func (d *DivEl) MaxH(px float32) *DivEl { d.maxH = px; return d }
+
+// maxWH is the declared ceiling (0 = none).
+func (d *DivEl) maxWH() (float32, float32) { return d.maxW, d.maxH }
+func (d *DivEl) MinH(px float32) *DivEl    { d.minH = px; return d }
 
 // minWH reports the element's size floors (0 = none).
 func (d *DivEl) minWH() (float32, float32) { return d.minW, d.minH }
@@ -1278,13 +1289,45 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 		alignCross = max(alignCross, need)
 	}
 
+	// Declared ceilings (DivEl.MaxW/MaxH, CSS max-*): a growing child whose
+	// share would pass its ceiling is held there, and the rest is shared
+	// by the others — repeated, as one held child can push another past
+	// its own. Without ceilings this leaves leftover and growSum as they
+	// are.
+	capped := make([]float32, len(boxes)) // 0: not held
+	shareLeft, shareGrow := leftover, growSum
+	for changed := growSum > 0; changed; {
+		changed = false
+		for i := range boxes {
+			b := &boxes[i]
+			if b.grow <= 0 || capped[i] > 0 || shareGrow <= 0 {
+				continue
+			}
+			mx, ok := b.el.(interface{ maxWH() (float32, float32) })
+			if !ok {
+				continue
+			}
+			if m := d.main(mx.maxWH()); m > 0 && shareLeft*b.grow/shareGrow > m {
+				capped[i] = m
+				shareLeft -= m
+				shareGrow -= b.grow
+				changed = true
+			}
+		}
+	}
+
 	// Pass 2: resolve sizes; grow children share leftover, others stretch
 	// the cross axis when they are containers without a fixed cross size.
 	var usedMain, slack float32
 	for i := range boxes {
 		b := &boxes[i]
 		if b.grow > 0 {
-			share := leftover * b.grow / growSum
+			var share float32
+			if capped[i] > 0 {
+				share = capped[i]
+			} else if shareGrow > 0 {
+				share = max(shareLeft, 0) * b.grow / shareGrow
+			}
 			// A child can be capped at what it can usefully use (a nested
 			// layout stops at its own content); what it leaves is shared
 			// out below.

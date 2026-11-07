@@ -14,6 +14,8 @@ Item {
     id: root
     width: 400; height: 300
     property int clicks: 0
+    property int moves: 0
+    property bool wasActive: false
     Rectangle {
         id: card
         x: 20; y: 30; width: 60; height: 40
@@ -23,6 +25,7 @@ Item {
             drag.target: parent
             drag.minimumX: 0; drag.maximumX: 200
             onClicked: root.clicks += 1
+            onPositionChanged: { root.moves += 1; if (drag.active && pressed) root.wasActive = true }
         }
     }
     Rectangle {
@@ -68,12 +71,18 @@ Item {
 	if got := get("ma.drag.active"); got != "true" {
 		t.Errorf("drag.active = %s mid-drag, want true", got)
 	}
+	if got := get("root.wasActive"); got != "true" {
+		t.Errorf("onPositionChanged never saw bare drag.active and pressed during the drag")
+	}
 	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 90, Y: 75}})
 	frame()
 	u.Mouse([]app.MouseEvent{{Kind: app.MouseUp, X: 90, Y: 75, Button: 1}})
 	frame()
 	if got := get("card.x") + "," + get("card.y"); got != "70,55" {
 		t.Errorf("card at %s after the drag, want 70,55", got)
+	}
+	if got := get("root.moves"); got == "0" {
+		t.Errorf("onPositionChanged did not run while the drag carried the area")
 	}
 	// ... and back, through the drag helper.
 	drag(100, 70, [2]float32{50, 45})

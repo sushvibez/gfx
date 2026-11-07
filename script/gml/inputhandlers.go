@@ -34,6 +34,8 @@ type inputHandlerState struct {
 	sceneX, sceneY Ref
 	pressX, pressY float32 // PointHandler: the press, in window pixels
 	pinchInit      bool
+	key            string
+	more           map[string]Ref // further mirrored values, by name (handlerRef)
 }
 
 func (doc *docState) inputHandlerState(key string) *inputHandlerState {
@@ -43,7 +45,7 @@ func (doc *docState) inputHandlerState(key string) *inputHandlerState {
 	st := doc.handlerStates[key]
 	if st == nil {
 		f := func(s string, def float32) Ref { return doc.floatProp(key+"."+s, def) }
-		st = &inputHandlerState{active: doc.boolProp(key+".active", false),
+		st = &inputHandlerState{key: key, active: doc.boolProp(key+".active", false),
 			a: f("a", 0), b: f("b", 1), c: f("c", 0), d: f("d", 0),
 			sceneX: f("sx", 0), sceneY: f("sy", 0)}
 		doc.handlerStates[key] = st
@@ -195,71 +197,159 @@ func (doc *docState) wireWheelHandler(d *ui.DivEl, env *Env, exprs map[string]ex
 	})
 }
 
-// wirePinchHandler: pinching scales the target, within minimumScale …
-// maximumScale (Qt 6's scaleAxis.minimum/maximum too), and reports
-// activeScale (this pinch), persistentScale (all of them),
-// onScaleChanged(delta) and onActiveChanged. Rotation and the centroid's
-// translation are not modelled.
+// pinchAxis is one thing a pinch changes on its target — scale
+// (multiplied), rotation, x or y (added) — with its bounds and the
+// active (this pinch) and persistent (all pinches) totals it reports.
+type pinchAxis struct {
+	ref                Ref // the target's property; nil: report only
+	cur                float64
+	lo, hi             float64
+	hasLo, hasHi       bool
+	mul                bool
+	active, persistent Ref
+}
+
+// apply changes the axis by delta (a factor when mul) within its bounds and
+// returns the change that got through.
+func (a *pinchAxis) apply(delta float64) float64 {
+	if a.ref != nil {
+		next := a.cur + delta
+		if a.mul {
+			next = a.cur * delta
+		}
+		if a.hasHi && next > a.hi {
+			next = a.hi
+		}
+		if a.hasLo && next < a.lo {
+			next = a.lo
+		}
+		if a.mul {
+			delta = next / a.cur
+		} else {
+			delta = next - a.cur
+		}
+		a.cur = next
+		_ = a.ref.set(next)
+	}
+	av, _ := toFloat64(a.active.get())
+	pv, _ := toFloat64(a.persistent.get())
+	if a.mul {
+		_ = a.active.set(av * delta)
+		_ = a.persistent.set(pv * delta)
+	} else {
+		_ = a.active.set(av + delta)
+		_ = a.persistent.set(pv + delta)
+	}
+	return delta
+}
+
+// wirePinchHandler: a pinch scales, turns and moves the target — scale
+// within minimumScale … maximumScale (Qt 6's scaleAxis.*), rotation within
+// minimumRotation … maximumRotation (rotationAxis.*), and x/y by the
+// fingers' centre within xAxis/yAxis.minimum … maximum; each axis can be
+// switched off with <axis>.enabled. It reports activeScale/persistentScale,
+// activeRotation/persistentRotation, activeTranslation/
+// persistentTranslation and centroid.position, and runs onScaleChanged,
+// onRotationChanged (delta) and onTranslationChanged (delta.x/.y), and
+// onActiveChanged. The scale is about the item's own origin, not the
+// fingers' centre.
 func (doc *docState) wirePinchHandler(d *ui.DivEl, env *Env, exprs map[string]expr, stmts map[string][]stmt,
 	st *inputHandlerState, run func([]stmt, string), targetExpr expr, hasTarget bool, setActive func(bool)) {
-	bound := func(names ...string) (float64, bool) {
-		for _, n := range names {
+	axis := func(prop string, mul bool, def float64, active, persistent Ref, enabled string, lo, hi []string) *pinchAxis {
+		if !dragEnabled(exprs[enabled], env) {
+			return nil
+		}
+		a := &pinchAxis{mul: mul, cur: def, active: active, persistent: persistent}
+		for _, n := range lo {
 			if v, ok := dragLimit(exprs[n], env); ok {
-				return float64(v), true
+				a.lo, a.hasLo = float64(v), true
+				break
 			}
 		}
-		return 0, false
-	}
-	lo, hasLo := bound("minimumScale", "scaleAxis.minimum")
-	hi, hasHi := bound("maximumScale", "scaleAxis.maximum")
-	var scaleRef Ref
-	cur := 1.0
-	if hasTarget {
-		if r, err := resolveRef(&memberExpr{base: targetExpr, name: "scale"}, env); err == nil {
-			scaleRef = r
-		}
-		if v, err := (&memberExpr{base: targetExpr, name: "scale"}).eval(env); err == nil {
-			if f, err := toFloat64(v); err == nil && f > 0 {
-				cur = f
+		for _, n := range hi {
+			if v, ok := dragLimit(exprs[n], env); ok {
+				a.hi, a.hasHi = float64(v), true
+				break
 			}
 		}
+		if hasTarget {
+			if r, err := resolveRef(&memberExpr{base: targetExpr, name: prop}, env); err == nil {
+				a.ref = r
+			}
+			if v, err := (&memberExpr{base: targetExpr, name: prop}).eval(env); err == nil {
+				if f, err := toFloat64(v); err == nil && (!mul || f > 0) {
+					a.cur = f
+				}
+			}
+		}
+		return a
 	}
-	onScale := stmts["onScaleChanged"]
-	if !st.pinchInit { // activeScale starts at 1
+	if !st.pinchInit { // the scale totals start at 1
 		st.pinchInit = true
 		_ = st.a.set(1.0)
 	}
-	d.OnPinch(func(f, _, _ float32, phase ui.DragPhase) {
-		switch phase {
+	scale := axis("scale", true, 1, st.a, st.b, "scaleAxis.enabled",
+		[]string{"minimumScale", "scaleAxis.minimum"}, []string{"maximumScale", "scaleAxis.maximum"})
+	rot := axis("rotation", false, 0, doc.handlerRef(st, "rot", 0), doc.handlerRef(st, "prot", 0), "rotationAxis.enabled",
+		[]string{"minimumRotation", "rotationAxis.minimum"}, []string{"maximumRotation", "rotationAxis.maximum"})
+	tx := axis("x", false, 0, doc.handlerRef(st, "tx", 0), doc.handlerRef(st, "ptx", 0), "xAxis.enabled",
+		[]string{"xAxis.minimum"}, []string{"xAxis.maximum"})
+	ty := axis("y", false, 0, doc.handlerRef(st, "ty", 0), doc.handlerRef(st, "pty", 0), "yAxis.enabled",
+		[]string{"yAxis.minimum"}, []string{"yAxis.maximum"})
+	cx, cy := doc.handlerRef(st, "cx", 0), doc.handlerRef(st, "cy", 0)
+	d.OnPinch(func(e ui.PinchEvent) {
+		_ = cx.set(float64(e.CX))
+		_ = cy.set(float64(e.CY))
+		switch e.Phase {
 		case ui.DragStart:
-			_ = st.a.set(1.0)
+			_ = st.a.set(1.0) // this pinch's totals start over
+			for _, a := range []*pinchAxis{rot, tx, ty} {
+				if a != nil {
+					_ = a.active.set(0.0)
+				}
+			}
 			setActive(true)
 			return
 		case ui.DragEnd:
 			setActive(false)
 			return
 		}
-		factor := float64(f)
-		if scaleRef != nil {
-			next := cur * factor
-			if hasHi && next > hi {
-				next = hi
+		if scale != nil && e.Scale != 1 && e.Scale > 0 {
+			f := scale.apply(float64(e.Scale))
+			if body := stmts["onScaleChanged"]; body != nil {
+				runEvent(run, env, body, "onScaleChanged", "delta", f)
 			}
-			if hasLo && next < lo {
-				next = lo
-			}
-			factor = next / cur // the change the bounds let through
-			cur = next
-			_ = scaleRef.set(cur)
 		}
-		as, _ := toFloat64(st.a.get())
-		ps, _ := toFloat64(st.b.get())
-		_ = st.a.set(as * factor)
-		_ = st.b.set(ps * factor)
-		if onScale != nil {
-			runEvent(run, env, onScale, "onScaleChanged", "delta", factor)
+		if rot != nil && e.Rotation != 0 {
+			r := rot.apply(float64(e.Rotation))
+			if body := stmts["onRotationChanged"]; body != nil {
+				runEvent(run, env, body, "onRotationChanged", "delta", r)
+			}
+		}
+		var dx, dy float64
+		if tx != nil && e.DX != 0 {
+			dx = tx.apply(float64(e.DX))
+		}
+		if ty != nil && e.DY != 0 {
+			dy = ty.apply(float64(e.DY))
+		}
+		if body := stmts["onTranslationChanged"]; body != nil && (dx != 0 || dy != 0) {
+			runEvent(run, env, body, "onTranslationChanged", "delta", map[string]any{"x": dx, "y": dy})
 		}
 	})
+}
+
+// handlerRef is one more mirrored value of a handler's state, by name.
+func (doc *docState) handlerRef(st *inputHandlerState, name string, def float32) Ref {
+	if st.more == nil {
+		st.more = map[string]Ref{}
+	}
+	r := st.more[name]
+	if r == nil {
+		r = doc.floatProp(st.key+"."+name, def)
+		st.more[name] = r
+	}
+	return r
 }
 
 // wirePointHandler: a press over the item makes the handler active and
@@ -311,6 +401,15 @@ func (doc *docState) exposeInputHandler(h *node, st *inputHandlerState) {
 		obj.setProp("activeScale", f(st.a))
 		obj.setProp("persistentScale", f(st.b))
 		obj.setProp("scaleAxis", map[string]any{"activeValue": f(st.a), "persistentValue": f(st.b)})
+		m := func(name string) float64 { return f(doc.handlerRef(st, name, 0)) }
+		obj.setProp("activeRotation", m("rot"))
+		obj.setProp("persistentRotation", m("prot"))
+		obj.setProp("rotationAxis", map[string]any{"activeValue": m("rot"), "persistentValue": m("prot")})
+		at := map[string]any{"x": m("tx"), "y": m("ty")}
+		obj.setProp("activeTranslation", at)
+		obj.setProp("translation", at)
+		obj.setProp("persistentTranslation", map[string]any{"x": m("ptx"), "y": m("pty")})
+		obj.setProp("centroid", map[string]any{"position": map[string]any{"x": m("cx"), "y": m("cy")}})
 	case "PointHandler":
 		obj.setProp("point", map[string]any{
 			"position":      map[string]any{"x": f(st.a), "y": f(st.b)},

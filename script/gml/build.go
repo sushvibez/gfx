@@ -860,6 +860,15 @@ func (doc *docState) setAttrOverride(key keyID, name string, v any) {
 		return
 	}
 	m[name] = v
+	switch name {
+	case "x", "y", "width", "height":
+		// Geometry is read from the laid-out tree, which lags this write
+		// by a frame: until then the write reads back as written.
+		if doc.geomWritten == nil {
+			doc.geomWritten = map[geomKey]int{}
+		}
+		doc.geomWritten[geomKey{key, name}] = doc.frameNo
+	}
 	// Every override carries a TRACKING TOKEN: a property whose only job
 	// is to be read while a subtree builds (see attrOverride) and written
 	// here. Without one, nothing in the property system knew about this
@@ -1804,6 +1813,8 @@ type docState struct {
 	animPlayers   map[string]*animPlayer        // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState   // MouseArea drags, by element (dragtarget.go)
 	handlerStates map[string]*inputHandlerState // Wheel/Pinch/PointHandler state (inputhandlers.go)
+	pointerSeen   map[string]*[2]float32        // MouseArea: the pointer's last window position (mousearea.go)
+	geomWritten   map[geomKey]int               // frame an x/y/width/height override was written (setAttrOverride)
 	lastView      time.Time                     // wall clock of the previous frame, for timers
 	lastClock     time.Duration                 // ... and the frame loop's animation clock
 	listSeq       int
@@ -4887,6 +4898,9 @@ func selfGeomScope(n *node, env *Env) *Env {
 // elements onto a Div.
 func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	env = selfGeomScope(n, env)
+	if n.typeName == "MouseArea" {
+		env = doc.mouseAreaScope(n, env)
+	}
 	var borderW float32
 	var borderDashed bool
 	var borderC ui.RGBA
@@ -8828,4 +8842,28 @@ func realValueProp(doc *docState, n *node, ref Ref) (Ref, propRef[float32], stri
 		broke = t.name
 	}
 	return ref, pr, broke, writeBack, ok
+}
+
+// geomKey names one geometry attribute of one element.
+type geomKey struct {
+	key  keyID
+	name string
+}
+
+// pendingGeom is a geometry override written since the tree was last laid
+// out: `item.x = 230` read back before the next frame has placed the item.
+// It is pending through the frame after the write (that frame's build
+// still reads the old layout); from then on the laid-out value is the
+// truth, so anchors and layouts keep the last word.
+func (doc *docState) pendingGeom(key keyID, name string) (float64, bool) {
+	stamp, ok := doc.geomWritten[geomKey{key, name}]
+	if !ok || doc.frameNo > stamp+1 {
+		return 0, false
+	}
+	v, ok := doc.attrOverride(key, name)
+	if !ok {
+		return 0, false
+	}
+	f, err := toFloat64(v)
+	return f, err == nil
 }

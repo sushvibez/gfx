@@ -95,3 +95,23 @@ func TestGesturesCancel(t *testing.T) {
 		t.Fatalf("after cancel: %+v", g)
 	}
 }
+
+// Two fingers turning a quarter turn clockwise: Angle follows, and the pair
+// stays the same however the map orders them.
+func TestGesturesRotation(t *testing.T) {
+	var g Gestures
+	g.Feed([]TouchEvent{{ID: 7, Phase: TouchBegin, X: 100, Y: 100}, {ID: 3, Phase: TouchBegin, X: 200, Y: 100}})
+	for i := 1; i <= 9; i++ { // 10° a step around the centre (150,100)
+		a := float64(i) * 10 * math.Pi / 180
+		g.Feed([]TouchEvent{
+			{ID: 3, Phase: TouchMove, X: 150 + 50*float32(math.Cos(a)), Y: 100 + 50*float32(math.Sin(a))},
+			{ID: 7, Phase: TouchMove, X: 150 - 50*float32(math.Cos(a)), Y: 100 - 50*float32(math.Sin(a))},
+		})
+		if math.Abs(float64(g.AngleD)-10) > 0.01 {
+			t.Fatalf("step %d: AngleD = %v, want 10", i, g.AngleD)
+		}
+	}
+	if math.Abs(float64(g.Angle)-90) > 0.01 || math.Abs(float64(g.Scale)-1) > 1e-4 {
+		t.Errorf("Angle %v Scale %v, want 90, 1", g.Angle, g.Scale)
+	}
+}
