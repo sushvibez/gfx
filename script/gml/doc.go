@@ -140,6 +140,11 @@ var buildTrace = os.Getenv("GFX_BUILD_TRACE") != ""
 
 func (d *Document) View() func() ui.Element {
 	return func() ui.Element {
+		// Settings properties bind (load their saved values) on the first
+		// frame, so a host's SetSettingsStore after loading still counts;
+		// values changed last frame are written now, once per frame.
+		d.doc.bindPendingSettings(false)
+		d.doc.flushSettings()
 		// Advance Timers by the wall-clock delta first, so any triggered
 		// handlers' property changes (which bump the revision) are seen below.
 		d.doc.tickTimers(time.Now())
@@ -267,6 +272,7 @@ func (d *Document) View() func() ui.Element {
 		if len(d.doc.pendingProps) > 0 {
 			d.doc.retryPendingProps()
 		}
+		d.doc.bindPendingSettings(true) // aliases whose target needed the first build
 		// Snapshot the signatures this tree was built against. obs is re-read
 		// (the build — and onCompleted — can change properties); geoSig keeps the
 		// pre-build geometry so the first frame after a change rebuilds once more

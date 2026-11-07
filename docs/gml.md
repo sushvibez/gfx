@@ -514,7 +514,7 @@ on Button, `Spacer { }`.
 | `TableView`, `TableModel`, `TableModelColumn`, `HorizontalHeaderView`, `ItemSelectionModel`, `DelegateChooser`, `DelegateChoice` | one delegate per cell with `row`, `column`, `display`, `selected`, `current`; `editDelegate` commits into a TableModel; `selectionModel` enables tap-to-select a row; `syncView` headers. Column widths come from the delegate; `columnWidthProvider` and `TableView.*` attached editing flags are accepted |
 | `TreeView` | nested `{roles, children: [...]}` array (or an object exposing it as `tree`); delegates get `treeView`, `isTreeNode`, `expanded`, `hasChildren`, `depth`, `row`; `toggleExpanded/expand/collapse`, `currentRow` |
 | `Timer` | see below |
-| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `Settings` does not persist, `SystemPalette` has no colours; `Shortcut` fires (see Keys) |
+| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `SystemPalette` has no colours; `Shortcut` fires (see Keys); `Settings` persists (below) |
 
 A delegate sees `index`, `model` (the row object), `modelData` (for plain
 arrays and numbers) and every role of the row by bare name; `required
@@ -563,6 +563,24 @@ modifier bits (`Qt.CTRL | Qt.Key_S`); `Connections { onActivated }` on its
 id fires too. A focused text field keeps the plain keys it types. Not
 modelled: multi-chord sequences (`"Ctrl+K, Ctrl+C"`), `Meta`, `context`,
 `autoRepeat`, `onActivatedAmbiguously`, `nativeText`/`portableText`.
+
+### Settings
+`Settings { category; location; property … }` (QtCore, or
+Qt.labs.settings' `fileName`) keeps its declared properties across runs:
+on the first frame a saved value replaces the default (breaking its
+binding, as an assignment would), and a changed value is written at the
+start of the next frame. Keys are `category/name`. `property alias winW:
+window.width` works; the alias binds after the first build, so the saved
+value shows from the second frame. `value(key, default)`,
+`setValue(key, value)` and `sync()` are its methods. Values are kept as
+JSON: natively one file per settings file in `<user config dir>/gfx/`
+(`<program name>.json` by default; an absolute `location` is used as
+given), on the web in `localStorage` under `gfx.settings:<file>`. A host
+picks another place with `Document.SetSettingsStore` (before the first
+frame) or `gml.SetDefaultSettingsStore`; `MemorySettingsStore` forgets
+everything at exit, and `Document.SaveSettings` writes pending changes at
+once. Declared properties share one document-wide name space, so a
+Settings property should not reuse a name another element declares.
 
 ### Canvas 2D context
 

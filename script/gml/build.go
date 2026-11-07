@@ -1794,13 +1794,15 @@ type docState struct {
 	// under. A component file's ids are declared once, document-wide, while
 	// its elements are registered per instantiation (prefixed), so this is
 	// how an id'd view finds the element it actually belongs to.
-	idKeys     ccol[keyID]
-	timers     map[string]*gmlTimer
-	frameAnims map[string]*frameAnim
-	baseDir    string        // directory of the source .gml, for resolving Image sources
-	lastView   time.Time     // wall clock of the previous frame, for timers
-	lastClock  time.Duration // ... and the frame loop's animation clock
-	listSeq    int
+	idKeys        ccol[keyID]
+	timers        map[string]*gmlTimer
+	frameAnims    map[string]*frameAnim
+	baseDir       string         // directory of the source .gml, for resolving Image sources
+	settings      *settingsState // Settings files loaded, changed (settings.go)
+	settingsStore SettingsStore  // where Settings values persist; nil = defaultSettingsStore
+	lastView      time.Time      // wall clock of the previous frame, for timers
+	lastClock     time.Duration  // ... and the frame loop's animation clock
+	listSeq       int
 
 	// Element geometry for parent/id.width refs. elems collects this frame's
 	// elements by key; prevElems is last frame's (already laid out, so its
@@ -3450,6 +3452,7 @@ func declareProps(n *node, env *Env, doc *docState) error {
 			idObj.scroll = doc.scrollFor(doc.idKey(id))
 		}
 		seedCanvasMethods(n, env, idObj)
+		doc.seedSettingsMethods(n, env, idObj)
 	}
 	if len(n.props) > 0 {
 		// Defaults see this item's own width/height (QML self-geometry).
@@ -3484,6 +3487,9 @@ func declareProps(n *node, env *Env, doc *docState) error {
 				ref = trackedRef{Ref: raw, doc: doc, name: key}
 			}
 			doc.props[key] = ref
+			if n.typeName == "Settings" {
+				doc.bindSetting(n, d.name, ref, env)
+			}
 			// Wire an on<Prop>Changed handler once, when the property is first
 			// created (refs persist across hot reloads).
 			if h := handlerFor(n, "on"+title(d.name)+"Changed"); h != nil {

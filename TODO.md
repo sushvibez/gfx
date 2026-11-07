@@ -205,7 +205,7 @@ lines of work; fix them as they are touched.
   Git Bash lacks. `devcheck` keeps `-frames` only: it is the on-device
   check, and its pictures are the device's.
 - **`script/gml`** (found while verifying `docs/gml.md`): silent no-ops:
-  `Settings`, `SystemPalette`, `AnimatedImage` (frame 1),
+  `SystemPalette`, `AnimatedImage` (frame 1),
   `BorderImage` (not 9-patch), tiling fill modes, `MouseArea`
   `drag.target`, pointer handlers beyond
   tap/hover, `Dial` drag, `SplitHandle.pressed/hovered`. A horizontal
