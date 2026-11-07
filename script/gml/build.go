@@ -5216,6 +5216,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	if kh := keyHandlerWith(keysSpecific, keysPressed, keysReleased, env); kh != nil {
 		d.OnKeyAccept(kh)
 	}
+	doc.wireShortcuts(n, d, env)
 	doc.wireHoverPress(n, d, env, onEntered, onExited, onPressed, onReleased)
 	if gestures.any() || n.typeName == "MouseArea" {
 		gestures.hoverEnabled = attrIsTrue(n, "hoverEnabled", env)

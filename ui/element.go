@@ -3,6 +3,7 @@ package ui
 import (
 	"time"
 
+	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/render"
 )
 
@@ -100,6 +101,11 @@ type Context struct {
 	// focusables collects keyboard-focusable elements in layout (tab)
 	// order; the UI tracks which one holds focus by index.
 	focusables []Element
+
+	// shortcuts collects the frame's window-wide key shortcuts (OnShortcut)
+	// in layout order; UI.Key offers a key press to them before the
+	// focused element.
+	shortcuts []func(app.KeyEvent) bool
 
 	// dropZones collects drag-and-drop targets registered this frame.
 	dropZones []*DropZoneEl

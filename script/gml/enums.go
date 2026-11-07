@@ -175,6 +175,10 @@ func registerEnums(vars map[string]any) {
 			qtNS[k] = bit
 		}
 	}
+	// Qt.CTRL | Qt.Key_S: the modifier aliases a Shortcut sequence is
+	// written with.
+	qtNS["CTRL"], qtNS["SHIFT"], qtNS["ALT"] = qtModifiers["ControlModifier"], qtModifiers["ShiftModifier"], qtModifiers["AltModifier"]
+	qtNS["META"] = qtModifiers["MetaModifier"]
 
 	// Animation.Infinite for loops; Easing.* names (string-valued so
 	// easingByName resolves them) for easing.type.
@@ -296,6 +300,11 @@ func registerEnums(vars map[string]any) {
 	vars["Flickable"] = flickableNS
 	vars["ItemSelectionModel"] = itemSelectionNS
 	vars["Qt"] = qtNS
+	standardKeyNS := map[string]any{}
+	for k, v := range qtStandardKeys {
+		standardKeyNS[k] = v
+	}
+	vars["StandardKey"] = standardKeyNS
 	vars["Animation"] = animationNS
 	// TextInput/TextEdit: the echo modes a password field states, plus the
 	// Text alignment/wrap members these items share.

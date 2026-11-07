@@ -169,6 +169,7 @@ func (u *UI) build(width, height float32) {
 	u.ctx.scrolls = u.ctx.scrolls[:0]
 	u.ctx.overlays = u.ctx.overlays[:0]
 	u.ctx.focusables = u.ctx.focusables[:0]
+	u.ctx.shortcuts = u.ctx.shortcuts[:0]
 	u.ctx.dropZones = u.ctx.dropZones[:0]
 	u.ctx.layers = u.ctx.layers[:0]
 	u.ctx.swipes = u.ctx.swipes[:0]
@@ -730,6 +731,16 @@ func (u *UI) Key(ev app.KeyEvent) bool {
 			if s, ok := u.ctx.overlays[i].(*scrimEl); ok && s.dismiss != nil {
 				s.dismiss()
 				return true
+			}
+		}
+	}
+	if ev.Down && len(u.ctx.shortcuts) > 0 {
+		_, typing := u.focusedEl().(*InputEl)
+		if !typing || ev.Ctrl || ev.Alt || ev.Rune == 0 && ev.Key >= app.KeyF1 && ev.Key <= app.KeyF12 {
+			for _, fn := range u.ctx.shortcuts {
+				if fn(ev) {
+					return true
+				}
 			}
 		}
 	}

@@ -80,6 +80,7 @@ type DivEl struct {
 	wantFocus              bool                    // requests initial keyboard focus (QML focus: true)
 	keyFn                  func(app.KeyEvent)      // raw key handler (QML Keys.onPressed/onReleased)
 	keyAccept              func(app.KeyEvent) bool // OnKeyAccept: the handler says whether it took the key
+	shortcutFn             func(app.KeyEvent) bool // OnShortcut: a window-wide key shortcut handler
 	cursor                 app.Cursor
 	justify                Align   // main axis
 	items                  Align   // cross axis
@@ -604,6 +605,17 @@ func (d *DivEl) OnKeyAccept(fn func(app.KeyEvent) bool) *DivEl {
 	return d
 }
 
+// OnShortcut installs a window-wide shortcut handler (QML Shortcut): UI.Key
+// offers it every key press, wherever focus is, before the focused
+// element, and the handler reports whether it took the key. A focused
+// text field keeps the plain keys it types (no Ctrl or Alt) for itself,
+// as Qt's text inputs override shortcuts for those. Unlike OnKey it
+// does not make the element focusable.
+func (d *DivEl) OnShortcut(fn func(app.KeyEvent) bool) *DivEl {
+	d.shortcutFn = fn
+	return d
+}
+
 // handleKey delivers a key event to this element's handler, reporting whether
 // it consumed the event (false when there's no key handler, so the UI can fall
 // through to default Enter/Space activation).
@@ -1120,6 +1132,9 @@ func (d *DivEl) layout(ctx *Context, r Rect) {
 		if d.pressFn != nil {
 			d.pressFn(hovered && ctx.MousePressed && r.contains(ctx.pressX, ctx.pressY))
 		}
+	}
+	if d.shortcutFn != nil {
+		ctx.shortcuts = append(ctx.shortcuts, d.shortcutFn)
 	}
 	if d.focusable {
 		d.focusSlot = len(ctx.focusables) + 1

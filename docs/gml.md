@@ -492,7 +492,7 @@ on Button, `Spacer { }`.
 | `ProgressBar`, `BusyIndicator` | `value`, `from`, `to`, `indeterminate`, `running` | |
 | `TextField`, `TextInput`, `TextArea`, `TextEdit` | `text`, `placeholderText`, `color`, `font`, `echoMode`, `maximumLength`, `validator` (`IntValidator`, `DoubleValidator`, `RegularExpressionValidator` — `acceptableInput` reflects it), `readOnly`, `onAccepted`, `onTextChanged`, `onEditingFinished`, `Keys.onReturnPressed`, `focus`, `activeFocus`, `background`, `borderColor`/`textColor`/`radius` (extensions), `selectByMouse`, `wrapMode` | `inputMask`, `cursorPosition`, `selectionStart/End`, selection APIs, `selectAll()`, `TextArea` rich text |
 | `Pane`, `Frame`, `GroupBox`, `Page`, `Control`, `Container`, `ToolBar`, `ApplicationWindow`, `Window` | plain boxes that lay out their children; `padding`, `spacing`, `background` | `title`, `header`/`footer` on Page and ApplicationWindow, `menuBar`, window `flags`/`visibility`, `GroupBox.title` |
-| `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator`, `Action` | menu titles, open-on-click, `popup()`/`open()`/`close()`, `Action { text; checkable; checked; onTriggered }`, checkable items | submenus, shortcuts (`Shortcut` is a non-visual no-op), `ActionGroup` |
+| `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator`, `Action` | menu titles, open-on-click, `popup()`/`open()`/`close()`, `Action { text; checkable; checked; onTriggered }`, checkable items | submenus, `Action.shortcut` (a separate `Shortcut` works), `ActionGroup` |
 | `TabBar`, `TabButton` | `currentIndex` driven by its buttons | `position`, `contentWidth` |
 | `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag | `SplitHandle.pressed/hovered` read false |
 | `SwipeView`, `StackView`, `StackLayout` | `currentIndex` (SwipeView slides), `push/pop/replace/clear`, `depth`, `initialItem` | `StackView` transitions, `SwipeView` drag paging |
@@ -514,7 +514,7 @@ on Button, `Spacer { }`.
 | `TableView`, `TableModel`, `TableModelColumn`, `HorizontalHeaderView`, `ItemSelectionModel`, `DelegateChooser`, `DelegateChoice` | one delegate per cell with `row`, `column`, `display`, `selected`, `current`; `editDelegate` commits into a TableModel; `selectionModel` enables tap-to-select a row; `syncView` headers. Column widths come from the delegate; `columnWidthProvider` and `TableView.*` attached editing flags are accepted |
 | `TreeView` | nested `{roles, children: [...]}` array (or an object exposing it as `tree`); delegates get `treeView`, `isTreeNode`, `expanded`, `hasChildren`, `depth`, `row`; `toggleExpanded/expand/collapse`, `currentRow` |
 | `Timer` | see below |
-| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `Settings` does not persist, `SystemPalette` has no colours, `Shortcut` never fires |
+| `ButtonGroup`, `ActionGroup`, `Settings`, `SystemPalette`, `Shortcut`, `Connections`, `Component`, `FontLoader`, `Binding`, `FrameAnimation` | non-visual declarations; `Settings` does not persist, `SystemPalette` has no colours; `Shortcut` fires (see Keys) |
 
 A delegate sees `index`, `model` (the row object), `modelData` (for plain
 arrays and numbers) and every role of the row by bare name; `required
@@ -552,8 +552,17 @@ The key-specific handlers (`Keys.onLeftPressed`, `onRightPressed`,
 `onUpPressed`, `onDownPressed`, `onEscapePressed`, `onSpacePressed`,
 `onTabPressed`, `onBacktabPressed`, `onDeletePressed`, `onReturnPressed`,
 `onEnterPressed`, `onDigit0Pressed`…`onDigit9Pressed`) start accepted, and
-`onPressed` runs after one only if it un-accepts the event. `KeyNavigation.*` and `Shortcut` are not
+`onPressed` runs after one only if it un-accepts the event. `KeyNavigation.*` is not
 modelled.
+
+`Shortcut { sequence; sequences; enabled; onActivated }` fires wherever
+focus is, before the focused item's `Keys` handlers. A sequence is a string
+(`"Ctrl+Shift+S"`, `"F5"`, `"Esc"`, `"Ctrl++"`), a `StandardKey`
+(`StandardKey.Save`, with the Windows/Linux bindings) or a key code with
+modifier bits (`Qt.CTRL | Qt.Key_S`); `Connections { onActivated }` on its
+id fires too. A focused text field keeps the plain keys it types. Not
+modelled: multi-chord sequences (`"Ctrl+K, Ctrl+C"`), `Meta`, `context`,
+`autoRepeat`, `onActivatedAmbiguously`, `nativeText`/`portableText`.
 
 ### Canvas 2D context
 
@@ -801,7 +810,7 @@ Not implemented (summarised from `script/TODO.md` and the findings log):
 
 - Interaction: MouseArea drag, wheel, double-click, long-press,
   `mouseX/Y`; pointer-handler gestures (drag, pinch, wheel); keyboard
-  navigation (`KeyNavigation`, `Shortcut`, tab focus order), `event.modifiers`.
+  navigation (`KeyNavigation`, tab focus order), `event.modifiers`.
 - Views: horizontal ListView, `header`/`footer`, view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,
   `ObjectModel`, `Instantiator`, `XmlListModel`, `WorkerScript`.
