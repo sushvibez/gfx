@@ -125,6 +125,10 @@ func (w *Window) Poll() bool {
 	var ev C.gfx_event
 	for {
 		C.gfx_poll_event(&ev)
+		// The pointer in LOGICAL pixels (physical / Scale), as every other
+		// backend delivers it: the native events are physical.
+		inv := 1 / w.Scale()
+		ex, ey := float32(ev.x)*inv, float32(ev.y)*inv
 		switch ev.kind {
 		case C.GFX_EV_NONE:
 			return !w.closed
@@ -142,34 +146,34 @@ func (w *Window) Poll() bool {
 		case C.GFX_EV_DESTROY:
 			w.closed = true
 		case C.GFX_EV_TOUCH_DOWN:
-			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchBegin, X: float32(ev.x), Y: float32(ev.y)})
+			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchBegin, X: ex, Y: ey})
 			// The first finger down is the primary: it alone drives the
 			// synthesized mouse stream so plain UIs keep working.
 			if w.touchDown == 0 {
 				w.primaryID = int(ev.id)
-				w.mouse = append(w.mouse, MouseEvent{Kind: MouseDown, X: float32(ev.x), Y: float32(ev.y), Button: 1})
+				w.mouse = append(w.mouse, MouseEvent{Kind: MouseDown, X: ex, Y: ey, Button: 1})
 			}
 			w.touchDown++
 		case C.GFX_EV_TOUCH_MOVE:
-			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchMove, X: float32(ev.x), Y: float32(ev.y)})
+			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchMove, X: ex, Y: ey})
 			if w.touchDown > 0 && int(ev.id) == w.primaryID {
-				w.mouse = append(w.mouse, MouseEvent{Kind: MouseMove, X: float32(ev.x), Y: float32(ev.y), Button: 1})
+				w.mouse = append(w.mouse, MouseEvent{Kind: MouseMove, X: ex, Y: ey, Button: 1})
 			}
 		case C.GFX_EV_TOUCH_UP:
-			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchEnd, X: float32(ev.x), Y: float32(ev.y)})
+			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchEnd, X: ex, Y: ey})
 			if w.touchDown > 0 {
 				w.touchDown--
 			}
 			if int(ev.id) == w.primaryID {
-				w.mouse = append(w.mouse, MouseEvent{Kind: MouseUp, X: float32(ev.x), Y: float32(ev.y), Button: 1})
+				w.mouse = append(w.mouse, MouseEvent{Kind: MouseUp, X: ex, Y: ey, Button: 1})
 			}
 		case C.GFX_EV_TOUCH_CANCEL:
-			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchCancel, X: float32(ev.x), Y: float32(ev.y)})
+			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchCancel, X: ex, Y: ey})
 			if w.touchDown > 0 {
 				w.touchDown--
 			}
 			if int(ev.id) == w.primaryID {
-				w.mouse = append(w.mouse, MouseEvent{Kind: MouseUp, X: float32(ev.x), Y: float32(ev.y), Button: 1})
+				w.mouse = append(w.mouse, MouseEvent{Kind: MouseUp, X: ex, Y: ey, Button: 1})
 			}
 		}
 	}
