@@ -6100,6 +6100,12 @@ func buildTextItem(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 		}
 	}
+	// A plain Text with no size anywhere is Qt's application font, 13 px
+	// in the corpus' reference, not the host's larger UI default (the
+	// drawers buttons' `contentItem: Text { font.bold: true }`).
+	if sizePx == 0 && n.typeName == "Text" {
+		sizePx = qtAppFontPx
+	}
 	// RichText renders as styled spans. AutoText — which is QML's DEFAULT,
 	// so an unset textFormat means it — sniffs the string for markup the
 	// way Qt::mightBeRichText does, rather than treating every "<" as a tag.
@@ -9037,3 +9043,7 @@ func enabledAttr(n *node, env *Env) bool {
 	}
 	return true
 }
+
+// qtAppFontPx is the size of Qt's default application font in the corpus'
+// reference renders: what a Text with no font size of its own draws at.
+const qtAppFontPx = 13

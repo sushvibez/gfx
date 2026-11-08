@@ -65,9 +65,11 @@ types, or needing a GPU display) cannot be scored.
 Found and fixed by it: tabbar and menubar had scored 10.5 and 9.6 — a dark
 page's theme had darkened Qt's light Basic bands — now 1.0 and 0.9; date's
 MonthGrid started on the 1st when the month began on a Sunday, where Qt
-always shows some of the previous month. Open: on drawers, a button whose
-`contentItem: Text` sets no size renders its label larger and bolder than
-Qt's default font (Qt does not pass a control's font to a plain Text).
+always shows some of the previous month. On drawers, a button whose
+`contentItem: Text` sets no size drew its label at the host's UI size;
+a plain Text with no size anywhere is now Qt's 13 px application font
+(`qtAppFontPx`; drawers 1.5 → 1.4). Still different there: the family
+(Qt's default face, not the page's).
 
 ## Status (2026-07)
 
