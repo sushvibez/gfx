@@ -167,3 +167,22 @@ func parseAttrExpr(t *testing.T, src, name string) attr {
 	t.Fatalf("no %q attribute parsed", name)
 	return attr{}
 }
+
+// TestMonthCellsLead: the grid starts on the Sunday before the 1st — a week
+// before it when the 1st is itself a Sunday, as Qt's MonthGrid does — so
+// some of the previous month always shows.
+func TestMonthCellsLead(t *testing.T) {
+	today := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
+	// November 2026 starts on a Sunday: the grid opens on 25 October.
+	cells := monthCells(10, 2026, today) // month is 0-based, as in QML
+	if d, m := cells[0]["day"], cells[0]["month"]; d != float64(25) || m != float64(9) {
+		t.Errorf("November 2026 opens on day %v of month %v, want 25 October (9)", d, m)
+	}
+	if d := cells[7]["day"]; d != float64(1) {
+		t.Errorf("the 1st is at cell %v, want cell 7", d)
+	}
+	// October 2026 starts on a Thursday: four days of September first.
+	if d := monthCells(9, 2026, today)[0]["day"]; d != float64(27) {
+		t.Errorf("October 2026 opens on %v, want 27 September", d)
+	}
+}

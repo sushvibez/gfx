@@ -170,12 +170,19 @@ func buildDayOfWeekRow(n *node, env *Env, doc *docState) (ui.Element, error) {
 }
 
 // monthCells is MonthGrid's model: 42 day cells starting on the Sunday of
-// the week containing the 1st, so the calendar keeps one height all year.
+// the week containing the 1st, so the calendar keeps one height all year —
+// but never ON the 1st: as in Qt's QQuickMonthModel, a month that starts
+// on a Sunday shows the week before it, so some of the previous month is
+// always in view.
 // Days from the adjacent months carry their own month, which is how a
 // delegate greys them out.
 func monthCells(month, year int, today time.Time) []map[string]any {
 	first := time.Date(year, time.Month(month+1), 1, 0, 0, 0, 0, time.UTC)
-	start := first.AddDate(0, 0, -int(first.Weekday()))
+	lead := int(first.Weekday())
+	if lead == 0 {
+		lead = 7
+	}
+	start := first.AddDate(0, 0, -lead)
 	cells := make([]map[string]any, 42)
 	for i := range cells {
 		d := start.AddDate(0, 0, i)
