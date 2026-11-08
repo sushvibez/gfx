@@ -1,37 +1,20 @@
 package gml
 
 import (
+	"strings"
 	"time"
 
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/ui"
 )
 
-// A Popup's `enter` and `exit` transitions: on opening, the enter
-// transition's animations of opacity and scale run (from their `from`, to
-// their `to`); on closing with an exit transition the popup stays drawn
-// until its animations are done. Other properties are not animated.
-
-// popupAnim is one animated property of an enter/exit transition.
-type popupAnim struct {
-	prop     string
-	from, to float32
-	hasFrom  bool
-	dur      time.Duration
-	easing   core.Easing
-}
-
-// popupPhase is a popup's open/closing state across builds, and its
-// animated values.
-type popupPhase struct {
-	shown   bool
-	closing []popupAnim // the exit animations still running
-	vals    map[string]*core.Property[float32]
-}
+// A Popup's `enter` and `exit` transitions, over ui.PopupState (the Go API
+// for the same): their opacity and scale animations run as the popup opens
+// and closes, and a closing popup stays drawn until its exit is done.
 
 // readPopupTransition reads an enter/exit Transition's opacity and scale
 // animations, through Parallel/Sequential groups.
-func readPopupTransition(n *node, name string, env *Env) []popupAnim {
+func readPopupTransition(n *node, name string, env *Env) []ui.PopupAnim {
 	var tr *node
 	for _, a := range n.attrs {
 		if a.name == name && a.elem != nil {
@@ -41,7 +24,7 @@ func readPopupTransition(n *node, name string, env *Env) []popupAnim {
 	if tr == nil {
 		return nil
 	}
-	var out []popupAnim
+	var out []ui.PopupAnim
 	var walk func(ns []*node)
 	walk = func(ns []*node) {
 		for _, c := range ns {
@@ -53,7 +36,7 @@ func readPopupTransition(n *node, name string, env *Env) []popupAnim {
 			default:
 				continue
 			}
-			base := popupAnim{dur: 250 * time.Millisecond, easing: core.EaseLinear}
+			base := ui.PopupAnim{Dur: 250 * time.Millisecond, Easing: core.EaseLinear}
 			var props []string
 			switch c.typeName {
 			case "OpacityAnimator":
@@ -65,34 +48,37 @@ func readPopupTransition(n *node, name string, env *Env) []popupAnim {
 				switch a.name {
 				case "property", "properties":
 					if v, err := a.expr.eval(env); err == nil {
-						for _, p := range splitProps(str(v)) {
-							props = append(props, p)
-						}
+						props = append(props, splitProps(str(v))...)
 					}
 				case "from", "to":
 					if f, err := attrFloat(a, env); err == nil {
 						if a.name == "from" {
-							base.from, base.hasFrom = f, true
+							base.From, base.FromSet = f, true
 						} else {
-							base.to = f
+							base.To = f
 						}
 					}
 				case "duration":
 					if f, err := attrFloat(a, env); err == nil {
-						base.dur = time.Duration(f) * time.Millisecond
+						base.Dur = time.Duration(f) * time.Millisecond
 					}
 				case "easing.type":
 					if v, err := a.expr.eval(env); err == nil {
-						base.easing = easingByName(str(v))
+						base.Easing = easingByName(str(v))
 					}
 				}
 			}
 			for _, p := range props {
-				if p == "opacity" || p == "scale" {
-					a := base
-					a.prop = p
-					out = append(out, a)
+				a := base
+				switch p {
+				case "opacity":
+					a.Prop = ui.PopupOpacity
+				case "scale":
+					a.Prop = ui.PopupScale
+				default:
+					continue
 				}
+				out = append(out, a)
 			}
 		}
 	}
@@ -102,96 +88,31 @@ func readPopupTransition(n *node, name string, env *Env) []popupAnim {
 
 func splitProps(s string) []string {
 	var out []string
-	start := 0
-	for i := 0; i <= len(s); i++ {
-		if i == len(s) || s[i] == ',' {
-			p := s[start:i]
-			for len(p) > 0 && p[0] == ' ' {
-				p = p[1:]
-			}
-			for len(p) > 0 && p[len(p)-1] == ' ' {
-				p = p[:len(p)-1]
-			}
-			if p != "" {
-				out = append(out, p)
-			}
-			start = i + 1
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
 		}
 	}
 	return out
 }
 
-func (ph *popupPhase) val(prop string) *core.Property[float32] {
-	if ph.vals == nil {
-		ph.vals = map[string]*core.Property[float32]{}
-	}
-	p := ph.vals[prop]
-	if p == nil {
-		p = &core.Property[float32]{}
-		p.Set(1)
-		ph.vals[prop] = p
-	}
-	return p
-}
-
-// popupTransition runs the enter or exit animations on an open edge, and
-// reports whether the popup is to be drawn this build (open, or closing).
-func (doc *docState) popupTransition(n *node, env *Env, shown bool) (*popupPhase, bool) {
-	if doc.popupPhases == nil {
-		doc.popupPhases = map[string]*popupPhase{}
+// popupTransition keeps the popup's ui.PopupState in step with its open
+// state, and reports whether it is to be drawn (open, or closing).
+func (doc *docState) popupTransition(n *node, env *Env, shown bool) (*ui.PopupState, bool) {
+	if doc.popupStates == nil {
+		doc.popupStates = map[string]*ui.PopupState{}
 	}
 	key := doc.key(n)
-	ph := doc.popupPhases[key]
-	if ph == nil {
-		ph = &popupPhase{shown: shown}
-		doc.popupPhases[key] = ph
-		if shown {
-			return ph, true // open from the start: no enter animation
-		}
+	st := doc.popupStates[key]
+	if st == nil {
+		st = &ui.PopupState{}
+		st.Snap(shown) // open from the start: no enter animation
+		doc.popupStates[key] = st
 	}
-	start := func(anims []popupAnim) {
-		for _, a := range anims {
-			p := ph.val(a.prop)
-			if a.hasFrom {
-				p.Set(a.from)
-			}
-			core.Tween(p, a.to, a.dur, a.easing)
-		}
+	st.Enter = readPopupTransition(n, "enter", env)
+	st.Exit = readPopupTransition(n, "exit", env)
+	if shown != st.IsOpen() {
+		st.SetOpen(shown)
 	}
-	switch {
-	case shown && !ph.shown: // opening
-		ph.closing = nil
-		start(readPopupTransition(n, "enter", env))
-	case !shown && ph.shown: // closing
-		ph.closing = readPopupTransition(n, "exit", env)
-		start(ph.closing)
-	}
-	ph.shown = shown
-	if shown {
-		return ph, true
-	}
-	// Closing: drawn until every exit animation has reached its end.
-	for _, a := range ph.closing {
-		if ph.val(a.prop).Get() != a.to {
-			return ph, true
-		}
-	}
-	ph.closing = nil
-	return ph, false
-}
-
-// applyPopupAnims puts the animated opacity and scale on the panel.
-func (ph *popupPhase) apply(panel ui.Element) {
-	d, ok := panel.(*ui.DivEl)
-	if !ok || ph == nil {
-		return
-	}
-	if p := ph.vals["opacity"]; p != nil {
-		d.Opacity(p.Get())
-	}
-	if p := ph.vals["scale"]; p != nil {
-		if s := p.Get(); s != 1 {
-			d.Transform(ui.Transform{Kind: ui.XformScale, SX: s, SY: s, Rel: true, OriginFracX: 0.5, OriginFracY: 0.5})
-		}
-	}
+	return st, st.Visible()
 }

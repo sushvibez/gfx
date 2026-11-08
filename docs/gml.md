@@ -501,7 +501,7 @@ on Button, `Spacer { }`.
 | `Tumbler` | `model`, `currentIndex`, `visibleItemCount`, `delegate` with `Tumbler.displacement`; click, keys, drag, flick | `wrap` |
 | `MonthGrid`, `DayOfWeekRow` | `month`, `year`, `delegate`; weeks start Sunday, English names | `locale` |
 | `FileDialog`, `FolderDialog` | an in-app browser panel: `open()`/`close()`, `selectedFile(s)`, `currentFolder`, `fileMode`, `nameFilters`, `onAccepted`/`onRejected` | the desktop's native dialog; `MessageDialog`, `ColorDialog`, `FontDialog` are not elements |
-| `Popup`, `Dialog`, `Drawer`, `ToolTip` | floated above the page when `visible`/`opened`; `open()`/`close()`, `modal`, `dim`, `x`, `y`, `width`, `height`, `title`, `standardButtons`, `onAccepted`/`onRejected`/`onOpened`/`onClosed`, `closePolicy`, Drawer `edge`/`position`, styled through a module; `enter`/`exit` transitions animate `opacity` and `scale` (an exit keeps the popup drawn until it is done) | other properties in `enter`/`exit`, `Overlay` attached beyond `Overlay.modal` in styles |
+| `Popup`, `Dialog`, `Drawer`, `ToolTip` | floated above the page when `visible`/`opened`; `open()`/`close()`, `modal`, `dim`, `x`, `y`, `width`, `height`, `title`, `standardButtons`, `onAccepted`/`onRejected`/`onOpened`/`onClosed`, `closePolicy`, Drawer `edge`/`position`, styled through a module; `enter`/`exit` transitions animate `opacity` and `scale` (an exit keeps the popup drawn until it is done; `ui.PopupState` is the Go API) | other properties in `enter`/`exit`, `Overlay` attached beyond `Overlay.modal` in styles |
 
 ### Models and views
 

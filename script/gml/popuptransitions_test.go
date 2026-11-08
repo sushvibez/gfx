@@ -28,10 +28,8 @@ Item {
 	h := newStates(t, src)
 	drawn := func() bool { return h.rect(0xff00ff).W > 0 }
 	opacity := func() float64 {
-		for _, ph := range h.doc.popupPhases {
-			if p := ph.vals["opacity"]; p != nil {
-				return float64(p.Get())
-			}
+		for _, st := range h.doc.popupStates {
+			return float64(st.Opacity())
 		}
 		return -1
 	}

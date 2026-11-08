@@ -1830,7 +1830,7 @@ type docState struct {
 	animPlayers   map[string]*animPlayer            // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState       // MouseArea drags, by element (dragtarget.go)
 	buttonGroups  map[string]*buttonGroup           // exclusive button groups, named or automatic (buttongroup.go)
-	popupPhases   map[string]*popupPhase            // popup open/closing state and enter/exit values (popuptransitions.go)
+	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
 	groupOfButton map[string]string                 // button id -> the ButtonGroup that lists it
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
 	stateAnims    map[string][]animSpec             // the transition running since that change
@@ -4588,7 +4588,7 @@ func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 	st := popupStateOf(n, env, doc)
 	// enter/exit transitions (popuptransitions.go): a closing popup with an
 	// exit transition stays drawn until it is done.
-	ph, draw := doc.popupTransition(n, env, st.shown)
+	pst, draw := doc.popupTransition(n, env, st.shown)
 	if !draw {
 		return ui.Div(), nil // closed → no flow space, nothing floating
 	}
@@ -4614,7 +4614,9 @@ func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 			pd.PopupSkin()
 		}
 	}
-	ph.apply(panel)
+	if pd, ok := panel.(*ui.DivEl); ok {
+		pst.Apply(pd)
+	}
 	// A Dialog is a titled panel with a button box under it, and those
 	// buttons are the only way its accepted()/rejected() ever fire.
 	if n.typeName == "Dialog" && (st.title != "" || st.buttons != 0) {
