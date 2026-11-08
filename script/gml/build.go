@@ -1843,6 +1843,8 @@ type docState struct {
 	tumblers      map[string]*ui.TumblerState       // each Tumbler's wheel position (tumbler.go)
 	delays        map[string]*ui.DelayState         // each DelayButton's hold progress
 	splits        map[string]*ui.SplitState         // each SplitView's dragged handles
+	tables        map[string]*ui.TableState         // each TableView's selection and edited cell
+	trees         map[string]*ui.TreeState          // each TreeView's expanded nodes and current row
 	themeScopes   map[string]*ui.ThemeScope         // each item's own controls theme (theme.go)
 	pageTheme     ui.ThemeScope                     // the page's base theme, from its ground (theme.go)
 	activities    map[string]*ui.Activity           // each indeterminate ProgressBar's / BusyIndicator's loop
@@ -8339,7 +8341,28 @@ func buildGridView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	gridCurRef := doc.intProp(doc.key(n)+"|currentIndex", gseed)
 	doc.exposeIDProp(n, "currentIndex", gridCurRef)
 	viewKey := doc.key(n)
-	cell := func(i int) ui.Element {
+	scrollKey := doc.rowPrefix + fmt.Sprintf("__grid%d", n.line)
+	scrollState := doc.scrolls[scrollKey]
+	if scrollState == nil {
+		scrollState = &ui.ScrollState{}
+		doc.scrolls[scrollKey] = scrollState
+	}
+	// The grid itself is ui.GridView's; each cell is the delegate in its
+	// row's scope, and the current one has the highlight behind it.
+	o := ui.GridViewOpts{Count: count, CellW: cellW, CellH: cellH, Current: -1}
+	if ci, err := toInt(gridCurRef.get()); err == nil {
+		o.Current = ci
+	}
+	if gridHighlight != nil {
+		o.Highlight = func(int) ui.Element {
+			hl, err := build(gridHighlight, env, doc)
+			if err != nil {
+				return ui.Div()
+			}
+			return hl
+		}
+	}
+	s := ui.GridView(scrollState, o, func(i int) ui.Element {
 		var row map[string]any
 		if rows != nil {
 			row = rows[i]
@@ -8350,32 +8373,10 @@ func buildGridView(n *node, env *Env, doc *docState) (ui.Element, error) {
 		if err != nil {
 			return ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
 		}
-		// Current cell: highlight component behind the delegate.
-		if gridHighlight != nil {
-			if ci, err := toInt(gridCurRef.get()); err == nil && ci == i {
-				if hl, err := build(gridHighlight, env, doc); err == nil {
-					// The stack is the cell: an anchor container has no size
-					// of its own, and a sizeless one would collapse the cell
-					// it stands in (the current cell would vanish).
-					el = ui.Div().Size(cellW, cellH).AnchorMode().Children(
-						ui.Anchored(hl, "", ui.Anchors{Fill: "parent"}),
-						ui.Anchored(el, "", ui.Anchors{Fill: "parent"}),
-					)
-				}
-			}
-		}
-		// Constrain the delegate to its grid cell.
-		return ui.Div().Size(cellW, cellH).Children(el)
-	}
-	scrollKey := doc.rowPrefix + fmt.Sprintf("__grid%d", n.line)
-	scrollState := doc.scrolls[scrollKey]
-	if scrollState == nil {
-		scrollState = &ui.ScrollState{}
-		doc.scrolls[scrollKey] = scrollState
-	}
+		return el
+	})
 	// A view that states no size takes the one its anchors or its layout
 	// cell give it; only an explicit width/height pins it.
-	s := ui.Scroll(scrollState).AutoHideBar()
 	if hasH && height > 0 {
 		s.H(height)
 	} else if !anchorSized(n) {
@@ -8384,14 +8385,6 @@ func buildGridView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if hasW && width > 0 {
 		s.W(width)
 	}
-	// The cells are one wrapping row: how many fit across is decided at
-	// layout time, from the width the view is actually given, so a view
-	// that fills its parent has the right column count on its first frame.
-	cells := ui.Div().Row().Wrap()
-	for i := 0; i < count; i++ {
-		cells.Children(cell(i))
-	}
-	s.Children(cells)
 	return s, nil
 }
 

@@ -45,12 +45,11 @@ Column {
 		t.Fatal("editor state exists before editing started")
 	}
 	// Open the editor on row 1 (what a second click on the current row does).
-	if err := d.doc.synthRefs["tv|editRow"].set(1); err != nil {
-		t.Fatalf("set editRow: %v", err)
+	st := d.doc.tables["tv"]
+	if st == nil {
+		t.Fatal("the table keeps no ui.TableState")
 	}
-	if err := d.doc.synthRefs["tv|editCol"].set(0); err != nil {
-		t.Fatalf("set editCol: %v", err)
-	}
+	st.Edit(1, 0)
 	if el := d.View()(); el == nil {
 		t.Fatal("nil view while editing")
 	}

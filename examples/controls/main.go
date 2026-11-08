@@ -21,7 +21,7 @@ import (
 	"github.com/sushvibez/gfx/ui/shell"
 )
 
-const W, H = 1100, 760
+const W, H = 1460, 760
 
 type state struct {
 	dark core.Property[bool]
@@ -42,6 +42,9 @@ type state struct {
 	tab, page, hour core.Property[int]
 	wheel           ui.TumblerState
 	split           ui.SplitState
+
+	table ui.TableState
+	tree  ui.TreeState
 
 	bar     ui.MenuBarState
 	ctx     ui.MenuState
@@ -71,6 +74,8 @@ func newState(dark bool) *state {
 	s.hour.Set(9)
 	s.left.Set(true)
 	s.lastAct.Set("nothing yet")
+	s.tree.SetExpanded("0", true)
+	s.table.Select(1)
 	return s
 }
 
@@ -195,11 +200,29 @@ func (s *state) view() ui.Element {
 		}, ui.SplitOpts{}).Size(480, 110),
 	)
 
+	people := [][]string{{"Ada", "Engineer", "36"}, {"Grace", "Admiral", "41"}, {"Linus", "Maintainer", "29"},
+		{"Margaret", "Director", "33"}, {"Ken", "Researcher", "52"}}
+	widths := []float32{110, 120, 60}
+	data := ui.GroupBox("Data",
+		ui.HeaderView(3, widths, func(c int) string { return []string{"Name", "Role", "Age"}[c] }, nil),
+		ui.TableView(&s.table, ui.TableOpts{Rows: len(people), Cols: 3, ColWidths: widths, H: 160, Selectable: true,
+			Text: func(r, c int) string { return people[r][c] }}),
+		ui.TreeView(&s.tree, []ui.TreeNode{
+			{Label: "src", Children: []ui.TreeNode{
+				{Label: "main.go"},
+				{Label: "ui", Children: []ui.TreeNode{{Label: "div.go"}, {Label: "theme.go"}}},
+			}},
+			{Label: "docs", Children: []ui.TreeNode{{Label: "ui.md"}}},
+			{Label: "README.md"},
+		}, ui.TreeOpts{H: 170}).W(290),
+	)
+
 	page := ui.Page(
 		ui.Div().Col().Children(menus, toolbar),
 		ui.Div().Row().P(16).Gap(16).Children(
 			ui.Div().Col().Gap(16).Children(buttons, toggles, split),
 			ui.Div().Col().Gap(16).Children(values, nav),
+			ui.Div().Col().Gap(16).Children(data),
 		),
 		nil,
 	).Bg(tm.Window).Grow()

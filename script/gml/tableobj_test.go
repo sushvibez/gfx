@@ -124,11 +124,11 @@ Column {
 	if hs, _ := sel.member("hasSelection"); hs != false {
 		t.Fatalf("initial hasSelection = %v", hs)
 	}
-	// Select row 1 by writing the persistent ref (what a cell tap does).
-	if r, ok := d.doc.synthRefs["tv|selectedRow"]; ok {
-		_ = r.set(1)
+	// Select row 1 through the table's state (what a cell tap does).
+	if st := d.doc.tables["tv"]; st != nil {
+		st.Select(1)
 	} else {
-		t.Fatal("selectedRow ref missing")
+		t.Fatal("the table keeps no ui.TableState")
 	}
 	view()
 	if hs, _ := sel.member("hasSelection"); hs != true {

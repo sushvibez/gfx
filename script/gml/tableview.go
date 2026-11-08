@@ -384,21 +384,23 @@ func buildTableView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	widths := tableColumnWidths(provider, cols, env, n.line)
 
 	viewKey := doc.key(n)
+	if doc.tables == nil {
+		doc.tables = map[string]*ui.TableState{}
+	}
+	st := doc.tables[viewKey]
+	if st == nil {
+		st = &ui.TableState{}
+		doc.tables[viewKey] = st
+	}
 	// Row selection (SelectRows semantics — the corpus default): a tap on
 	// any cell selects its row, delegates see live `selected`/`current`,
 	// and the linked ItemSelectionModel reflects it (hasSelection,
 	// selectedIndexes[i].row, clearSelection()).
-	var selRef Ref
-	selRow := -1
+	selRow := st.Selected()
+	if selRow >= rows {
+		selRow = -1 // ui.TableView drops it too
+	}
 	if selID != "" {
-		selRef = doc.intProp(viewKey+"|selectedRow", -1)
-		if v, err := toInt(selRef.get()); err == nil {
-			selRow = v
-		}
-		if selRow >= rows { // rows shrank (filter/removal): drop selection
-			selRow = -1
-			_ = selRef.set(-1)
-		}
 		if obj := doc.elemObjs.get(doc.intern(selID)); obj != nil {
 			if obj.props == nil {
 				obj.props = map[string]any{}
@@ -410,105 +412,51 @@ func buildTableView(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 			obj.setProp("selectedIndexes", idx)
 			if obj.methods == nil {
-				ref := selRef
 				obj.methods = map[string]any{
-					"clearSelection":  jsFunc(func([]any) (any, error) { return nil, ref.set(-1) }),
+					"clearSelection":  jsFunc(func([]any) (any, error) { st.Select(-1); return nil, nil }),
 					"select":          jsFunc(func([]any) (any, error) { return nil, nil }),
 					"setCurrentIndex": jsFunc(func([]any) (any, error) { return nil, nil }),
 				}
 			}
 		}
 	}
-	// In-place cell editing (TableView.editDelegate). QML's default edit
-	// trigger is a double tap; with single clicks only, a click on the cell
-	// that is already current starts the edit — the same two-step gesture.
-	editRowRef := doc.intProp(viewKey+"|editRow", -1)
-	editColRef := doc.intProp(viewKey+"|editCol", -1)
-	editRow, editCol := -1, -1
-	if v, err := toInt(editRowRef.get()); err == nil {
-		editRow = v
-	}
-	if v, err := toInt(editColRef.get()); err == nil {
-		editCol = v
-	}
-	if editRow >= rows || editCol >= cols { // the model shrank under the editor
-		editRow, editCol = -1, -1
-		_ = editRowRef.set(-1)
-		_ = editColRef.set(-1)
-	}
-	grid := ui.Div().Col()
-	for r := 0; r < rows; r++ {
-		rowDiv := ui.Div().Row()
-		for c := 0; c < cols; c++ {
-			cellDelegate := chooseDelegate(delegate, r, c, env)
-			if cellDelegate == nil {
-				rowDiv.Children(ui.Div().W(widths[c]))
-				continue
-			}
-			editor := attachedElem(cellDelegate, "TableView.editDelegate")
-			editing := editor != nil && r == editRow && c == editCol
-			cell := map[string]any{
-				"row": float64(r), "column": float64(c),
-				"display":  model.cellDisplay(r, c),
-				"selected": selRow == r, "current": selRow == r, "editing": editing,
-			}
-			restore := enterRow(viewKey, cellDelegate, env, doc, cell, r*cols+c)
-			el, err := build(cellDelegate, env, doc)
-			var edEl ui.Element
-			if editing {
-				edEl, err = buildCellEditor(editor, model, r, c, env, doc,
-					viewKey, editRowRef, editColRef)
-			}
-			restore()
-			if err != nil {
-				el = ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
-			}
-			// A TableView sizes its delegate to the column: the delegate's
-			// own implicitWidth is only its fallback, so without this a
-			// 120px delegate left a strip of the view showing through a
-			// 160px column.
-			if d, ok := el.(*ui.DivEl); ok {
-				d.W(widths[c])
-			}
-			box := ui.Div().W(widths[c])
-			if edEl != nil {
-				// The editor covers the cell (its anchors.fill: parent).
-				box.AnchorMode().Children(
-					ui.Anchored(el, "", ui.Anchors{Fill: "parent"}),
-					ui.Anchored(edEl, "", ui.Anchors{Fill: "parent"}))
-			} else {
-				box.Children(el)
-			}
-			if selRef != nil {
-				row, col := r, c
-				ref, wasCurrent := selRef, selRow == r
-				canEdit := editor != nil
-				box.OnClick(func() {
-					_ = ref.set(row)
-					// Second click on the current row opens the editor.
-					if canEdit && wasCurrent {
-						_ = editRowRef.set(row)
-						_ = editColRef.set(col)
-					}
-				})
-			}
-			rowDiv.Children(box)
+	// The table itself is ui.TableView's; each cell is its delegate (chosen
+	// per cell) in the cell's own scope. In-place editing is
+	// TableView.editDelegate: QML's default edit trigger is a double tap;
+	// with single clicks only, a click on the selected row's cell starts
+	// the edit — the same two-step gesture. The editor builds inside the
+	// cell's scope and covers the cell.
+	var editorEl ui.Element
+	o := ui.TableOpts{Rows: rows, Cols: cols, ColWidths: widths, H: height, Selectable: selID != ""}
+	o.Cell = func(r, c int, selected, editing bool) ui.Element {
+		cellDelegate := chooseDelegate(delegate, r, c, env)
+		if cellDelegate == nil {
+			return nil
 		}
-		grid.Children(rowDiv)
+		editor := attachedElem(cellDelegate, "TableView.editDelegate")
+		editing = editing && editor != nil
+		cell := map[string]any{
+			"row": float64(r), "column": float64(c),
+			"display":  model.cellDisplay(r, c),
+			"selected": selected, "current": selected, "editing": editing,
+		}
+		restore := enterRow(viewKey, cellDelegate, env, doc, cell, r*cols+c)
+		defer restore()
+		el, err := build(cellDelegate, env, doc)
+		if err == nil && editing {
+			editorEl, err = buildCellEditor(editor, model, r, c, env, doc, viewKey, st.StopEditing)
+		}
+		if err != nil {
+			el = ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
+		}
+		return el
 	}
-	scrollKey := doc.rowPrefix + fmt.Sprintf("__table%d", n.line)
-	scrollState := doc.scrolls[scrollKey]
-	if scrollState == nil {
-		scrollState = &ui.ScrollState{}
-		doc.scrolls[scrollKey] = scrollState
+	o.CanEdit = func(r, c int) bool {
+		d := chooseDelegate(delegate, r, c, env)
+		return d != nil && attachedElem(d, "TableView.editDelegate") != nil
 	}
-	s := ui.Scroll(scrollState).AutoHideBar().Children(grid)
-	if height > 0 {
-		s.H(height)
-	} else {
-		s.Grow()
-	}
-	return s, nil
+	o.Editor = func(int, int) ui.Element { return editorEl }
+	return ui.TableView(st, o), nil
 }
 
 // tableInfo is what a HorizontalHeaderView needs from its syncView.
@@ -570,22 +518,19 @@ func buildHeaderView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	_, cols := info.model.tableDims()
 	widths := tableColumnWidths(info.provider, cols, env, n.line)
+	// The strip is ui.HeaderView's, at the table's column widths; each cell
+	// is the delegate in its column's scope.
 	viewKey := doc.key(n)
-	rowDiv := ui.Div().Row()
-	for c := 0; c < cols; c++ {
+	return ui.HeaderView(cols, widths, nil, func(c int) ui.Element {
 		cell := map[string]any{"column": float64(c), "display": info.model.headerDisplay(c)}
 		restore := enterRow(viewKey, delegate, env, doc, cell, c)
+		defer restore()
 		el, err := build(delegate, env, doc)
-		restore()
 		if err != nil {
-			el = ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
+			return ui.Text("gml: "+err.Error(), ui.RGB(0xffb4b4))
 		}
-		if d, ok := el.(*ui.DivEl); ok {
-			d.W(widths[c]) // the header cell is the column's width too
-		}
-		rowDiv.Children(ui.Div().W(widths[c]).Children(el))
-	}
-	return rowDiv, nil
+		return el
+	}), nil
 }
 
 // attachedElem returns an element-valued attached attribute of a node
@@ -604,7 +549,7 @@ func attachedElem(n *node, name string) *node {
 // holding the pending value, and `TableView.commit()` writes it into the
 // model and closes the editor (closeEditor just closes).
 func buildCellEditor(editor *node, model tableSource, r, c int, env *Env, doc *docState,
-	viewKey string, editRowRef, editColRef Ref) (ui.Element, error) {
+	viewKey string, stop func()) (ui.Element, error) {
 	key := fmt.Sprintf("%s|edit:%d:%d", viewKey, r, c)
 	editRef, ok := doc.synthRefs[key]
 	if !ok {
@@ -616,8 +561,7 @@ func buildCellEditor(editor *node, model tableSource, r, c int, env *Env, doc *d
 		doc.synthRefs[key] = editRef
 	}
 	close := func() {
-		_ = editRowRef.set(-1)
-		_ = editColRef.set(-1)
+		stop()
 		delete(doc.synthRefs, key) // next edit starts from the model again
 	}
 	commit := func() {

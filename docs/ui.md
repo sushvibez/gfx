@@ -276,6 +276,9 @@ like `ScrollState`.
 | `ui.PageIndicator(n, cur, onSelect, ui.PageIndicatorOpts{})` | PageIndicator | |
 | `ui.SplitView(&st, []ui.SplitPane{…}, ui.SplitOpts{…})` | SplitView | panes with `Preferred`/`Minimum`/`Maximum`/`Fill`; handles drag within the limits |
 | `ui.ToolTip(text)`, `(&st).Attach(el, text, ui.ToolTipOpts{Delay, Timeout})` | ToolTip | `Track`/`Due` for a host with its own rule for when it shows |
+| `ui.GridView(&scroll, ui.GridViewOpts{…}, cell)` | GridView | fixed `CellW`×`CellH` cells in rows as wide as the view; `Current` with a `Highlight` behind it |
+| `ui.TableView(&st, ui.TableOpts{…})`, `ui.HeaderView(cols, widths, title, header)` | TableView, HorizontalHeaderView | `Rows`×`Cols` at `ColWidths`; `Cell` draws a cell (default: `Text`, alternate rows, the selected row tinted); `Selectable` rows; `CanEdit` + `Editor` edit a cell of the selected row in place (`st.StopEditing()` when done) |
+| `ui.TreeView(&st, []ui.TreeNode{…}, ui.TreeOpts{…})` | TreeView | nodes with `Label`, `Data`, `Children`; `st.Rows(roots)` flattens to the visible rows (`Path`, `Depth`, `Expanded`); `Row` draws one (default: indent, ▸/▾ that toggles, click to make current) |
 | `ui.Separator(vertical)`, `ui.ToolBar(…)`, `ui.GroupBox(title, …)` | ToolSeparator/MenuSeparator, ToolBar, GroupBox | |
 | `ui.Pane()`, `ui.Frame()`, `ui.Page(header, content, footer)` | Pane, Frame, Page | boxes with a name: sugar for `Div` |
 
