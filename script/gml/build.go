@@ -1857,6 +1857,7 @@ type docState struct {
 	stateShown    map[string]float32                // last value shown per id|prop under a state scope (stateTween)
 	focusReq      map[keyID]bool                    // forceActiveFocus requests, applied on the next build (focus.go)
 	focusRefs     map[keyID]Ref                     // tracked activeFocus, by element (focus.go)
+	focusReports  map[keyID]func(bool)              // each tracked element's focus report, made once (focus.go)
 	readsFocus    map[*node]bool                    // items whose own attributes read activeFocus (focus.go)
 	inputKeys     map[*ui.InputState]keyID          // the element key a text field's state was built under (focus.go)
 	inputMasks    map[*ui.InputState]string         // the inputMask each text field has (buildTextField)

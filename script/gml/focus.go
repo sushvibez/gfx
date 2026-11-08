@@ -97,9 +97,15 @@ func (doc *docState) stampFocus(key keyID, el ui.Element) {
 	if req {
 		delete(doc.focusReq, key)
 	}
-	ref := doc.focusRefs[key]
-	var report func(bool)
-	if ref != nil {
+	// The report is made once per key and reused: this runs for every
+	// registered element on every frame (cached subtrees replay their
+	// registrations), and a fresh closure each time was half of a settled
+	// frame's allocations.
+	report := doc.focusReports[key]
+	if ref := doc.focusRefs[key]; ref != nil && report == nil {
+		if doc.focusReports == nil {
+			doc.focusReports = map[keyID]func(bool){}
+		}
 		report = func(on bool) {
 			setBool(ref, on)
 			// Reports run outer to inner, so the last item that has focus
@@ -111,6 +117,7 @@ func (doc *docState) stampFocus(key keyID, el ui.Element) {
 				_ = doc.focusedRef().set(0.0)
 			}
 		}
+		doc.focusReports[key] = report
 	}
 	switch e := el.(type) {
 	case *ui.DivEl:

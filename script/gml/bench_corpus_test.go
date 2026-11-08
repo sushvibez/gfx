@@ -11,7 +11,7 @@ import (
 // corpusPage loads one page of the QML examples corpus (skipped when the
 // checkout is not there), for benchmarks that need a REAL document: styled
 // controls, file components, a running animation.
-func corpusPage(b *testing.B, name string) *Document {
+func corpusPage(b testing.TB, name string) *Document {
 	root := os.Getenv("GFX_QML_CORPUS")
 	if root == "" {
 		home, _ := os.UserHomeDir()
@@ -73,4 +73,27 @@ func benchCorpusFrame(b *testing.B, page string) {
 	}
 	b.StopTimer()
 	b.ReportMetric(float64(d.doc.freshBuilds)/float64(b.N), "rebuilds/frame")
+}
+
+// TestCorpusFrameAllocs holds a settled frame's allocations under a budget,
+// about 30 % over what each page took when the budget was set (2026-11-08).
+// The keyboard-focus work once tripled them unnoticed — a fresh closure per
+// element per frame — and only a benchmark comparison against v0.1.0 found
+// it; this catches the next one in the ordinary test run.
+func TestCorpusFrameAllocs(t *testing.T) {
+	for _, c := range []struct {
+		page   string
+		budget float64
+	}{{"buttons", 400}, {"navdisplay", 500}, {"chatui", 1300}, {"indicators", 1900}} {
+		d := corpusPage(t, c.page)
+		view := d.View()
+		u := ui.New(nil, nil, func() ui.Element { return view() })
+		for i := 0; i < 30; i++ {
+			u.Layout(900, 700)
+		}
+		got := testing.AllocsPerRun(50, func() { u.Layout(900, 700) })
+		if got > c.budget {
+			t.Errorf("%s: %.0f allocations a settled frame, over the budget of %.0f", c.page, got, c.budget)
+		}
+	}
 }
