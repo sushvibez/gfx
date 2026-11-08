@@ -130,6 +130,13 @@ real browser. Win32 `WM_TOUCH` is not handled.
   spatialisation, no streaming decode.
 - **`physics`**: P3+ of `physics/PLAN.md` (joints, continuous collision,
   a 2D variant).
+- **Accessibility bridges** (2026-11-08): `ui.AccessTree` and the kit's
+  roles exist (`ui/access.go`, gml's `Accessible.*`); nothing presents
+  them yet. In order of effort: the web (mirror the tree into hidden DOM
+  nodes with ARIA roles, focus and live updates), Windows (UI Automation
+  providers over COM, no cgo), Linux (AT-SPI over D-Bus). Also: announce
+  focus and value changes, and keyboard access for the controls that
+  still lack it.
 - **Showcase demos**: geometric algebra, an anime.js-style landing page
   clone, a procedural-generation demo once such a library lands.
 
