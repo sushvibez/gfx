@@ -10,13 +10,14 @@ import (
 // the label flips it. Optional onToggle callbacks run after the flip with
 // the new value (QML's toggled() signal).
 func Checkbox(checked *core.Property[bool], label string, onToggle ...func(bool)) Element {
+	tm := CurrentTheme()
 	box := Div().Size(20, 20).Rounded(5)
 	if checked.Get() {
-		box.Bg(RGB(0x3b5bdb)).Children(
-			Div().Size(8, 8).Bg(RGB(0xffffff)).Rounded(2),
+		box.Bg(tm.Accent).Children(
+			Div().Size(8, 8).Bg(tm.OnAccent).Rounded(2),
 		).JustifyCenter().ItemsCenter()
 	} else {
-		box.Border(2, RGB(0x4a4a5c))
+		box.Border(2, tm.Outline)
 	}
 	return Div().Row().Gap(10).ItemsCenter().
 		OnClick(func() {
@@ -26,7 +27,7 @@ func Checkbox(checked *core.Property[bool], label string, onToggle ...func(bool)
 				f(v)
 			}
 		}).
-		Children(box, Text(label, RGB(0xd4d4e0)))
+		Children(box, Text(label, tm.Label))
 }
 
 // Slider renders a horizontal slider bound to a float property in [0,1];
@@ -199,12 +200,13 @@ func (e *SliderEl) paint(ctx *Context) {
 	if e.bare {
 		return
 	}
-	track, fill, knob := RGB(0x32323f), RGB(0x3b5bdb), RGB(0xe8e8f0)
+	tm := CurrentTheme()
+	track, fill, knob := tm.Track, tm.Accent, tm.Knob
 	if e.hasColors {
 		track, fill, knob = e.trackC, e.fillC, e.knobC
 	}
 	if e.disabled {
-		fill, knob = track, RGB(0x9a9a9a)
+		fill, knob = track, tm.KnobDisabled
 	}
 	kr := float32(sliderKnob)
 	if e.knobPx > 0 {
@@ -329,8 +331,9 @@ func (e *RangeSliderEl) paint(ctx *Context) {
 	if b < a {
 		a, b = b, a
 	}
-	track, fill := RGB(0x32323f), RGB(0x3b5bdb)
-	knob := RGB(0xe8e8f0)
+	tm := CurrentTheme()
+	track, fill := tm.Track, tm.Accent
+	knob := tm.Knob
 	if e.vertical {
 		cx := e.rect.X + e.rect.W/2
 		trackY, trackH := e.rect.Y+sliderKnob, e.rect.H-2*sliderKnob

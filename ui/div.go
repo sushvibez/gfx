@@ -723,9 +723,19 @@ func (d *DivEl) DarkPopupSkin() *DivEl {
 	return d
 }
 
+// PopupSkin is drawn in the current theme (DarkPopupSkin's look under a
+// dark one).
 func (d *DivEl) PopupSkin() *DivEl {
+	tm := CurrentTheme()
+	if tm.Dark {
+		return d.DarkPopupSkin()
+	}
+	return d.popupSkin(tm.Surface)
+}
+
+func (d *DivEl) popupSkin(surface RGBA) *DivEl {
 	if !d.hasBg && !d.hasGrad {
-		d.bg, d.hasBg = RGB(0xf4f5f7), true
+		d.bg, d.hasBg = surface, true
 		d.radius = 8
 		if d.pad == 0 {
 			d.pad = 16

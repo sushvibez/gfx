@@ -57,9 +57,10 @@ func SpinBox(value *core.Property[int], o SpinOpts) *DivEl {
 			return v, err == nil
 		}
 	}
+	tm := CurrentTheme()
 	textC := o.TextColor
 	if textC == (RGBA{}) {
-		textC = RGB(0x111111)
+		textC = tm.Text
 	}
 	set := func(v int) {
 		switch {
@@ -85,7 +86,7 @@ func SpinBox(value *core.Property[int], o SpinOpts) *DivEl {
 	cur := value.Get()
 	btn := func(s string, n int, enabled bool) *DivEl {
 		enabled = enabled && !o.Disabled
-		b := Div().Size(32, 32).Bg(RGB(0xe9ecef)).Rounded(4).JustifyCenter().ItemsCenter()
+		b := Div().Size(32, 32).Bg(tm.FieldButton).Rounded(4).JustifyCenter().ItemsCenter()
 		c := textC
 		if !enabled {
 			c.A *= 0.35
@@ -112,9 +113,9 @@ func SpinBox(value *core.Property[int], o SpinOpts) *DivEl {
 			}
 			in.SetText(format(value.Get()))
 		})
-		val = Input(in, w).Bg(RGB(0xffffff)).TextColor(textC)
+		val = Input(in, w).Bg(tm.Field).TextColor(textC)
 	} else {
-		val = Div().Size(w, 32).Bg(RGB(0xffffff)).Border(1, RGB(0xced4da)).
+		val = Div().Size(w, 32).Bg(tm.Field).Border(1, tm.Border).
 			JustifyCenter().ItemsCenter().Children(Text(format(cur), textC))
 	}
 	box := Div().Row().ItemsCenter().Gap(4).Children(

@@ -17,7 +17,8 @@ type Tab struct {
 	SizePx float64
 }
 
-// Qt Basic's tab palette and metrics, sampled from the reference renders.
+// Qt Basic's tab palette (the default theme's) and metrics, sampled from
+// the reference renders.
 const (
 	TabCurrentColor  = 0xefefef // the current tab, and the bar between tabs
 	TabInactiveColor = 0x9f9f9f // the other tabs
@@ -31,12 +32,13 @@ const (
 // TabBar is a row of tabs with current selected; onSelect runs with the tab
 // clicked (or reached with Left/Right) — set the current index there.
 func TabBar(current int, tabs []Tab, onSelect func(int)) *DivEl {
-	bar := Div().Row().Gap(TabGap).Bg(RGB(TabCurrentColor)).Focusable()
+	tm := CurrentTheme()
+	bar := Div().Row().Gap(TabGap).Bg(tm.Band).Focusable()
 	for i, t := range tabs {
 		active := i == current
-		textCol, bg := RGB(0xffffff), RGB(TabInactiveColor)
+		textCol, bg := tm.TabInactiveText, tm.TabInactive
 		if active {
-			textCol, bg = RGB(0x000000), RGB(TabCurrentColor)
+			textCol, bg = tm.TabText, tm.Band
 		}
 		size := t.SizePx
 		if size <= 0 {
@@ -46,7 +48,7 @@ func TabBar(current int, tabs []Tab, onSelect func(int)) *DivEl {
 			Bg(bg).Children(Text(t.Label, textCol).Truncate().SizePx(size))
 		if !active {
 			// The current tab is already the light colour and does not react.
-			tab.HoverBg(RGB(TabHoverColor))
+			tab.HoverBg(tm.TabHover)
 		}
 		if !t.Fixed {
 			tab.Grow().Shrink().Clip()

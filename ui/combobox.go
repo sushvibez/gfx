@@ -52,8 +52,9 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 			o.OnActivated(i)
 		}
 	}
-	arrow := Text("▾", RGB(0x868e96))
-	box := Div().Size(w, 32).Bg(RGB(0xffffff)).Border(1, RGB(0xced4da)).Rounded(4).
+	tm := CurrentTheme()
+	arrow := Text("▾", tm.Dim)
+	box := Div().Size(w, 32).Bg(tm.Field).Border(1, tm.Border).Rounded(4).
 		Row().ItemsCenter().PadXY(8, 0).Gap(6)
 	if o.Input != nil {
 		in := o.Input
@@ -78,9 +79,9 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 		if !o.Disabled {
 			toggle.OnClick(func() { open.Set(!open.Get()) })
 		}
-		box.Children(Input(in, w-40).Bg(RGB(0xffffff)).TextColor(RGB(0x111111)).Border(0, RGBA{}), toggle)
+		box.Children(Input(in, w-40).Bg(tm.Field).TextColor(tm.Text).Border(0, RGBA{}), toggle)
 	} else {
-		box.Children(Text(text, RGB(0x111111)), Div().Grow(), arrow)
+		box.Children(Text(text, tm.Text), Div().Grow(), arrow)
 		if !o.Disabled {
 			box.OnClick(func() { open.Set(!open.Get()) })
 		}
@@ -110,14 +111,14 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 	if !open.Get() {
 		return box
 	}
-	list := Div().Col().W(w).Bg(RGB(0xffffff)).Border(1, RGB(0xced4da)).Rounded(4).P(2)
+	list := Div().Col().W(w).Bg(tm.Field).Border(1, tm.Border).Rounded(4).P(2)
 	for i, it := range o.Items {
 		i := i
 		row := Div().W(w-4).H(28).PadXY(8, 0).Row().ItemsCenter().Rounded(3).
-			HoverBg(RGB(0xe7f0ff)).OnClick(func() { pick(i) }).
-			Children(Text(it, RGB(0x111111)))
+			HoverBg(tm.RowHover).OnClick(func() { pick(i) }).
+			Children(Text(it, tm.Text))
 		if i == cur {
-			row.Bg(RGB(0xd0e2ff))
+			row.Bg(tm.RowSelected)
 		}
 		list.Children(row)
 	}

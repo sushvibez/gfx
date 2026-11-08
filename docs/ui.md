@@ -513,17 +513,36 @@ multi-touch into `app.Gestures` (pinch/pan) for hooks that want it.
 
 ## Theming
 
-There is no theme object: colour, radius, padding and shadow are set per
-element, and an application builds its own helpers (the `button` and `card`
-closures in `examples/kitchensink`) around its palette. The pieces that
-carry defaults can be restyled:
+The controls (the kit's buttons, switches, menus, dialogs, drawers, tabs,
+progress bars, tool tips, and the check boxes, sliders, inputs, combo and
+spin boxes) are drawn from a `ui.Theme`: the accent, text, fields,
+tracks, popup surfaces, bands (a menu bar, a dialog's button box, the
+current tab), menus and tool tips. `ui.SetTheme(t)` sets it for the whole
+program and redraws whatever caches the tree; the option structs
+(`ButtonOpts`, `SwitchOpts`, `DialogOpts`, `DrawerOpts`, `ProgressOpts`)
+take a `Theme *Theme` of their own.
+
+| Theme | Look |
+|-------|------|
+| `ui.DefaultTheme()` | the controls' original look, and the default: light kit surfaces with dark-ground check boxes, sliders and inputs and a dark menu card |
+| `ui.LightTheme()` | light throughout |
+| `ui.DarkTheme()` | dark throughout |
+
+```go
+t := ui.DarkTheme()
+t.Accent, t.AccentHover, t.AccentPress = ui.RGB(0x12b886), ui.RGB(0x20c997), ui.RGB(0x099268)
+ui.SetTheme(t)
+```
+
+Beyond the theme, colour, radius, padding and shadow are set per element.
+The pieces that carry defaults can also be restyled one by one:
 
 | Widget | Setters |
 |--------|---------|
-| `Input` / `TextArea` | `Bg`, `Border(w, c)`, `Accent(c)` (focused border and caret), `TextColor`, `Placeholder(s, c)`, `Rounded`; dark skin by default |
+| `Input` / `TextArea` | `Bg`, `Border(w, c)`, `Accent(c)` (focused border and caret), `TextColor`, `Placeholder(s, c)`, `Rounded`; the theme's input colours by default |
 | `Slider` | `Colors(track, fill, knob)`, `Thickness(track, knob)`; `Bare()` paints nothing so a style can draw its own |
 | `Scroll` / `List` | `BarColor(c)` (translucent white by default), `AutoHideBar()` |
-| popups | `PopupSkin()` (light card) / `DarkPopupSkin()` (dark card), applied only to a panel with no background of its own |
+| popups | `PopupSkin()` (the theme's card) / `DarkPopupSkin()` (dark card), applied only to a panel with no background of its own |
 | text | `UI.SetLineHeight(rel)` for the window, `LineHeight` per element; `FontFamily("monospace")` and friends resolve through the renderer's font registry, which the shell fills with the platform's named families and their fallbacks |
 | icons | `icons.SVG(name, color)` tints a stroked glyph at request time |
 

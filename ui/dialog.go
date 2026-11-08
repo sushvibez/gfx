@@ -93,16 +93,20 @@ const (
 // the Basic style): trailing, sharing a light band; onButton runs with the
 // button clicked.
 func DialogButtonBox(buttons StandardButton, onButton func(StandardButton)) *DivEl {
+	return dialogButtonBox(CurrentTheme(), buttons, onButton)
+}
+
+func dialogButtonBox(tm Theme, buttons StandardButton, onButton func(StandardButton)) *DivEl {
 	box := Div().Row().Gap(1).H(dialogFooterH).ItemsCenter().Justify(AlignEnd).
-		P(dialogFooterPad).Bg(RGB(0xefefef))
+		P(dialogFooterPad).Bg(tm.Band)
 	for _, s := range standardButtons {
 		if buttons&s.b == 0 {
 			continue
 		}
 		b := s.b
 		btn := Div().Row().Size(dialogButtonW, dialogButtonH).ItemsCenter().JustifyCenter().
-			HoverBg(RGB(0xe0e0e0)).PressBg(RGB(0xd0d0d0)).Focusable().
-			Children(Text(s.label, RGB(0x111111)).SizePx(14))
+			HoverBg(tm.BandHover).PressBg(tm.BandOpen).Focusable().
+			Children(Text(s.label, tm.Text).SizePx(14))
 		if onButton != nil {
 			btn.OnClick(func() { onButton(b) })
 		}
@@ -118,8 +122,10 @@ type DialogOpts struct {
 	// OnAccepted and OnRejected run after a button of that role closes the
 	// dialog; OnClosed after either, and after a dismiss.
 	OnAccepted, OnRejected, OnClosed func()
-	// Dark draws the card for a dark page.
+	// Dark draws the card for a dark page (DarkTheme's colours).
 	Dark bool
+	// Theme: nil is the current one (or DarkTheme, with Dark).
+	Theme *Theme
 	// NoDim: no scrim behind the dialog (QML's modal: false); it still
 	// closes on an outside click.
 	NoDim bool
@@ -129,12 +135,16 @@ type DialogOpts struct {
 // close closes the dialog (set its open state false); a button calls it,
 // then runs the role's handler and OnClosed.
 func DialogFrame(content Element, close func(), o DialogOpts) *DivEl {
+	tm := themeOr(o.Theme)
+	// Dark (with no theme of its own) darkens the card and title only: the
+	// button box stays the theme's, as Qt's Basic box does over a dark app.
+	card := tm
+	if o.Dark && o.Theme == nil {
+		card = DarkTheme()
+	}
 	frame := Div().Col().MinW(320)
 	if o.Title != "" {
-		c := RGB(0x111111)
-		if o.Dark {
-			c = RGB(0xe8e8f0)
-		}
+		c := card.Text
 		// Qt's header: the title leads, centred in a 48 px band.
 		frame.Children(Div().Row().H(48).ItemsCenter().Padding(0, 20, 0, 20).
 			Children(Text(o.Title, c).SizePx(18).Bold()))
@@ -143,7 +153,7 @@ func DialogFrame(content Element, close func(), o DialogOpts) *DivEl {
 		frame.Children(content)
 	}
 	if o.Buttons != 0 {
-		frame.Children(DialogButtonBox(o.Buttons, func(b StandardButton) {
+		frame.Children(dialogButtonBox(tm, o.Buttons, func(b StandardButton) {
 			if close != nil {
 				close()
 			}
@@ -159,10 +169,10 @@ func DialogFrame(content Element, close func(), o DialogOpts) *DivEl {
 			}
 		}))
 	}
-	if o.Dark {
+	if card.Dark {
 		frame.DarkPopupSkin()
 	} else {
-		frame.PopupSkin()
+		frame.popupSkin(card.Surface)
 	}
 	return frame
 }

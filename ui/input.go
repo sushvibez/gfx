@@ -319,18 +319,19 @@ func (s *InputState) SelectAll() {
 }
 
 // Input renders a single-line text field bound to state. Clicking it
-// focuses it; keys routed through UI.Key edit it. Defaults to the dark
-// skin; use the chained setters (Bg/Border/TextColor/Accent/Placeholder/
+// focuses it; keys routed through UI.Key edit it. Drawn in the current theme's
+// input colours; use the chained setters (Bg/Border/TextColor/Accent/Placeholder/
 // Rounded) for a light field or other themes.
 func Input(state *InputState, w float32) *InputEl {
+	tm := CurrentTheme()
 	return &InputEl{
 		state:   state,
 		w:       w,
-		bg:      RGB(0x101018),
-		borderC: RGB(0x3b3b4f),
+		bg:      tm.Input,
+		borderC: tm.InputBorder,
 		accentC: RGB(inputAccent),
-		textC:   RGB(0xe8e8f0),
-		selC:    RGBA{R: 0.23, G: 0.36, B: 0.86, A: 0.5},
+		textC:   tm.InputText,
+		selC:    tm.Selection,
 		radius:  6,
 		borderW: 2,
 	}

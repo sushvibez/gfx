@@ -9,8 +9,8 @@ import "github.com/sushvibez/gfx/core"
 // its options. Pane, Frame and Page are plain boxes with a name, sugar for
 // Div.
 
-// The kit's accent, the colour of a button, a checked switch, a
-// highlighted row, a progress bar.
+// The default theme's accent (Theme.Accent is what the controls draw
+// with).
 var (
 	Accent      = RGB(0x3b5bdb)
 	AccentHover = RGB(0x4c6ef5)
@@ -35,6 +35,8 @@ type ButtonOpts struct {
 	// Checked makes it checkable: a click toggles it, and a checked button
 	// shows pressed (QML's checkable/checked).
 	Checked *core.Property[bool]
+	// Theme draws this button in a theme of its own (nil: the current one).
+	Theme *Theme
 }
 
 // Button is a push button (QML's Button): hover lighter, press darker,
@@ -77,11 +79,12 @@ func styleButton(d *DivEl, label string, o ButtonOpts) {
 		r = 9
 	}
 	d.Rounded(r).Focusable()
-	accent := Accent
+	tm := themeOr(o.Theme)
+	accent := tm.Accent
 	if o.Color != (RGBA{}) {
 		accent = o.Color
 	}
-	text := RGB(0xffffff)
+	text := tm.OnAccent
 	checked := o.Checked != nil && o.Checked.Get()
 	switch {
 	case o.Flat:
@@ -100,11 +103,11 @@ func styleButton(d *DivEl, label string, o ButtonOpts) {
 			d.Bg(tint(accent, 0, 0.2))
 		}
 	case o.Highlighted:
-		d.Bg(AccentHover).HoverBg(RGB(0x5c7cfa)).PressBg(Accent)
+		d.Bg(tm.AccentHover).HoverBg(tint(tm.AccentHover, 1, 0.15)).PressBg(tm.Accent)
 	default:
-		d.Bg(Accent).HoverBg(AccentHover).PressBg(AccentPress)
+		d.Bg(tm.Accent).HoverBg(tm.AccentHover).PressBg(tm.AccentPress)
 		if checked {
-			d.Bg(AccentPress)
+			d.Bg(tm.AccentPress)
 		}
 	}
 	if o.TextColor != (RGBA{}) {
@@ -150,6 +153,7 @@ func Switch(checked *core.Property[bool], label string, onToggle ...func(bool)) 
 // SwitchOpts configures a switch; Disabled shows it dimmed and inert.
 type SwitchOpts struct {
 	Disabled bool
+	Theme    *Theme // nil: the current theme
 }
 
 // Build is Switch with options.
@@ -158,13 +162,14 @@ func (o SwitchOpts) Build(checked *core.Property[bool], label string, onToggle .
 }
 
 func (o SwitchOpts) build(checked *core.Property[bool], label string, onToggle []func(bool)) Element {
+	tm := themeOr(o.Theme)
 	track := Div().Size(40, 22).Rounded(11).ItemsCenter().P(2).Focusable()
 	if checked.Get() {
-		track.Bg(Accent).Justify(AlignEnd)
+		track.Bg(tm.Accent).Justify(AlignEnd)
 	} else {
-		track.Bg(RGB(0xb0b4bf)).Justify(AlignStart)
+		track.Bg(tm.SwitchOff).Justify(AlignStart)
 	}
-	track.Children(Div().Size(18, 18).Rounded(9).Bg(RGB(0xffffff)))
+	track.Children(Div().Size(18, 18).Rounded(9).Bg(tm.OnAccent))
 	if o.Disabled {
 		track.Opacity(0.5)
 	} else {
@@ -179,14 +184,14 @@ func (o SwitchOpts) build(checked *core.Property[bool], label string, onToggle [
 	if label == "" {
 		return track
 	}
-	return Div().Row().ItemsCenter().Gap(8).Children(track, Text(label, RGB(0x111111)))
+	return Div().Row().ItemsCenter().Gap(8).Children(track, Text(label, tm.Text))
 }
 
 // Pane, Frame and Page are boxes with a name — sugar for Div — so a view
 // reads like the QML it mirrors. A Frame has the kit's thin border; a Page
 // stacks an optional header and footer around content that fills the rest.
 func Pane() *DivEl  { return Div().P(12) }
-func Frame() *DivEl { return Div().P(12).Border(1, RGB(0xced4da)).Rounded(4) }
+func Frame() *DivEl { return Div().P(12).Border(1, CurrentTheme().Border).Rounded(4) }
 
 // Page lays header, content and footer out top to bottom, the content
 // growing into what they leave; header or footer may be nil.

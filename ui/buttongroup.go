@@ -54,9 +54,10 @@ func (g *ButtonGroup) Checked() *core.Property[bool] {
 // uncheck — and a checked radio stays checked when clicked again (QML's
 // RadioButton). onToggle runs after a click that checked it.
 func RadioRing(checked *core.Property[bool], group *ButtonGroup, onToggle ...func(bool)) *DivEl {
-	ring := Div().Size(20, 20).Rounded(10).Border(2, RGB(0x3b5bdb)).JustifyCenter().ItemsCenter()
+	tm := CurrentTheme()
+	ring := Div().Size(20, 20).Rounded(10).Border(2, tm.Accent).JustifyCenter().ItemsCenter()
 	if checked.Get() {
-		ring.Children(Div().Size(10, 10).Rounded(5).Bg(RGB(0x3b5bdb)))
+		ring.Children(Div().Size(10, 10).Rounded(5).Bg(tm.Accent))
 	}
 	if group != nil {
 		group.Add(checked)
@@ -78,9 +79,10 @@ func RadioRing(checked *core.Property[bool], group *ButtonGroup, onToggle ...fun
 
 // Radio is a labelled radio button (see RadioRing); the label clicks too.
 func Radio(checked *core.Property[bool], label string, group *ButtonGroup, onToggle ...func(bool)) Element {
+	tm := CurrentTheme()
 	ring := RadioRing(checked, group, onToggle...)
 	return Div().Row().Gap(10).ItemsCenter().OnClick(ring.onClick()).
-		Children(ring, Text(label, RGB(0xd4d4e0)))
+		Children(ring, Text(label, tm.Label))
 }
 
 // Check states of a TriCheckbox (Qt's Qt::CheckState).
@@ -95,16 +97,17 @@ const (
 // PartiallyChecked, Checked). A click moves it on through the three in
 // that order, as Qt's does; onChange runs after with the new state.
 func TriCheckbox(state *core.Property[int], label string, onChange ...func(int)) Element {
+	tm := CurrentTheme()
 	box := Div().Size(20, 20).Rounded(5)
 	switch state.Get() {
 	case Checked:
-		box.Bg(RGB(0x3b5bdb)).Children(Div().Size(8, 8).Bg(RGB(0xffffff)).Rounded(2)).
+		box.Bg(tm.Accent).Children(Div().Size(8, 8).Bg(tm.OnAccent).Rounded(2)).
 			JustifyCenter().ItemsCenter()
 	case PartiallyChecked:
-		box.Bg(RGB(0x3b5bdb)).Children(Div().Size(10, 2).Bg(RGB(0xffffff))).
+		box.Bg(tm.Accent).Children(Div().Size(10, 2).Bg(tm.OnAccent)).
 			JustifyCenter().ItemsCenter()
 	default:
-		box.Border(2, RGB(0x4a4a5c))
+		box.Border(2, tm.Outline)
 	}
 	return Div().Row().Gap(10).ItemsCenter().
 		OnClick(func() {
@@ -114,5 +117,5 @@ func TriCheckbox(state *core.Property[int], label string, onChange ...func(int))
 				f(v)
 			}
 		}).
-		Children(box, Text(label, RGB(0xd4d4e0)))
+		Children(box, Text(label, tm.Label))
 }
