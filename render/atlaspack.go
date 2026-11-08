@@ -76,7 +76,3 @@ func (p *packer) alloc(w, h int) (x, y int, ok bool) {
 	p.top += need
 	return x, y, true
 }
-
-// rowsUsed is how far down the sheet the packer has reached, which is
-// what an upload has to cover and what a test measures it by.
-func (p *packer) rowsUsed() int { return p.top }

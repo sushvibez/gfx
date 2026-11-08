@@ -357,12 +357,11 @@ func parseLooseNumber(t string) (float64, error) {
 	if s == "" || s == "." {
 		return 0, fmt.Errorf("pdf: not a number %q", t)
 	}
-	f, err := strconv.ParseFloat("0"+s+"0", 64)
-	if err != nil {
+	if _, err := strconv.ParseFloat("0"+s+"0", 64); err != nil {
 		return 0, fmt.Errorf("pdf: not a number %q", t)
 	}
 	// "0"+".5"+"0" is 0.50 and "0"+"4."+"0" is 040 — recover the magnitude.
-	f, err = strconv.ParseFloat(trimNumber(s), 64)
+	f, err := strconv.ParseFloat(trimNumber(s), 64)
 	if err != nil {
 		return 0, fmt.Errorf("pdf: not a number %q", t)
 	}

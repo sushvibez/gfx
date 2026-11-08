@@ -491,16 +491,6 @@ func (r *Renderer2D) fillGradientStopsRule(p *Path, c0, c1 RGBA, angleRad, s0, s
 	b.count += len(tris)
 }
 
-// triangulateSubs tessellates a path's subpaths with hole support. A single
-// subpath ear-clips directly; multiple subpaths tessellate by even-odd
-// scanline slabs (SVG fill-rule evenodd) — robust for letter counters, icon
-// ring gaps, nested islands and self-intersections alike: each horizontal
-// slab between consecutive vertex Ys pairs its crossing edges left-to-right
-// and emits the trapezoids between odd/even pairs.
-func triangulateSubs(subs [][]core.Vec2, out []core.Vec2) []core.Vec2 {
-	return triangulateRule(subs, EvenOdd, out)
-}
-
 // fillEdge is one edge of an outline, oriented downward, remembering which
 // way the original ran: the winding rule sums those directions.
 type fillEdge struct {
@@ -907,31 +897,6 @@ func anyReflexInside(poly []core.Vec2, idx []int, reflex []bool, ear int, a, b, 
 	m := len(idx)
 	for j := 0; j < m; j++ {
 		if !reflex[j] || j == ear || j == (ear+m-1)%m || j == (ear+1)%m {
-			continue
-		}
-		p := poly[idx[j]]
-		if p.X < minX || p.X > maxX || p.Y < minY || p.Y > maxY {
-			continue
-		}
-		if pointInTri(p, a, b, c) {
-			return true
-		}
-	}
-	return false
-}
-
-func anyInside(poly []core.Vec2, idx []int, ear int, a, b, c core.Vec2) bool {
-	// The ear's bounding box first: a point outside it cannot be inside
-	// the triangle, and the box test is three comparisons against a
-	// point-in-triangle's three cross products. On the shapes page's
-	// mandala and rose curves — outlines of a thousand-odd points, where
-	// this is the O(n^3) inner loop — it is the difference between a
-	// frame taking seconds and taking milliseconds.
-	minX, maxX := min(a.X, min(b.X, c.X)), max(a.X, max(b.X, c.X))
-	minY, maxY := min(a.Y, min(b.Y, c.Y)), max(a.Y, max(b.Y, c.Y))
-	m := len(idx)
-	for j := 0; j < m; j++ {
-		if j == ear || j == (ear+m-1)%m || j == (ear+1)%m {
 			continue
 		}
 		p := poly[idx[j]]

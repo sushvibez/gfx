@@ -259,7 +259,6 @@ func (p *parser) addLine(ln string) {
 				break
 			}
 			p.closeFrom(matched)
-			matched = len(p.stack)
 			b := p.addBlock(&block{node: &Node{Kind: CodeBlock}})
 			b.lines = append(b.lines, p.keep(rest[4:]))
 			return

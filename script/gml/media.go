@@ -18,7 +18,6 @@ package gml
 // (and adding ogg/mp3 decoding) is the step that would make these real.
 
 import (
-	"strings"
 	"time"
 
 	"github.com/sushvibez/gfx/ui"
@@ -378,13 +377,4 @@ func isMediaType(t string) bool {
 		return true
 	}
 	return false
-}
-
-// mediaSourceName is the display name of a media source (its last path
-// segment), for a page that labels what it would be playing.
-func mediaSourceName(src string) string {
-	if i := strings.LastIndexByte(src, '/'); i >= 0 {
-		return src[i+1:]
-	}
-	return src
 }

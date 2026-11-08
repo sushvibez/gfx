@@ -75,14 +75,6 @@ func (g *dragAttrs) read(a attr) bool {
 	return true
 }
 
-// dragAttrNames are the attribute names dragAttrs.read takes.
-var dragAttrNames = map[string]bool{
-	"drag.target": true, "drag.axis": true, "drag.threshold": true,
-	"drag.minimumX": true, "drag.maximumX": true, "drag.minimumY": true, "drag.maximumY": true,
-	"drag.handler": true, "drag.xEnabled": true, "drag.yEnabled": true,
-	"drag.onTranslationChanged": true, "drag.onActiveChanged": true,
-}
-
 // dragLimit evaluates an optional bound (ok false when absent or bad).
 func dragLimit(e expr, env *Env) (float32, bool) {
 	if e == nil {

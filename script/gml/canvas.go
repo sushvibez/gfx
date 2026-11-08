@@ -177,14 +177,6 @@ type gradStop struct {
 	col ui.RGBA
 }
 
-// endColors returns the gradient's start and end colors (first/last stops).
-func (g *canvasGradient) endColors() (ui.RGBA, ui.RGBA) {
-	if len(g.stops) == 0 {
-		return ui.RGBA{A: 1}, ui.RGBA{A: 1}
-	}
-	return g.stops[0].col, g.stops[len(g.stops)-1].col
-}
-
 // fillPath fills a path with this gradient: every stop counts, so a sky
 // ramped purple → pink → orange → gold paints all four.
 func (g *canvasGradient) fillPath(r *render.Renderer2D, p *render.Path, tf affine, rule render.FillRule) {

@@ -1437,15 +1437,6 @@ func buildFresh(n *node, env *Env, doc *docState) (built ui.Element, buildErr er
 	return el, nil
 }
 
-// tintToward mixes a color toward white (target 1) or black (target 0) by
-// amount, keeping alpha — hover/press variants of palette colors.
-func tintToward(c ui.RGBA, target, amount float32) ui.RGBA {
-	c.R += (target - c.R) * amount
-	c.G += (target - c.G) * amount
-	c.B += (target - c.B) * amount
-	return c
-}
-
 // materializeElemDefault converts an element-valued property default (the
 // parser keeps the element node) into its runtime value: FontLoader
 // instantiates into its {name, source, status} object; unmodeled element
@@ -3282,23 +3273,6 @@ func (doc *docState) geoToken(key keyID, el ui.Element) *core.Property[uint64] {
 		doc.geoTok.set(key, t)
 	}
 	return t
-}
-
-// prevGeom is last frame's element for key, with the dependency on its
-// geometry recorded — so a build that SIZES ITSELF from what it measured
-// last frame is stale the moment that measurement changes.
-//
-// Reading doc.prevElems without this is a staleness bug waiting for the
-// subtree to become cacheable. The Tumbler was the one that surfaced it:
-// it derives its row height from the box it was given last frame, and
-// attaches its drag and fling handlers only once that height is known.
-// Uncached it rebuilt every frame and reached that point on the second;
-// cached, it kept the first frame's handler-less wheel for ever, and the
-// wheel stopped responding to a drag.
-func (doc *docState) prevGeom(key keyID) ui.Element {
-	el := doc.prevElems.get(key)
-	doc.geoToken(key, el).Get()
-	return el
 }
 
 // refreshScopeGeometry re-points the id objects in a captured scope at last
@@ -5485,22 +5459,6 @@ func buildGrid(n *node, env *Env, doc *docState) (ui.Element, error) {
 	return g, nil
 }
 
-// anyRowSpan reports whether any child asked to span more than one row.
-func anyRowSpan(spans [][2]int) bool {
-	for _, s := range spans {
-		if s[1] > 1 {
-			return true
-		}
-	}
-	return false
-}
-
-// gridCell is one placed item: its element and how many columns it spans.
-type gridCell struct {
-	el   ui.Element
-	cols int
-}
-
 // gridSpans reads each visual child's Layout.columnSpan / Layout.rowSpan.
 func gridSpans(n *node, env *Env, kids int) [][2]int {
 	out := make([][2]int, 0, kids)
@@ -5536,57 +5494,6 @@ func gridSpans(n *node, env *Env, kids int) [][2]int {
 		out = append(out, [2]int{1, 1})
 	}
 	return out
-}
-
-// placeGrid assigns items to cells the way QtQuick.Layouts does: left to
-// right, top to bottom, skipping cells a previous item's span already
-// occupies. A row-spanning item keeps its slot in the rows below reserved
-// (it is not re-placed there — its own row stretches instead).
-func placeGrid(kids []ui.Element, spans [][2]int, columns int) [][]gridCell {
-	if columns < 1 {
-		columns = 1
-	}
-	occupied := map[[2]int]bool{}
-	var rows [][]gridCell
-	r, c := 0, 0
-	for i, el := range kids {
-		span := [2]int{1, 1}
-		if i < len(spans) {
-			span = spans[i]
-		}
-		if span[0] > columns {
-			span[0] = columns
-		}
-		// Find the next free cell.
-		for {
-			if c+span[0] > columns {
-				r, c = r+1, 0
-				continue
-			}
-			free := true
-			for k := 0; k < span[0]; k++ {
-				if occupied[[2]int{r, c + k}] {
-					free = false
-					break
-				}
-			}
-			if free {
-				break
-			}
-			c++
-		}
-		for dr := 0; dr < span[1]; dr++ {
-			for dc := 0; dc < span[0]; dc++ {
-				occupied[[2]int{r + dr, c + dc}] = true
-			}
-		}
-		for len(rows) <= r {
-			rows = append(rows, nil)
-		}
-		rows[r] = append(rows[r], gridCell{el: el, cols: span[0]})
-		c += span[0]
-	}
-	return rows
 }
 
 // parentObject is the `parent` scope object a container exposes to its

@@ -62,16 +62,6 @@ func (st *fileDialogState) pick(path string, multi bool) {
 // clearSelection drops the picked files (navigating to another directory).
 func (st *fileDialogState) clearSelection() { _ = st.sel.set([]any{}) }
 
-// isPicked reports whether path is in the selection.
-func (st *fileDialogState) isPicked(path string) bool {
-	for _, p := range st.selection() {
-		if p == path {
-			return true
-		}
-	}
-	return false
-}
-
 // isOpen reports whether the dialog is showing.
 func (st *fileDialogState) isOpen() bool {
 	b, _ := toBool(st.open.get())

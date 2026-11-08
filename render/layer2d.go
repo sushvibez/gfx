@@ -330,19 +330,6 @@ func chainWeights(n int) []float32 {
 	return out
 }
 
-// runningAlphas turns a normalized weight list into the OVER alphas that
-// reproduce it when the images are drawn one atop the last: each entry is
-// that image's share of the weight drawn so far (see blurTapAlphas).
-func runningAlphas(w []float32) []float32 {
-	out := make([]float32, len(w))
-	var acc float32
-	for i, x := range w {
-		acc += x
-		out[i] = x / acc
-	}
-	return out
-}
-
 // Release frees the target textures.
 func (l *Layer2D) Release() { l.release(); l.releaseMips(); l.w, l.h = 0, 0 }
 

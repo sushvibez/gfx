@@ -436,12 +436,3 @@ func floatRef(r Ref) float64 {
 	f, _ := toFloat64(r.get())
 	return f
 }
-
-// isPdfViewType reports the PDF viewer items (visual, but page-less here).
-func isPdfViewType(t string) bool {
-	switch t {
-	case "PdfMultiPageView", "PdfPageView", "PdfScrollablePageView":
-		return true
-	}
-	return false
-}
