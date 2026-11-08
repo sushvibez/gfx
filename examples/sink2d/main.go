@@ -44,6 +44,7 @@ func gmlView() (func() ui.Element, error) {
 }
 
 func main() {
+	ui.SetTheme(ui.DarkTheme()) // a dark app: its controls drawn dark
 	gmlMode := flag.Bool("gml", false, "render the QML-style .gml version")
 	shot := flag.String("screenshot", "", "render headlessly and write a PNG")
 	frames := flag.Int("frames", 0, "exit after N frames")

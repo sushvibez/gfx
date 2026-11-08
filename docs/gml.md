@@ -482,7 +482,8 @@ on Button, `Spacer { }`.
 ### Controls
 
 Unstyled controls are drawn in the controls kit's theme (`ui.Theme`, see
-`docs/ui.md`). `Material.theme` (`Material.Light`, `Material.Dark`,
+`docs/ui.md`): light on a light page, dark on a dark one, measured from the
+page's ground. `Material.theme` (`Material.Light`, `Material.Dark`,
 `Material.System` as light), `Material.accent` (a `Material.Teal`-style
 swatch or any colour; `Material.primary` too), `Material.background` and
 `Material.foreground` on any item theme the controls inside it, and

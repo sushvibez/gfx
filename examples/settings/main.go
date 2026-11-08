@@ -93,6 +93,7 @@ func (s *state) view() ui.Element {
 }
 
 func main() {
+	ui.SetTheme(ui.DarkTheme()) // a dark app: its controls drawn dark
 	frames := flag.Int("frames", 0, "exit after N frames (0 = run until closed)")
 	shot := flag.String("screenshot", "", "render headlessly and write a PNG")
 	flag.Parse()

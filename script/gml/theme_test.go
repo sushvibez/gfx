@@ -10,7 +10,7 @@ import (
 // it, a nested item can switch back, and a bound theme follows its
 // binding.
 func TestMaterialTheme(t *testing.T) {
-	defer ui.SetTheme(ui.DefaultTheme())
+	defer ui.SetTheme(ui.LightTheme())
 	src := `
 import QtQuick 2.15
 import QtQuick.Controls 2.15

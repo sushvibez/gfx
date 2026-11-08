@@ -214,7 +214,11 @@ func (d *Document) View() func() ui.Element {
 			}
 		}
 		d.doc.beginFrame()
+		// The page's controls are drawn in a theme that suits its ground (theme.go).
+		pageDark := d.doc.groundDark
+		d.doc.pageTheme.Push(pageTheme(pageDark))
 		el, err := build(rootForBuild(d.root), d.env, d.doc)
+		d.doc.pageTheme.Pop()
 		if err != nil {
 			d.doc.invalidateCache()
 			return errorBanner(fmt.Errorf("%s: %w", d.doc.baseDir, err))
@@ -265,9 +269,11 @@ func (d *Document) View() func() ui.Element {
 			// filled (QML's imperative `append` idiom) is then visible in
 			// the very frame that completed the document, as in Qt.
 			if completionChanged {
+				d.doc.pageTheme.Push(pageTheme(pageDark))
 				if el2, err := build(rootForBuild(d.root), d.env, d.doc); err == nil && el2 != nil {
 					el = el2
 				}
+				d.doc.pageTheme.Pop()
 			}
 		}
 		// Property defaults that reference a Control's own state
@@ -288,6 +294,11 @@ func (d *Document) View() func() ui.Element {
 		d.doc.obsRev = d.doc.observableSignature()
 		d.doc.geoSig, d.doc.geoKnown = geo, geoKnown
 		d.doc.haveSigs = !completionChanged
+		// The ground is measured from the tree just built: when it turns out
+		// other than the theme the page was built in, build once more.
+		if d.doc.groundDark != pageDark {
+			d.doc.haveSigs = false
+		}
 		return el
 	}
 }

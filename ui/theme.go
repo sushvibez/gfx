@@ -8,11 +8,11 @@ import "github.com/sushvibez/gfx/core"
 // as it is built (SetTheme changes it for the whole program, and a
 // control's options can carry one of its own).
 //
-// DefaultTheme is the look the controls have always had: light kit
-// surfaces (buttons, fields, dialogs, tabs) with the original dark-ground
-// form controls (check boxes, sliders, text inputs) and a dark menu card.
-// LightTheme and DarkTheme are consistent all the way through; an app
-// picks one with SetTheme.
+// A program starts in LightTheme; a dark app calls SetTheme(DarkTheme())
+// once at start. Both are consistent all the way through. ClassicTheme is
+// the controls' look before themes: light kit surfaces (buttons, fields,
+// dialogs, tabs) with dark-ground form controls (check boxes, sliders,
+// text inputs) and a dark menu card.
 type Theme struct {
 	Dark bool // drawn for a dark page
 
@@ -28,6 +28,7 @@ type Theme struct {
 
 	Outline                   RGBA // an unchecked check box
 	Track, Knob, KnobDisabled RGBA // a slider or dial
+	KnobBorder                RGBA // a ring round the knob (none when clear)
 	SwitchOff                 RGBA // an unchecked switch's track
 
 	Field, FieldButton    RGBA // a combo or spin box, and a spin box's buttons
@@ -50,8 +51,9 @@ type Theme struct {
 	Indicator RGBA // a page indicator's dots (the current one; the rest are faded)
 }
 
-// DefaultTheme is the controls' original look (see Theme).
-func DefaultTheme() Theme {
+// ClassicTheme is the controls' look before themes (see Theme), which
+// LightTheme and DarkTheme start from.
+func ClassicTheme() Theme {
 	return Theme{
 		Window: RGB(0xf0f0f0),
 		Accent: RGB(0x3b5bdb), AccentHover: RGB(0x4c6ef5), AccentPress: RGB(0x2f44ad),
@@ -76,11 +78,12 @@ func DefaultTheme() Theme {
 
 // LightTheme is light throughout: dark text on white fields and cards.
 func LightTheme() Theme {
-	t := DefaultTheme()
+	t := ClassicTheme()
 	t.Window = RGB(0xf8f9fa)
 	t.Label = RGB(0x1a1a1a)
 	t.Outline = RGB(0x868e96)
 	t.Track, t.Knob, t.KnobDisabled = RGB(0xdee2e6), RGB(0xffffff), RGB(0xced4da)
+	t.KnobBorder = RGB(0xadb5bd)
 	t.Input, t.InputBorder, t.InputText = RGB(0xffffff), RGB(0xced4da), RGB(0x111111)
 	t.Menu, t.MenuBorder, t.MenuHover = RGB(0xffffff), RGB(0xced4da), RGB(0xe7f0ff)
 	t.MenuText, t.MenuDim = RGB(0x111111), RGB(0xadb5bd)
@@ -90,7 +93,7 @@ func LightTheme() Theme {
 
 // DarkTheme is dark throughout: light text on charcoal fields and cards.
 func DarkTheme() Theme {
-	t := DefaultTheme()
+	t := ClassicTheme()
 	t.Dark = true
 	t.Window = RGB(0x17181d)
 	t.Text, t.Label, t.Dim, t.Border = RGB(0xe8e8f0), RGB(0xd4d4e0), RGB(0x868e96), RGB(0x3a3d47)
@@ -125,7 +128,7 @@ func CurrentTheme() Theme {
 	}
 	if !themeInited {
 		themeInited = true
-		theme.Set(DefaultTheme())
+		theme.Set(LightTheme())
 	}
 	return theme.Get()
 }

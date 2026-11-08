@@ -1844,6 +1844,7 @@ type docState struct {
 	delays        map[string]*ui.DelayState         // each DelayButton's hold progress
 	splits        map[string]*ui.SplitState         // each SplitView's dragged handles
 	themeScopes   map[string]*ui.ThemeScope         // each item's own controls theme (theme.go)
+	pageTheme     ui.ThemeScope                     // the page's base theme, from its ground (theme.go)
 	activities    map[string]*ui.Activity           // each indeterminate ProgressBar's / BusyIndicator's loop
 	activitySeen  map[string]bool                   // ... built this frame (the rest are stopped)
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
@@ -6777,9 +6778,6 @@ func buildSlider(n *node, env *Env, doc *docState) (ui.Element, error) {
 	return s, nil
 }
 
-// labelColor is the dark text used for Controls labels on a light theme.
-const labelColor = 0x111111
-
 // boolBinding resolves a control's bool attribute: a bound property (Ref, which
 // can be toggled) or a plain literal (display-only, ref nil). QML allows both
 // `checked: someProp` and `checked: true`.
@@ -6987,7 +6985,7 @@ func withLabel(indicator ui.Element, label string) ui.Element {
 	if label == "" {
 		return indicator
 	}
-	return ui.Div().Row().ItemsCenter().Gap(8).Children(indicator, ui.Text(label, ui.RGB(labelColor)))
+	return ui.Div().Row().ItemsCenter().Gap(8).Children(indicator, ui.Text(label, ui.CurrentTheme().Text)) // dark on a light page, light on a dark one
 }
 
 // buildSwitch is a Qt Quick Controls Switch: a pill track with a knob bound to

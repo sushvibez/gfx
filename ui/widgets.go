@@ -192,6 +192,7 @@ func (e *SliderEl) paintSig() uint64 {
 	h.col(e.tm.Accent)
 	h.col(e.tm.Knob)
 	h.col(e.tm.KnobDisabled)
+	h.col(e.tm.KnobBorder)
 	h.f32(e.trackPx)
 	h.f32(e.knobPx)
 	h.b(e.disabled)
@@ -207,8 +208,10 @@ func (e *SliderEl) paint(ctx *Context) {
 	}
 	tm := e.tm
 	track, fill, knob := tm.Track, tm.Accent, tm.Knob
+	ring := tm.KnobBorder
 	if e.hasColors {
 		track, fill, knob = e.trackC, e.fillC, e.knobC
+		ring = RGBA{} // colours of its own: no theme ring
 	}
 	if e.disabled {
 		fill, knob = track, tm.KnobDisabled
@@ -236,7 +239,7 @@ func (e *SliderEl) paint(ctx *Context) {
 		ctx.R.FillRoundRect(cx-th/2, trackY, th, trackH, th/2, track)
 		ctx.R.FillRoundRect(cx-th/2, trackY, th, trackH*vp, th/2, fill)
 		knobY := trackY + trackH*vp
-		ctx.R.FillRoundRect(cx-kr, knobY-kr, 2*kr, 2*kr, kr, knob)
+		paintKnob(ctx, cx, knobY, kr, knob, ring)
 		return
 	}
 	cy := e.rect.Y + e.rect.H/2
@@ -244,7 +247,7 @@ func (e *SliderEl) paint(ctx *Context) {
 	ctx.R.FillRoundRect(trackX, cy-th/2, trackW, th, th/2, track)
 	ctx.R.FillRoundRect(trackX, cy-th/2, trackW*v, th, th/2, fill)
 	knobX := trackX + trackW*v
-	ctx.R.FillRoundRect(knobX-kr, cy-kr, 2*kr, 2*kr, kr, knob)
+	paintKnob(ctx, knobX, cy, kr, knob, ring)
 }
 
 func (e *SliderEl) hit(x, y float32) Element {
@@ -349,7 +352,7 @@ func (e *RangeSliderEl) paint(ctx *Context) {
 		ctx.R.FillRoundRect(cx-2, y0, 4, trackH*(b-a), 2, fill)
 		for _, f := range [2]float32{a, b} {
 			cy := trackY + trackH*(1-f)
-			ctx.R.FillRoundRect(cx-sliderKnob, cy-sliderKnob, 2*sliderKnob, 2*sliderKnob, sliderKnob, knob)
+			paintKnob(ctx, cx, cy, sliderKnob, knob, tm.KnobBorder)
 		}
 		return
 	}
@@ -359,7 +362,7 @@ func (e *RangeSliderEl) paint(ctx *Context) {
 	ctx.R.FillRoundRect(trackX+trackW*a, cy-2, trackW*(b-a), 4, 2, fill)
 	for _, f := range [2]float32{a, b} {
 		kx := trackX + trackW*f
-		ctx.R.FillRoundRect(kx-sliderKnob, cy-sliderKnob, 2*sliderKnob, 2*sliderKnob, sliderKnob, knob)
+		paintKnob(ctx, kx, cy, sliderKnob, knob, tm.KnobBorder)
 	}
 }
 
@@ -476,4 +479,14 @@ func (e *DialEl) turnTo(x, y float32) {
 	if e.moved != nil {
 		e.moved()
 	}
+}
+
+// paintKnob draws a slider's round knob at (cx, cy), with a one-pixel ring
+// round it when ring is set (a light theme's white knob on a light page).
+func paintKnob(ctx *Context, cx, cy, r float32, knob, ring RGBA) {
+	if ring.A > 0 {
+		ctx.R.FillRoundRect(cx-r, cy-r, 2*r, 2*r, r, ring)
+		r--
+	}
+	ctx.R.FillRoundRect(cx-r, cy-r, 2*r, 2*r, r, knob)
 }

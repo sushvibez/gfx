@@ -565,9 +565,9 @@ rebuilds when the scope's theme changes.
 
 | Theme | Look |
 |-------|------|
-| `ui.DefaultTheme()` | the controls' original look, and the default: light kit surfaces with dark-ground check boxes, sliders and inputs and a dark menu card |
-| `ui.LightTheme()` | light throughout |
-| `ui.DarkTheme()` | dark throughout |
+| `ui.LightTheme()` | light throughout, and what a program starts in (Qt's Basic look) |
+| `ui.DarkTheme()` | dark throughout: a dark app calls `ui.SetTheme(ui.DarkTheme())` once at start |
+| `ui.ClassicTheme()` | the controls' look before themes: light kit surfaces with dark-ground check boxes, sliders and inputs and a dark menu card |
 
 ```go
 ui.SetTheme(ui.DarkTheme().WithAccent(ui.RGB(0x12b886))) // hover and press shades follow
@@ -578,7 +578,8 @@ panel := sidebar()
 side.Pop()
 ```
 
-In gml, `Material.theme`, `Material.accent` (or `Universal`'s) and the
+A gml page's controls start in the light or dark theme to suit the page's
+ground, and `Material.theme`, `Material.accent` (or `Universal`'s) and the
 palette roles on any item theme the controls inside it (`docs/gml.md`).
 
 Beyond the theme, colour, radius, padding and shadow are set per element.

@@ -7,7 +7,7 @@ import (
 )
 
 func TestTheme(t *testing.T) {
-	defer SetTheme(DefaultTheme())
+	defer SetTheme(LightTheme())
 	var on core.Property[bool]
 	on.Set(true)
 	// The default theme is the look the controls had before themes.
@@ -41,7 +41,7 @@ func TestTheme(t *testing.T) {
 	if c, _ := FillColor(Button("Go", ButtonOpts{Theme: &light})); c != light.Accent {
 		t.Errorf("button with its own theme %v, want %v", c, light.Accent)
 	}
-	if !DarkTheme().Dark || LightTheme().Dark || DefaultTheme().Dark {
+	if !DarkTheme().Dark || LightTheme().Dark || ClassicTheme().Dark {
 		t.Error("Dark flags")
 	}
 }

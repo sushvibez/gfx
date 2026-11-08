@@ -203,3 +203,19 @@ func (doc *docState) themeScope(n *node) *ui.ThemeScope {
 	}
 	return s
 }
+
+// pageTheme is the theme a page's controls start in: the program's, light
+// or dark to suit the page's ground — a dark app's TextField is dark, a
+// light page's CheckBox label dark on light — keeping the program's
+// accent. Material.theme and the palette roles still override it.
+func pageTheme(dark bool) ui.Theme {
+	cur := ui.CurrentTheme()
+	if cur.Dark == dark {
+		return cur
+	}
+	t := ui.LightTheme()
+	if dark {
+		t = ui.DarkTheme()
+	}
+	return t.WithAccent(cur.Accent)
+}
