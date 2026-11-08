@@ -6444,16 +6444,10 @@ func textAlign(a attr, env *Env, horizontal bool) (ui.Align, error) {
 // buildButton is the Qt-Quick-Controls-flavored button: text + onClicked,
 // styled with the framework's defaults unless overridden.
 func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
-	d := ui.Div().Size(96, 38).Bg(ui.RGB(0x3b5bdb)).Rounded(9).
-		HoverBg(ui.RGB(0x4c6ef5)).PressBg(ui.RGB(0x2f44ad)).
-		JustifyCenter().ItemsCenter()
+	var o ui.ButtonOpts
 	var label string
 	var onClicked []stmt
-	textColor := ui.RGB(0xffffff)
-	hasTextColor := false
-	var palette ui.RGBA
-	hasPalette := false
-	flat, highlighted := false, false
+	var checkedRef Ref
 	iconSrc := ""
 	var iconColor ui.RGBA
 	hasIconColor := false
@@ -6491,56 +6485,48 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if f, err := attrFloat(a, env); err == nil && f > 0 {
 				iconH = f
 			}
-		case "textColor": // extension
+		case "textColor", "palette.buttonText": // textColor is an extension
 			c, err := attrColor(a, env)
 			if err != nil {
 				return nil, err
 			}
-			textColor = c
-		case "width":
+			o.TextColor = c
+		case "width", "height", "radius":
 			f, err := attrFloat(a, env)
 			if err != nil {
 				return nil, err
 			}
-			d.W(f)
-		case "height":
-			f, err := attrFloat(a, env)
-			if err != nil {
-				return nil, err
+			switch a.name {
+			case "width":
+				o.Width = f
+			case "height":
+				o.Height = f
+			case "radius":
+				o.Radius = f
 			}
-			d.H(f)
-		case "color":
+		case "color", "palette.button":
 			c, err := attrColor(a, env)
 			if err != nil {
 				return nil, err
 			}
-			d.Bg(c)
-		case "radius":
-			f, err := attrFloat(a, env)
-			if err != nil {
-				return nil, err
-			}
-			d.Rounded(f)
+			o.Color = c
 		case "onClicked":
 			onClicked = a.stmt
-		case "flat":
+		case "flat", "highlighted", "enabled":
 			if b, err := attrBool(a, env); err == nil {
-				flat = b
+				switch a.name {
+				case "flat":
+					o.Flat = b
+				case "highlighted":
+					o.Highlighted = b
+				case "enabled":
+					o.Disabled = !b
+				}
 			}
-		case "highlighted":
-			if b, err := attrBool(a, env); err == nil {
-				highlighted = b
-			}
-		case "palette.button":
-			if c, err := attrColor(a, env); err == nil {
-				palette, hasPalette = c, true
-			}
-		case "palette.buttonText":
-			if c, err := attrColor(a, env); err == nil {
-				textColor, hasTextColor = c, true
-			}
-		case "checkable", "checked", "down", "autoRepeat",
-			"display", "enabled", "focusPolicy", "hoverEnabled", "spacing",
+		case "checked":
+			checkedRef, _ = boolBinding(doc, n, a, env)
+		case "checkable", "down", "autoRepeat",
+			"display", "focusPolicy", "hoverEnabled", "spacing",
 			"padding", "leftPadding", "rightPadding", "topPadding", "bottomPadding",
 			"font.pixelSize", "font.pointSize", "font.bold", "font.family",
 			"palette.highlight",
@@ -6550,48 +6536,13 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: Button has no attribute %q", a.line, a.name)
 		}
 	}
-	// Palette / flat / highlighted styling (Qt Quick Controls basic style):
-	// palette.button recolors the solid background (hover lighter, press
-	// darker); a FLAT button has no background at rest — its palette color
-	// becomes the TEXT color and a translucent tint appears on hover.
-	switch {
-	case flat:
-		d.Bg(ui.RGBA{})
-		accent := ui.RGB(0x3b5bdb)
-		if hasPalette {
-			accent = palette
+	if checkedRef != nil && attrIsTrue(n, "checkable", env) {
+		if pr, _, ok := propOf[bool](checkedRef); ok {
+			o.Checked = pr.p
 		}
-		if !hasTextColor {
-			textColor = accent
-		}
-		hov := accent
-		hov.A = 0.15
-		prs := accent
-		prs.A = 0.3
-		d.HoverBg(hov).PressBg(prs)
-	case hasPalette:
-		d.Bg(palette).HoverBg(tintToward(palette, 1, 0.15)).PressBg(tintToward(palette, 0, 0.2))
-	case highlighted:
-		d.Bg(ui.RGB(0x4c6ef5)).HoverBg(ui.RGB(0x5c7cfa)).PressBg(ui.RGB(0x3b5bdb))
-	}
-
-	// Own onClicked + any Connections targeting this button's id.
-	connected := doc.connectedHandler(nodeID(n), "onClicked", env)
-	if onClicked != nil || connected != nil {
-		run := doc.handlerRunner(env)
-		d.OnClick(func() {
-			doc.noteTrigger(d)
-			if onClicked != nil {
-				run(onClicked, "onClicked")
-			}
-			if connected != nil {
-				connected()
-			}
-		})
 	}
 	// Icon (icon.source / icon.name): SVGs render tinted vectors; raster
 	// sources go through the image cell. Sits left of the label like Qt.
-	var kids []ui.Element
 	if iconSrc != "" {
 		lower := strings.ToLower(iconSrc)
 		if strings.HasSuffix(lower, ".svg") || strings.HasPrefix(iconSrc, "icon:") {
@@ -6600,21 +6551,30 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 				if hasIconColor {
 					ic.Tint(iconColor)
 				}
-				kids = append(kids, ic)
+				o.Icon = ic
 			}
 		} else if cell := doc.imageCell(iconSrc); cell != nil {
-			kids = append(kids, ui.LazyImage(cell, iconW, iconH))
+			o.Icon = ui.LazyImage(cell, iconW, iconH)
 		}
 	}
-	if label != "" || len(kids) == 0 {
-		// A label wider than the button it was squeezed into elides, as
-		// Qt's does — it never spills over the neighbouring control.
-		kids = append(kids, ui.Text(label, textColor).Truncate())
+	// Own onClicked + any Connections targeting this button's id.
+	var d *ui.DivEl
+	connected := doc.connectedHandler(nodeID(n), "onClicked", env)
+	if onClicked != nil || connected != nil {
+		run := doc.handlerRunner(env)
+		o.OnClick = func() {
+			doc.noteTrigger(d)
+			if onClicked != nil {
+				run(onClicked, "onClicked")
+			}
+			if connected != nil {
+				connected()
+			}
+		}
 	}
-	if len(kids) > 1 {
-		d.Row().Gap(6) // icon left of the label, like Qt
-	}
-	out := d.Clip().Children(kids...)
+	d = ui.Button(label, o)
+	out := d
+
 	// A button's children: the Menu a ToolButton opens (`onClicked:
 	// fileMenu.open()` needs the menu BUILT for its id to carry open()),
 	// timers, connections. Popups float in their own overlay, so they hang
@@ -7110,24 +7070,25 @@ func buildSwitch(n *node, env *Env, doc *docState) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: Switch has no attribute %q", a.line, a.name)
 		}
 	}
-	track := ui.Div().Size(40, 22).Rounded(11).ItemsCenter().P(2)
-	if on {
-		track.Bg(ui.RGB(0x3b5bdb)).Justify(ui.AlignEnd)
-	} else {
-		track.Bg(ui.RGB(0xb0b4bf)).Justify(ui.AlignStart)
+	_ = on
+	if ref == nil {
+		// No `checked` attribute: the control owns its checked state.
+		ref = doc.boolProp(doc.key(n)+".checked", false)
+		doc.exposeIDProp(n, "checked", ref)
 	}
-	track.Children(ui.Div().Size(18, 18).Rounded(9).Bg(ui.RGB(0xffffff)))
-	if ref != nil {
-		cur := on
-		track.OnClick(func() {
-			_ = ref.set(!cur)
-			if onToggled != nil {
-				if err := runStmts(onToggled, env); err != nil {
-					logf("gml: onToggled: %v", err)
-				}
-			}
-		})
+	pr, broke, ok := propOf[bool](ref)
+	if !ok {
+		return nil, fmt.Errorf("gml:%d: Switch checked wants a bool property", n.line)
 	}
+	run := doc.handlerRunner(env)
+	track := ui.SwitchOpts{Disabled: !enabledAttr(n, env)}.Build(pr.p, "", func(bool) {
+		if broke != "" {
+			doc.assigned[broke] = true
+		}
+		if onToggled != nil {
+			run(onToggled, "onToggled")
+		}
+	})
 	return withLabel(track, label), nil
 }
 
@@ -9240,4 +9201,15 @@ func ownerKey(n *node, doc *docState) keyID {
 		return 0
 	}
 	return doc.keyID(n.owner)
+}
+
+// enabledAttr is an element's `enabled` (true when absent or unreadable).
+func enabledAttr(n *node, env *Env) bool {
+	if e := attrExpr(n, "enabled"); e != nil {
+		if v, err := e.eval(env); err == nil {
+			b, _ := toBool(v)
+			return b
+		}
+	}
+	return true
 }
