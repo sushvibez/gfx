@@ -93,31 +93,35 @@ func (doc *docState) focusKeyOf(eo *elemObject) keyID {
 // being read.
 func (doc *docState) stampFocus(key keyID, el ui.Element) {
 	id := doc.keyStr(key)
-	req := doc.focusReq[key]
-	if req {
-		delete(doc.focusReq, key)
+	req := false
+	if len(doc.focusReq) > 0 { // almost always empty: skip the lookup
+		if req = doc.focusReq[key]; req {
+			delete(doc.focusReq, key)
+		}
 	}
 	// The report is made once per key and reused: this runs for every
 	// registered element on every frame (cached subtrees replay their
 	// registrations), and a fresh closure each time was half of a settled
 	// frame's allocations.
 	report := doc.focusReports[key]
-	if ref := doc.focusRefs[key]; ref != nil && report == nil {
-		if doc.focusReports == nil {
-			doc.focusReports = map[keyID]func(bool){}
-		}
-		report = func(on bool) {
-			setBool(ref, on)
-			// Reports run outer to inner, so the last item that has focus
-			// is the innermost: Window.activeFocusItem.
-			cur := doc.focusedKey()
-			if on && cur != key {
-				_ = doc.focusedRef().set(float64(key))
-			} else if !on && cur == key {
-				_ = doc.focusedRef().set(0.0)
+	if report == nil {
+		if ref := doc.focusRefs[key]; ref != nil {
+			if doc.focusReports == nil {
+				doc.focusReports = map[keyID]func(bool){}
 			}
+			report = func(on bool) {
+				setBool(ref, on)
+				// Reports run outer to inner, so the last item that has focus
+				// is the innermost: Window.activeFocusItem.
+				cur := doc.focusedKey()
+				if on && cur != key {
+					_ = doc.focusedRef().set(float64(key))
+				} else if !on && cur == key {
+					_ = doc.focusedRef().set(0.0)
+				}
+			}
+			doc.focusReports[key] = report
 		}
-		doc.focusReports[key] = report
 	}
 	switch e := el.(type) {
 	case *ui.DivEl:
