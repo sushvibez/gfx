@@ -46,7 +46,9 @@ if [ -f "build/wgpu/libwgpu_native.so" ] || [ -f "build/wgpu/wgpu_native.dll" ] 
   (cd examples && go run $TF ./kitchensink -screenshot "$tmp/kitchensink.png" >/dev/null)
   # frost exercises the offscreen-layer path (a second render pass per frame).
   (cd examples && go run $TF ./frost -screenshot "$tmp/frost.png" >/dev/null)
-  test -s "$tmp/settings.png" && test -s "$tmp/kitchensink.png" && test -s "$tmp/frost.png"
+  # controls is the controls kit on one page, through the Go API, with a popup open.
+  (cd examples && go run $TF ./controls -theme dark -open menu -screenshot "$tmp/controls.png" >/dev/null)
+  test -s "$tmp/settings.png" && test -s "$tmp/kitchensink.png" && test -s "$tmp/frost.png" && test -s "$tmp/controls.png"
   rm -rf "$tmp"
   echo "screenshots ok"
 else

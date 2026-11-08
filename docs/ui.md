@@ -250,18 +250,56 @@ becomes available. `TextEl.DistanceField(on)` overrides it for one run (QML's
 `renderType`). Bold and italic resolve real faces from the renderer's
 registry when one is loaded and fall back to synthetic emphasis otherwise.
 
-### Buttons
+### Controls kit
 
-There is no button type: a button is a `Div` with hover/press styles, a
-cursor, focusability and a click handler. From `examples/interact`:
+QML's Quick Controls as Go constructors, drawn in the current `ui.Theme`
+(see Theming); gml's controls are built on the same functions.
+`examples/controls` puts all of them on one page. State that has to live
+across frames is a small struct you keep (`MenuState`, `DrawerState`, …),
+like `ScrollState`.
+
+| Constructor | QML | Notes |
+|-------------|-----|-------|
+| `ui.Button(label, ui.ButtonOpts{…})` | Button | 96×38 accent button: `OnClick`, `Width`/`Height`, `Color`/`TextColor`, `Radius`, `Flat`, `Highlighted`, `Disabled`, `Icon`, `Checked *core.Property[bool]` (checkable), `Theme`; Enter/Space press it while focused |
+| `ui.ToolButton`, `ui.RoundButton` | ToolButton, RoundButton | flat and label-sized; round, 40 across |
+| `ui.DelayButton(label, &st, ui.DelayOpts{…})` | DelayButton | hold for `Delay` (300 ms) to run `OnActivated`; a bar under it fills |
+| `ui.Switch(&prop, label, onToggle…)`, `ui.SwitchOpts{Disabled}.Build(…)` | Switch | pill and knob |
+| `ui.Checkbox`, `ui.TriCheckbox`, `ui.Radio` / `ui.RadioRing` with `ui.ButtonGroup` | CheckBox, RadioButton, ButtonGroup | a group makes members exclusive |
+| `ui.ComboBox(&cur, &open, ui.ComboOpts{…})`, `ui.SpinBox(&v, ui.SpinOpts{…})` | ComboBox, SpinBox | editable through an `InputState` |
+| `ui.DialControl(&v, from, to, ui.DialOpts{…})`, `ui.DialFace(pos, size, theme)` | Dial | a painted knob over `ui.Dial`'s interaction |
+| `ui.ProgressBar(v, ui.ProgressOpts{…})`, `ui.BusyIndicator(&activity, size)` | ProgressBar, BusyIndicator | `Indeterminate: &activity` sweeps; a `ui.Activity` runs off the animation clock and asks for frames only while running |
+| `ui.MenuBar(&st, []ui.MenuBarMenu{…})`, `ui.MenuPanel(&st, items, onClose)` | MenuBar, Menu, MenuItem, Action | `ui.MenuItem{Text, OnTrigger, Checkable, Checked, Group, Disabled, Separator, Sub, Shortcut}`; submenus open to the right; Up/Down/Enter/Right/Left/Escape; `item.Activate()` is what picking it does (wire a shortcut to it) |
+| `ui.Dialog(&open, content, ui.DialogOpts{…})`, `ui.DialogFrame`, `ui.DialogButtonBox` | Dialog, DialogButtonBox | `Buttons: ui.ButtonOk \| ui.ButtonCancel` (Qt's values), `OnAccepted`/`OnRejected`/`OnClosed` |
+| `ui.Drawer(&st, content, ui.DrawerOpts{…})` | Drawer | slides in from `Edge`; drag toward the edge or click the scrim to close; `DragMargin` lets a drag from the edge open it |
+| `ui.TabBar(cur, []ui.Tab{…}, onSelect)` | TabBar, TabButton | Left/Right with focus |
+| `ui.Tumbler(&st, cur, set, ui.TumblerOpts{…}, item)` | Tumbler | drag a row at a time, flick to coast, Up/Down; `item(i, displacement)` draws a row |
+| `ui.PageIndicator(n, cur, onSelect, ui.PageIndicatorOpts{})` | PageIndicator | |
+| `ui.SplitView(&st, []ui.SplitPane{…}, ui.SplitOpts{…})` | SplitView | panes with `Preferred`/`Minimum`/`Maximum`/`Fill`; handles drag within the limits |
+| `ui.ToolTip(text)`, `(&st).Attach(el, text, ui.ToolTipOpts{Delay, Timeout})` | ToolTip | `Track`/`Due` for a host with its own rule for when it shows |
+| `ui.Separator(vertical)`, `ui.ToolBar(…)`, `ui.GroupBox(title, …)` | ToolSeparator/MenuSeparator, ToolBar, GroupBox | |
+| `ui.Pane()`, `ui.Frame()`, `ui.Page(header, content, footer)` | Pane, Frame, Page | boxes with a name: sugar for `Div` |
 
 ```go
-func button(label string) ui.Element {
-    return ui.Div().Size(120, 38).Bg(ui.RGB(0x3b5bdb)).Rounded(8).Focusable().
-        HoverBg(ui.RGB(0x4c6ef5)).PressBg(ui.RGB(0x2f44ad)).Cursor(app.CursorPointer).
-        JustifyCenter().ItemsCenter().OnClick(func() {}).
-        Children(ui.Text(label, ui.RGB(0xffffff)))
+var s struct {
+    open  core.Property[bool]
+    draw  ui.DrawerState
 }
+ui.Div().Col().Children(
+    ui.Button("Save…", ui.ButtonOpts{OnClick: func() { s.open.Set(true) }}),
+    ui.Dialog(&s.open, ui.Text("Save changes?", ui.CurrentTheme().Text),
+        ui.DialogOpts{Title: "Save", Buttons: ui.ButtonSave | ui.ButtonCancel, OnAccepted: save}),
+    ui.Drawer(&s.draw, nav(), ui.DrawerOpts{Size: 260, DragMargin: 12}),
+)
+```
+
+A plain `Div` with hover and press styles is still a button too, when the
+kit's look is not wanted:
+
+```go
+ui.Div().Size(120, 38).Bg(ui.RGB(0x3b5bdb)).Rounded(8).Focusable().
+    HoverBg(ui.RGB(0x4c6ef5)).PressBg(ui.RGB(0x2f44ad)).Cursor(app.CursorPointer).
+    JustifyCenter().ItemsCenter().OnClick(func() {}).
+    Children(ui.Text(label, ui.RGB(0xffffff)))
 ```
 
 ### Input widgets
@@ -273,7 +311,7 @@ func button(label string) ui.Element {
 | `ui.Checkbox(&prop, label, onToggle...)` | `core.Property[bool]` | toggle; clicking the box or label flips it |
 | `ui.Slider(&prop, w)` | `core.Property[float32]` in `[0,1]` | horizontal slider; `Range(from, to)`, `Step(step, snap)`, `Vertical()`, `Colors`, `Thickness`, `Disabled`, `Bare`, `OnMoved` |
 | `ui.RangeSlider(&first, &second, w)` | two properties | two handles that cannot cross |
-| `ui.Dial(&prop, from, to)` | `core.Property[float32]` | rotary interaction over a 280° sweep; paints nothing itself |
+| `ui.Dial(&prop, from, to)` | `core.Property[float32]` | rotary interaction over a 280° sweep; paints nothing itself (`ui.DialControl` draws a knob over it) |
 
 `InputState` keeps `Text core.Property[string]` plus caret and selection,
 so a binding downstream of the field updates as the user types:
