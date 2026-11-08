@@ -81,6 +81,9 @@ func benchCorpusFrame(b *testing.B, page string) {
 // element per frame — and only a benchmark comparison against v0.1.0 found
 // it; this catches the next one in the ordinary test run.
 func TestCorpusFrameAllocs(t *testing.T) {
+	if raceBuild {
+		t.Skip("the race detector adds allocations of its own")
+	}
 	for _, c := range []struct {
 		page   string
 		budget float64
