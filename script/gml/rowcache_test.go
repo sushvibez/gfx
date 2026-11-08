@@ -25,7 +25,6 @@ import (
 // after.
 func TestRowCacheDoesNotGrow(t *testing.T) {
 	home, _ := os.UserHomeDir()
-	start := time.Now() // the 3 s the timers need are spent once, across the pages
 	for _, page := range []string{"navdisplay", "chatui", "indicators", "treeview", "lists"} {
 		path := filepath.Join(home, "workspace", "qml-examples", "examples", page, "Main.qml")
 		if _, err := os.Stat(path); err != nil {
@@ -48,10 +47,18 @@ func TestRowCacheDoesNotGrow(t *testing.T) {
 		// frames is not enough on a busy machine (the next answer landed in
 		// the measuring window and read as growth). Lay out until the map
 		// holds still across a whole batch, and at least 3 s have passed.
+		// The wait is from this page's load, and only for a page with timers
+		// (any it built, in a component file too — known after the first
+		// layout).
+		start, wait := time.Now(), time.Duration(0)
+		layout(1)
+		if len(d.doc.timers) > 0 {
+			wait = 3 * time.Second
+		}
 		settled := -1
 		for n := d.doc.subtrees.count(); time.Since(start) < 30*time.Second; n = d.doc.subtrees.count() {
 			layout(300)
-			if d.doc.subtrees.count() == n && time.Since(start) > 3*time.Second {
+			if d.doc.subtrees.count() == n && time.Since(start) >= wait {
 				settled = n
 				break
 			}
