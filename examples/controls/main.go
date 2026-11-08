@@ -76,6 +76,7 @@ func newState(dark bool) *state {
 	s.lastAct.Set("nothing yet")
 	s.tree.SetExpanded("0", true)
 	s.table.Select(1)
+	s.table.SortBy(2, false) // by age
 	return s
 }
 
@@ -204,17 +205,18 @@ func (s *state) view() ui.Element {
 		{"Margaret", "Director", "33"}, {"Ken", "Researcher", "52"}}
 	widths := []float32{110, 120, 60}
 	data := ui.GroupBox("Data",
-		ui.HeaderView(3, widths, func(c int) string { return []string{"Name", "Role", "Age"}[c] }, nil),
-		ui.TableView(&s.table, ui.TableOpts{Rows: len(people), Cols: 3, ColWidths: widths, H: 160, Selectable: true,
+		// Click a title to sort; arrows move the selection while it has focus.
+		ui.TableView(&s.table, ui.TableOpts{Rows: len(people), Cols: 3, ColWidths: widths, H: 200, Selectable: true,
+			Sortable: true, Title: func(c int) string { return []string{"Name", "Role", "Age"}[c] },
 			Text: func(r, c int) string { return people[r][c] }}),
-		ui.TreeView(&s.tree, []ui.TreeNode{
+		ui.Div().W(290).Children(ui.TreeView(&s.tree, []ui.TreeNode{
 			{Label: "src", Children: []ui.TreeNode{
 				{Label: "main.go"},
 				{Label: "ui", Children: []ui.TreeNode{{Label: "div.go"}, {Label: "theme.go"}}},
 			}},
 			{Label: "docs", Children: []ui.TreeNode{{Label: "ui.md"}}},
 			{Label: "README.md"},
-		}, ui.TreeOpts{H: 170}).W(290),
+		}, ui.TreeOpts{H: 170})),
 	)
 
 	page := ui.Page(

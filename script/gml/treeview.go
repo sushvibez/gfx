@@ -181,7 +181,9 @@ func buildTreeView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}})
 
 	// The rows are ui.TreeView's; each is the delegate in the row's scope.
-	return ui.TreeView(st, roots, ui.TreeOpts{H: height, Row: func(r ui.TreeRow, current bool) ui.Element {
+	// The keyboard moves gml's own currentRow (which the next build reads back).
+	onCurrent := func(i int) { _ = curRef.set(i) }
+	return ui.TreeView(st, roots, ui.TreeOpts{H: height, OnCurrent: onCurrent, Row: func(r ui.TreeRow, current bool) ui.Element {
 		row := map[string]any{
 			"treeView": view, "isTreeNode": true,
 			"expanded": r.Expanded, "hasChildren": r.HasChildren,
