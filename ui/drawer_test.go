@@ -95,3 +95,31 @@ func TestTabBar(t *testing.T) {
 		t.Errorf("Left from tab 2: current %d, want 1", cur)
 	}
 }
+
+func TestDrawerEdgeDragOpens(t *testing.T) {
+	var st DrawerState
+	opened := 0
+	u := New(nil, nil, func() Element {
+		return Div().Children(Drawer(&st, nil, DrawerOpts{Size: 200, DragMargin: 12, OnOpened: func() { opened++ }}))
+	})
+	frame := func() { u.Layout(800, 600) }
+	frame()
+	// A short pull slides back; a pull past half-way opens it.
+	u.Drag(4, 300, 60, 300)
+	if st.IsOpen() || opened != 0 {
+		t.Errorf("a 56 px pull: open %v, OnOpened %d; want it back shut", st.IsOpen(), opened)
+	}
+	core.TickAnimations(time.Second)
+	frame()
+	u.Drag(4, 300, 150, 300)
+	if !st.IsOpen() || opened != 1 {
+		t.Errorf("a 146 px pull: open %v, OnOpened %d; want open once", st.IsOpen(), opened)
+	}
+	// A press away from the edge drags nothing.
+	var st2 DrawerState
+	u2 := New(nil, nil, func() Element { return Div().Children(Drawer(&st2, nil, DrawerOpts{DragMargin: 12})) })
+	u2.Layout(800, 600)
+	if u2.Drag(40, 300, 300, 300) || st2.Position() != 0 {
+		t.Error("a drag starting 40 px in pulled the drawer")
+	}
+}

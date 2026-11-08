@@ -13,9 +13,10 @@ import (
 // ToolTip is the tip's panel in Qt's Basic look: white 12 px text on a dark
 // rounded card.
 func ToolTip(text string) *DivEl {
+	tm := CurrentTheme()
 	return Div().Row().ItemsCenter().Padding(6, 12, 6, 12).Rounded(6).
-		Bg(RGB(0x333333)).
-		Children(Text(text, RGB(0xffffff)).SizePx(12))
+		Bg(tm.ToolTip).
+		Children(Text(text, tm.ToolTipText).SizePx(12))
 }
 
 // ToolTipOpts configures an attached tool tip.
@@ -25,33 +26,65 @@ type ToolTipOpts struct {
 	Delay, Timeout time.Duration
 }
 
-// ToolTipState is an attached tip's retained state: whether the element is
-// hovered, and since when. Keep one per element.
+// ToolTipState is an attached tip's retained state: whether its element is
+// hovered, and since when the tip has been wanted. Keep one per element.
+//
+// Attach does it all for a tip that shows on hover. A host with its own
+// rule for when the tip is wanted (QML's `ToolTip.visible: expr`) or its
+// own panel uses the parts: Track the element's hover, decide, then ask
+// Due whether the delay has passed.
 type ToolTipState struct {
-	hover core.Property[bool]
-	since time.Duration
+	hover  core.Property[bool]
+	wanted bool
+	since  time.Duration // the animation clock when it became wanted
 }
 
-// Attach floats a tip reading text above box while the pointer rests on it,
-// and returns box.
-func (st *ToolTipState) Attach(box *DivEl, text string, o ToolTipOpts) *DivEl {
+// Track follows box's hover state into the tip's.
+func (st *ToolTipState) Track(box *DivEl) {
 	box.OnHoverChanged(func(v bool) {
 		if st.hover.Get() != v {
 			st.hover.Set(v)
-			st.since = core.AnimClock()
 		}
 	})
-	if !st.hover.Get() || text == "" {
+}
+
+// Hovered reports whether the tracked element is under the pointer.
+func (st *ToolTipState) Hovered() bool { return st.hover.Get() }
+
+// Due reports whether a tip that is wanted (or not) shows now: wanted for
+// at least o.Delay and, with a timeout, not yet o.Timeout after that.
+// waiting reports that the answer will change with the clock alone, so a
+// host that caches its tree has to keep rebuilding (Due itself asks the
+// frame loop for the frames).
+func (st *ToolTipState) Due(wanted bool, o ToolTipOpts) (show, waiting bool) {
+	if !wanted {
+		st.wanted = false
 		core.SetExternalAnimation(st, false)
-		return box
+		return false, false
 	}
-	rested := core.AnimClock() - st.since
-	// Waiting on the clock, not on a property: keep frames coming until
-	// the tip shows (and, with a timeout, until it goes).
-	waiting := rested < o.Delay || (o.Timeout > 0 && rested <= o.Delay+o.Timeout)
+	now := core.AnimClock()
+	if !st.wanted {
+		st.wanted, st.since = true, now
+	}
+	rested := now - st.since
+	waiting = rested < o.Delay || (o.Timeout > 0 && rested <= o.Delay+o.Timeout)
 	core.SetExternalAnimation(st, waiting)
-	if rested < o.Delay || (o.Timeout > 0 && rested > o.Delay+o.Timeout) {
-		return box
+	show = rested >= o.Delay && (o.Timeout == 0 || rested <= o.Delay+o.Timeout)
+	return show, waiting
+}
+
+// Attach floats a tip reading text above box once the pointer has rested
+// on it for o.Delay, and returns box.
+func (st *ToolTipState) Attach(box *DivEl, text string, o ToolTipOpts) *DivEl {
+	st.Track(box)
+	if show, _ := st.Due(st.Hovered() && text != "", o); show {
+		AttachTip(box, ToolTip(text))
 	}
-	return box.Children(Overlay(ToolTip(text), 0, 0).AnchorAbove(box, 4).SnapToWindow(2))
+	return box
+}
+
+// AttachTip floats panel centred above box, 4 px clear of it and kept on
+// screen — where Qt's ToolTip style places a control's tip.
+func AttachTip(box *DivEl, panel Element) *DivEl {
+	return box.Children(Overlay(panel, 0, 0).AnchorAbove(box, 4).SnapToWindow(2))
 }

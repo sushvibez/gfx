@@ -346,3 +346,73 @@ Item {
 		t.Error("a BusyIndicator its Loader dropped still runs")
 	}
 }
+
+// Actions in an ActionGroup are exclusive: triggering one (here by its
+// shortcut, from a standalone Menu that is not open) checks it and
+// unchecks the others, and the group's onTriggered sees which.
+func TestActionGroupAndMenuShortcut(t *testing.T) {
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property string last: ""
+    ActionGroup { id: align; onTriggered: root.last = action.text }
+    Menu { id: m
+        Action { id: left; text: "Left"; checked: true; ActionGroup.group: align; shortcut: "Ctrl+L" }
+        Action { id: right; text: "Right"; ActionGroup.group: align; shortcut: "Ctrl+R" } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(400, 300); u.Layout(400, 300) }
+	get := func(expr string) string {
+		v, err := evalString(expr, env)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		return str(v)
+	}
+	frame()
+	u.Key(app.KeyEvent{Down: true, Rune: 'r', Ctrl: true})
+	frame()
+	if get("left.checked") != "false" || get("right.checked") != "true" {
+		t.Errorf("Ctrl+R: left %s right %s; want only right checked", get("left.checked"), get("right.checked"))
+	}
+	if got := get("root.last"); got != "Right" {
+		t.Errorf("ActionGroup.onTriggered saw %q, want Right", got)
+	}
+	if got := get("align.checkedAction.text"); got != "Right" {
+		t.Errorf("checkedAction is %q, want Right", got)
+	}
+}
+
+// A drag in from a Drawer's edge pulls it open.
+func TestDrawerEdgeDrag(t *testing.T) {
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Item {
+    width: 600; height: 400
+    Drawer { id: nav; width: 240; Text { text: "Nav" } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(600, 400); u.Layout(600, 400) }
+	frame()
+	if !u.Drag(3, 200, 200, 200) {
+		t.Fatal("nothing took a drag from the left edge")
+	}
+	frame()
+	if v, _ := evalString("nav.opened", env); v != true {
+		t.Errorf("after a drag from the edge, opened = %v", v)
+	}
+}

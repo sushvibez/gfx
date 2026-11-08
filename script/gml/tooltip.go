@@ -3,7 +3,6 @@ package gml
 import (
 	"time"
 
-	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/ui"
 )
 
@@ -60,24 +59,28 @@ func tooltipOf(n *node, env *Env) (tooltipSpec, bool) {
 	return t, found && t.text != ""
 }
 
-// attachTooltip floats the item's tooltip above it while the pointer rests
-// on it. The element is returned unchanged when the tip is not showing.
+// attachTooltip floats the item's tooltip above it while it is wanted and
+// its delay has passed (ui.ToolTipState). The element is returned
+// unchanged when the tip is not showing.
 func (doc *docState) attachTooltip(n *node, env *Env, el ui.Element, t tooltipSpec) ui.Element {
 	box, ok := el.(*ui.DivEl)
 	if !ok {
 		return el // only a box can carry the overlay (and be hovered)
 	}
+	if doc.tipStates == nil {
+		doc.tipStates = map[string]*ui.ToolTipState{}
+	}
 	key := doc.key(n)
-	// The item's own live hover state. Wired HERE rather than read off the
+	st := doc.tipStates[key]
+	if st == nil {
+		st = &ui.ToolTipState{}
+		doc.tipStates[key] = st
+	}
+	// The item's own hover state, tracked HERE rather than read off the
 	// control's own slot: a styled control keys it one way and a plain box
 	// another, and a tooltip can hang off either.
-	hover := doc.boolProp(key+"|tipHover", false)
-	hovered, _ := toBool(hover.get())
-	box.OnHoverChanged(func(v bool) {
-		if now, _ := toBool(hover.get()); now != v {
-			_ = hover.set(v)
-		}
-	})
+	st.Track(box)
+	hovered := st.Hovered()
 	// `ToolTip.visible: hovered` reads the control's state by bare name.
 	want := hovered
 	if t.visible != nil {
@@ -88,35 +91,19 @@ func (doc *docState) attachTooltip(n *node, env *Env, el ui.Element, t tooltipSp
 			want, _ = toBool(v)
 		}
 	}
-	if !want {
-		delete(doc.tipSince, key)
-		return el
-	}
-	// How long the pointer has rested here, on the frame loop's clock (the
-	// same one Timers and animations follow, so a headless capture sees the
-	// delay elapse just as a window does).
-	now := core.AnimClock()
-	if doc.tipSince == nil {
-		doc.tipSince = map[string]time.Duration{}
-	}
-	since, held := doc.tipSince[key]
-	if !held {
-		doc.tipSince[key] = now
-		since = now
-	}
-	rested := now - since
-	// A tip waiting for its delay (or counting down its timeout) is waiting
-	// on the CLOCK, not on a property — so the document has to keep
+	show, waiting := st.Due(want, ui.ToolTipOpts{
+		Delay:   time.Duration(t.delay) * time.Millisecond,
+		Timeout: time.Duration(t.timeout) * time.Millisecond,
+	})
+	// A tip waiting for its delay (or counting down its timeout) waits on
+	// the CLOCK, not on a property — so the document has to keep
 	// rebuilding while it waits, or it would be handed its cached tree for
 	// ever and the wait would never end.
-	if rested < time.Duration(t.delay+t.timeout)*time.Millisecond || t.timeout == 0 {
+	if waiting || (show && t.timeout == 0) {
 		doc.timed++
 	}
-	if rested < time.Duration(t.delay)*time.Millisecond {
-		return el // not yet
-	}
-	if t.timeout > 0 && rested > time.Duration(t.delay+t.timeout)*time.Millisecond {
-		return el // shown its while
+	if !show {
+		return el
 	}
 	// A ToolTip element, so the app's own ToolTip style draws it.
 	tip := &node{typeName: "ToolTip", line: n.line, attrs: []attr{
@@ -128,9 +115,7 @@ func (doc *docState) attachTooltip(n *node, env *Env, el ui.Element, t tooltipSp
 		logf("gml: tooltip: %v", err)
 		return el
 	}
-	// Qt's ToolTip style places it centred above its parent, 4px clear.
-	box.Children(ui.Overlay(unwrapModal(panel), 0, 0).AnchorAbove(box, 4).SnapToWindow(2))
-	return box
+	return ui.AttachTip(box, unwrapModal(panel))
 }
 
 // unwrapModal takes the panel out of the floating wrapper a popup build

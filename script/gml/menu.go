@@ -62,31 +62,26 @@ func buildMenuBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 		bar.Grow()
 	}
 	// The entries' shortcuts work from anywhere in the window.
-	var wire func(items []ui.MenuItem)
-	wire = func(items []ui.MenuItem) {
-		for _, it := range items {
-			if len(it.Sub) > 0 {
-				wire(it.Sub)
-				continue
-			}
-			if it.Shortcut == "" || it.Disabled || (it.OnTrigger == nil && it.Checked == nil) {
-				continue
-			}
-			it := it
-			bar.Shortcut(func() {
-				if it.Checkable && it.Checked != nil {
-					it.Checked.Set(!it.Checked.Get())
-				}
-				if it.OnTrigger != nil {
-					it.OnTrigger()
-				}
-			}, it.Shortcut)
-		}
-	}
 	for _, m := range menus {
-		wire(m.Items)
+		wireShortcuts(bar, m.Items)
 	}
 	return bar, nil
+}
+
+// wireShortcuts registers each entry's shortcut on el, which sits in the
+// tree whether the menu is open or not: the shortcut triggers the entry
+// from anywhere in the window, as an Action's does in Qt.
+func wireShortcuts(el *ui.DivEl, items []ui.MenuItem) {
+	for _, it := range items {
+		if len(it.Sub) > 0 {
+			wireShortcuts(el, it.Sub)
+			continue
+		}
+		if it.Shortcut == "" || it.Disabled || (it.OnTrigger == nil && it.Checked == nil) {
+			continue
+		}
+		el.Shortcut(it.Activate, it.Shortcut)
+	}
 }
 
 // menuTitle reads a Menu's title.
@@ -128,6 +123,7 @@ func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 	var it ui.MenuItem
 	var stmts []stmt
 	checked := false
+	group := ""
 	for _, a := range n.attrs {
 		switch a.name {
 		case "text":
@@ -154,9 +150,17 @@ func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 			if b, err := attrBool(a, env); err == nil {
 				it.Disabled = !b
 			}
+		case "ActionGroup.group":
+			if id, ok := a.expr.(*identExpr); ok {
+				group = id.name
+			}
 		case "onTriggered", "onClicked", "onToggled":
 			stmts = append(stmts, a.stmt...)
 		}
+	}
+	// A grouped action is checkable: Qt checks it when it is triggered.
+	if group != "" {
+		it.Checkable = true
 	}
 	// A checkable entry owns its state, like the control it stands for.
 	if it.Checkable {
@@ -170,6 +174,19 @@ func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 		runner := doc.handlerRunner(env)
 		body := stmts
 		it.OnTrigger = func() { runner(body, "onTriggered") }
+	}
+	if group != "" && it.Checked != nil {
+		bg := doc.actionGroup(group)
+		it.Group = bg.g
+		doc.join(bg, n, it.Checked)
+		// The group's own onTriggered(action) runs after the action's.
+		p, own := it.Checked, it.OnTrigger
+		it.OnTrigger = func() {
+			if own != nil {
+				own()
+			}
+			doc.groupTriggered(bg, p)
+		}
 	}
 	return it
 }
@@ -243,13 +260,17 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 		}
 	}
+	// The entries are read open or closed: their shortcuts work either way.
+	items := doc.menuItems(n, env)
+	host := ui.Div()
+	wireShortcuts(host, items)
 	if openRef.get() != true {
-		return ui.Div(), nil
+		return host, nil
 	}
 	closeMenu := func() { _ = openRef.set(false) }
-	list := ui.MenuPanel(st, doc.menuItems(n, env), closeMenu)
+	list := ui.MenuPanel(st, items, closeMenu)
 	x, y := menuPos(n, env)
-	return ui.Overlay(list, x, y).OnClickOutside(closeMenu), nil
+	return host.Children(ui.Overlay(list, x, y).OnClickOutside(closeMenu)), nil
 }
 
 // menuPos reads a Menu's x/y (where popup() placed it) — in its parent

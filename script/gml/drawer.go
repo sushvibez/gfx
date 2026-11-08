@@ -10,6 +10,35 @@ package gml
 import "github.com/sushvibez/gfx/ui"
 
 func buildDrawer(n *node, env *Env, doc *docState, st *popupState) (ui.Element, error) {
+	ds, o, visible := doc.drawerOf(n, env, st, 0)
+	if !visible {
+		// Closed: nothing to build, but ui.Drawer keeps the edge a drag can
+		// pull it open from.
+		return ui.Drawer(ds, nil, o), nil
+	}
+	cp := stripPopupAttrs(n)
+	kept := cp.attrs[:0:0]
+	for _, a := range cp.attrs {
+		switch a.name {
+		case "edge", "width", "height", "position", "dragMargin", "interactive":
+			// the drawer's own — the panel sizes the content
+		default:
+			kept = append(kept, a)
+		}
+	}
+	cp.attrs = kept
+	content, err := buildBox(cp, env, doc)
+	if err != nil {
+		return nil, err
+	}
+	return ui.Drawer(ds, content, o), nil
+}
+
+// drawerOf keeps the Drawer's ui.DrawerState in step with its open state
+// and reads its options; visible reports whether it is open or still
+// sliding. size is the panel's extent when the markup states none (a
+// style's implicit width).
+func (doc *docState) drawerOf(n *node, env *Env, st *popupState, size float32) (*ui.DrawerState, ui.DrawerOpts, bool) {
 	if doc.drawers == nil {
 		doc.drawers = map[string]*ui.DrawerState{}
 	}
@@ -37,31 +66,31 @@ func buildDrawer(n *node, env *Env, doc *docState, st *popupState) (ui.Element, 
 			o.Edge = ui.EdgeBottom
 		}
 	}
-	size := "width"
+	across := "width"
 	if o.Edge == ui.EdgeTop || o.Edge == ui.EdgeBottom {
-		size = "height"
+		across = "height"
 	}
-	o.Size = attrFloatOr(n, size, env, 0)
+	o.Size = attrFloatOr(n, across, env, size)
 	o.OnClosed = st.dismiss
-	if ds.Position() <= 0 && !ds.IsOpen() {
-		return ui.Div(), nil // closed: nothing to build
-	}
-	cp := stripPopupAttrs(n)
-	kept := cp.attrs[:0:0]
-	for _, a := range cp.attrs {
-		switch a.name {
-		case "edge", "width", "height", "position", "dragMargin", "interactive":
-			// the drawer's own — the panel sizes the content
-		default:
-			kept = append(kept, a)
+	// A drag in from the edge opens it, within dragMargin of the edge (Qt's
+	// default is the platform's drag distance), unless it is not interactive.
+	interactive := true
+	for _, a := range n.attrs {
+		if a.name == "interactive" {
+			if b, err := attrBool(a, env); err == nil {
+				interactive = b
+			}
 		}
 	}
-	cp.attrs = kept
-	content, err := buildBox(cp, env, doc)
-	if err != nil {
-		return nil, err
+	if interactive {
+		o.DragMargin = attrFloatOr(n, "dragMargin", env, 10)
+		open, fire := st.open, st.fire
+		o.OnOpened = func() {
+			_ = open.set(true)
+			fire("onOpened")
+		}
 	}
-	return ui.Drawer(ds, content, o), nil
+	return ds, o, ds.Position() > 0 || ds.IsOpen()
 }
 
 // attrNum evaluates a numeric attribute.
@@ -74,37 +103,4 @@ func attrNum(n *node, name string, env *Env) (float64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// activity is the element's own ui.Activity, the loop an indeterminate
-// ProgressBar or a BusyIndicator draws from.
-func (doc *docState) activity(n *node) *ui.Activity {
-	if doc.activities == nil {
-		doc.activities = map[string]*ui.Activity{}
-	}
-	key := doc.key(n)
-	a := doc.activities[key]
-	if a == nil {
-		a = &ui.Activity{}
-		doc.activities[key] = a
-	}
-	if doc.activitySeen == nil {
-		doc.activitySeen = map[string]bool{}
-	}
-	doc.activitySeen[key] = true
-	return a
-}
-
-// sweepActivities stops the loops of spinners and indeterminate bars that
-// the last build did not reach (their page was navigated away, a Loader
-// swapped them out): a loop left running keeps the frame loop busy for
-// ever.
-func (doc *docState) sweepActivities() {
-	for k, a := range doc.activities {
-		if !doc.activitySeen[k] {
-			a.Run(false)
-			delete(doc.activities, k)
-		}
-	}
-	clear(doc.activitySeen)
 }

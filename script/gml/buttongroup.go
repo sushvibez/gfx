@@ -157,3 +157,47 @@ func (doc *docState) clicked(bg *buttonGroup, p *core.Property[bool]) {
 		}
 	}
 }
+
+// actionGroup is the ActionGroup named gid, over the same machinery as a
+// ButtonGroup: exclusive unless its `exclusive` says otherwise, its
+// checkedAction published on its id.
+func (doc *docState) actionGroup(gid string) *buttonGroup {
+	bg := doc.groupNamed("action:"+gid, nil)
+	if bg.node == nil {
+		if obj := doc.elemObjs.get(doc.intern(gid)); obj != nil {
+			bg.node, bg.env = obj.node, obj.nodeEnv
+		}
+	}
+	bg.g.Exclusive = true
+	if bg.node != nil && bg.env != nil {
+		for _, a := range bg.node.attrs {
+			if a.name == "exclusive" {
+				if b, err := attrBool(a, bg.env); err == nil {
+					bg.g.Exclusive = b
+				}
+			}
+		}
+		if obj := doc.elemObjs.get(doc.intern(gid)); obj != nil {
+			obj.setProp("checkedAction", computedRef{fn: func() any {
+				if c := bg.g.Checked(); c != nil {
+					return bg.objs[c]
+				}
+				return nil
+			}})
+		}
+	}
+	return bg
+}
+
+// groupTriggered runs an ActionGroup's onTriggered with the member that
+// was triggered bound as `action`.
+func (doc *docState) groupTriggered(bg *buttonGroup, p *core.Property[bool]) {
+	if bg == nil || bg.node == nil || bg.env == nil {
+		return
+	}
+	for _, a := range bg.node.attrs {
+		if a.name == "onTriggered" && a.stmt != nil {
+			runEvent(doc.handlerRunner(bg.env), bg.env, a.stmt, "ActionGroup.onTriggered", "action", bg.objs[p])
+		}
+	}
+}

@@ -1768,10 +1768,9 @@ type docState struct {
 	// than on a property (a tooltip's delay), so the frame memoization
 	// keeps rebuilding while any of them waits.
 	timed int
-	// tipSince is when the pointer came to rest on an item carrying a
-	// ToolTip, on the frame loop's clock — Qt shows the tip only after the
-	// item's `ToolTip.delay`.
-	tipSince map[string]time.Duration
+	// tipStates is each item's attached ToolTip: its hover and since when
+	// the tip has been wanted (Qt shows it only after `ToolTip.delay`).
+	tipStates map[string]*ui.ToolTipState
 	// groundDark is how dark the page is, measured from the outermost fill
 	// of the last tree built (noteGround) — the palette a popup with no
 	// background of its own has to match.

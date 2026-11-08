@@ -86,3 +86,27 @@ func TestMenuBarAndKeys(t *testing.T) {
 		t.Errorf("Escape left the menu open")
 	}
 }
+
+func TestMenuActionGroup(t *testing.T) {
+	g := NewButtonGroup()
+	var a, b core.Property[bool]
+	a.Set(true)
+	items := []MenuItem{
+		{Text: "Left", Checkable: true, Checked: &a, Group: g},
+		{Text: "Right", Checkable: true, Checked: &b, Group: g},
+	}
+	MenuPanel(&MenuState{}, items, nil) // the entries join their group as the menu is built
+	items[1].Activate()
+	if a.Get() || !b.Get() {
+		t.Errorf("picking Right: left %v right %v; want only right", a.Get(), b.Get())
+	}
+	items[1].Activate() // a checked member of an exclusive group stays checked
+	if !b.Get() {
+		t.Error("picking the checked entry again unchecked it")
+	}
+	g.Exclusive = false
+	items[1].Activate()
+	if b.Get() {
+		t.Error("a non-exclusive group's entry did not toggle")
+	}
+}

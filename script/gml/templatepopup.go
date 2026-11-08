@@ -62,7 +62,17 @@ func buildTemplatePopup(kind string, n *node, env *Env, doc *docState,
 			scope.setProp("text", txt)
 		}
 	}
-	if !st.shown {
+	// A Drawer slides in and out from its edge (drawer.go), so it is drawn
+	// while it moves, not only while open.
+	var ds *ui.DrawerState
+	var dopts ui.DrawerOpts
+	if kind == "Drawer" {
+		var visible bool
+		ds, dopts, visible = doc.drawerOf(n, env, st, parts.w)
+		if !visible {
+			return ui.Drawer(ds, nil, dopts), nil // just the edge a drag opens it from
+		}
+	} else if !st.shown {
 		return ui.Div(), nil // closed: no flow space, nothing floating
 	}
 	// The panel's own size: what the style states (implicitWidth/Height),
@@ -163,6 +173,10 @@ func buildTemplatePopup(kind string, n *node, env *Env, doc *docState,
 		if c, ok := overlayScrimAlpha(parts.overlayModal, env); ok {
 			dim = c
 		}
+	}
+	if ds != nil {
+		dopts.Dim = dim
+		return ui.Drawer(ds, out, dopts), nil
 	}
 	if kind == "ToolTip" { // a tooltip never dims and takes no clicks
 		return ui.PositionedModal(out, st.px, st.py, ui.RGBA{}, nil), nil

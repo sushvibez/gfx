@@ -54,6 +54,7 @@ func TestToolTipDelay(t *testing.T) {
 	tipShown := func() bool { return len(Children(btn)) > 0 }
 	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 60, Y: 60}})
 	frame()
+	frame() // the build after the hover starts the delay
 	if !st.hover.Get() || tipShown() {
 		t.Fatalf("just hovered: hover %v, tip shown %v; want hovered, no tip yet", st.hover.Get(), tipShown())
 	}
@@ -72,4 +73,25 @@ func TestToolTipDelay(t *testing.T) {
 	if tipShown() {
 		t.Error("the tip stayed after the pointer left")
 	}
+}
+
+func TestToolTipDue(t *testing.T) {
+	var st ToolTipState
+	o := ToolTipOpts{Delay: 100 * time.Millisecond, Timeout: 200 * time.Millisecond}
+	if show, waiting := st.Due(true, o); show || !waiting {
+		t.Errorf("just wanted: show %v waiting %v", show, waiting)
+	}
+	core.TickAnimations(150 * time.Millisecond)
+	if show, _ := st.Due(true, o); !show {
+		t.Error("not shown after the delay")
+	}
+	core.TickAnimations(200 * time.Millisecond)
+	if show, waiting := st.Due(true, o); show || waiting {
+		t.Errorf("after the timeout: show %v waiting %v", show, waiting)
+	}
+	st.Due(false, o) // unwanted resets: the delay runs again
+	if show, _ := st.Due(true, o); show {
+		t.Error("shown at once after being unwanted")
+	}
+	st.Due(false, o)
 }
