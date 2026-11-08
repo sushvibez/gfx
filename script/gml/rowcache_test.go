@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/sushvibez/gfx/ui"
 )
@@ -41,8 +42,23 @@ func TestRowCacheDoesNotGrow(t *testing.T) {
 				u.Layout(900, 700)
 			}
 		}
-		layout(900) // settle, models included
-		settled := d.doc.subtrees.count()
+		// Settle, models included: the chat page's bot answers on a Timer with
+		// a random 1–2.5 s interval, on the wall clock, so a fixed number of
+		// frames is not enough on a busy machine (the next answer landed in
+		// the measuring window and read as growth). Lay out until the map
+		// holds still across a whole batch, and at least 3 s have passed.
+		start := time.Now()
+		settled := -1
+		for n := d.doc.subtrees.count(); time.Since(start) < 30*time.Second; n = d.doc.subtrees.count() {
+			layout(300)
+			if d.doc.subtrees.count() == n && time.Since(start) > 3*time.Second {
+				settled = n
+				break
+			}
+		}
+		if settled < 0 {
+			settled = d.doc.subtrees.count()
+		}
 		layout(300)
 		grown := d.doc.subtrees.count()
 		t.Logf("%-12s subtree entries: %d settled, %d after another 300", page, settled, grown)
