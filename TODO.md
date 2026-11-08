@@ -16,7 +16,6 @@ Layers big enough to have their own story keep their own list:
 | [`script/TODO.md`](script/TODO.md) | the .gml engine: the QML parity review (all 65 pages listed) and frame cost |
 | [`md/TODO.md`](md/TODO.md) | Markdown: parser done, what the renderer and ui element still lack |
 | [`physics/PLAN.md`](physics/PLAN.md) | P0–P2 implemented (2026-08-14); P3+ planned |
-| [`markdown/PLAN.md`](markdown/PLAN.md) | the Markdown editor: Obsidian-parity plan, chrome only so far |
 | [`docs/notes/sdf-ideas.md`](docs/notes/sdf-ideas.md) | signed distance fields: the MSDF glyph atlas is done, the rest is an idea list |
 
 ## Now — the open-source release (2026-10-31)
@@ -46,9 +45,9 @@ an MIT/Apache grant would let those two directories rejoin the rest.
 `v0.1.0` is tagged and public (2026-11-06, github.com/sushvibez/gfx),
 before CI and the licence audit above: both still apply to the next tag.
 The framework is one module; `examples/` replaces it with `../`, so a
-tag needs nothing more. `markdown/` (the editor chrome, a `main`
-package) stays in the module (decided 2026-11-06); it still has no
-tests. The projects in the umbrella keep `replace … => ../gfx` until
+tag needs nothing more. The Markdown editor (`markdown/`, the
+Obsidian-class editor app) moved out to its own project on gfx
+(2026-11-08); gfx keeps `md`, the parser, layout and ui element. The projects in the umbrella keep `replace … => ../gfx` until
 gfx settles and a project is released.
 
 ### Sign-off enforcement
@@ -131,8 +130,6 @@ real browser. Win32 `WM_TOUCH` is not handled.
   spatialisation, no streaming decode.
 - **`physics`**: P3+ of `physics/PLAN.md` (joints, continuous collision,
   a 2D variant).
-- **Markdown editor**: `markdown/PLAN.md` is the plan; only the reference
-  chrome exists. Needs the multiline editor the toolkit lacks.
 - **Showcase demos**: geometric algebra, an anime.js-style landing page
   clone, a procedural-generation demo once such a library lands.
 
@@ -140,8 +137,7 @@ real browser. Win32 `WM_TOUCH` is not handled.
 
 - `mem` has nothing to test yet; `gpu/plat`, `ui/icons`,
   `ffi/cmd/ffigen`, `script/cmd/gfx` (a golden test over the generated
-  WGSL would do) and `markdown` (a headless screenshot test) have no
-  tests.
+  WGSL would do) have no tests.
 - The examples are smoke-tested only through three screenshots in
   `scripts/check.sh` (settings, kitchensink, frost). A table-driven
   headless screenshot test over every example that supports

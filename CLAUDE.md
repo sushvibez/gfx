@@ -47,7 +47,7 @@ Other builds: `scripts/build-web.sh` (wasm), `scripts/build-apk.sh` (signed APK,
 Strictly layered, downward dependencies only — enforced by `internal/layering` (a test over `go list`):
 
 ```
-script (gml/.gml engine, gfx codegen)   markdown (editor chrome)   examples
+script (gml/.gml engine, gfx codegen)   examples
 md (markdown parser, layout, ui element)
 ui (widgets, ui/shell)      scene (node tree)
         render (render graph, 2D batcher, 3D, text, paths, gltf/fbx, pdf)
@@ -68,4 +68,4 @@ Cross-cutting rules that shape most code here:
 - **Memory discipline**: arena memory (`mem`) is POD-only — no Go pointers inside; cross-references use `mem.Handle[T]`. Hot paths target 0 allocs/op. APIs take value types (`Vec3`, not `*Vec3`).
 - **js/wasm has no threads**: anything parallel (ECS scheduler, renderer) must degrade to single-threaded as a scheduling policy, not a build variant.
 
-`examples/internal/orbit` is the shared orbit camera; `ui/shell` is the window+renderer harness (`RunUI` for apps, `RunGame` for frame loops) and `gpu/plat` the per-platform surface glue. Per-area lists: `script/TODO.md` (the .gml engine), `md/TODO.md`, `physics/PLAN.md`, `markdown/PLAN.md`, `docs/notes/sdf-ideas.md`.
+`examples/internal/orbit` is the shared orbit camera; `ui/shell` is the window+renderer harness (`RunUI` for apps, `RunGame` for frame loops) and `gpu/plat` the per-platform surface glue. Per-area lists: `script/TODO.md` (the .gml engine), `md/TODO.md`, `physics/PLAN.md`, `docs/notes/sdf-ideas.md`.

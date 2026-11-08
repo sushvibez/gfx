@@ -65,4 +65,4 @@ descriptions.
       placeholder box while a URL loads.
 - [ ] Selection on a plain `mdui.Markdown` element (it is `View` that has
       it) and in `.gml` Markdown text.
-- [ ] The editor is its own project: `markdown/PLAN.md`.
+- [ ] The editor is its own project (the `markdown` module beside gfx, an app built on `md`).

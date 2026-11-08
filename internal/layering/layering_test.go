@@ -34,7 +34,6 @@ var ranks = map[string]int{
 	"ui":       4,
 	"md":       5, // markdown parser, layout and ui element
 	"script":   6, // the .gml engine
-	"markdown": 6, // the editor app
 	"internal": 7, // this test
 }
 
