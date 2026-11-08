@@ -293,3 +293,56 @@ Item {
 			get("nav.opened"), get("root.closedCount"))
 	}
 }
+
+// A running BusyIndicator asks for frames, and stops asking when it stops
+// (or when its page no longer builds it).
+func TestBusyIndicatorRuns(t *testing.T) {
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Item {
+    id: root
+    width: 200; height: 200
+    property bool busy: true
+    property bool shown: true
+    Loader { active: root.shown; sourceComponent: BusyIndicator { running: root.busy } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(200, 200); u.Layout(200, 200) }
+	frame()
+	// The indicator's own loop (other documents ask for frames too).
+	running := func() bool {
+		for _, a := range d.doc.activities {
+			if a.Running() {
+				return true
+			}
+		}
+		return false
+	}
+	if !running() {
+		t.Fatal("a running BusyIndicator is not running")
+	}
+	if _, err := evalString("root.busy = false", env); err != nil {
+		t.Fatal(err)
+	}
+	frame()
+	if running() {
+		t.Error("a stopped BusyIndicator still runs")
+	}
+	if _, err := evalString("root.busy = true", env); err != nil {
+		t.Fatal(err)
+	}
+	frame()
+	if _, err := evalString("root.shown = false", env); err != nil {
+		t.Fatal(err)
+	}
+	frame()
+	if running() || len(d.doc.activities) != 0 {
+		t.Error("a BusyIndicator its Loader dropped still runs")
+	}
+}

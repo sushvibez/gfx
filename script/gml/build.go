@@ -1660,9 +1660,9 @@ func buildElement(n *node, env *Env, doc *docState) (ui.Element, error) {
 	case "RadioButton":
 		return buildRadioButton(n, env, doc)
 	case "ProgressBar":
-		return buildProgressBar(n, env)
+		return buildProgressBar(n, env, doc)
 	case "BusyIndicator":
-		return buildBusyIndicator(n, env)
+		return buildBusyIndicator(n, env, doc)
 	case "SpinBox":
 		return buildSpinBox(n, env, doc)
 	case "ComboBox":
@@ -1833,6 +1833,8 @@ type docState struct {
 	menuBars      map[string]*ui.MenuBarState       // each MenuBar's open menu and menu states (menu.go)
 	menus         map[string]*ui.MenuState          // each standalone Menu's highlight and submenus
 	drawers       map[string]*ui.DrawerState        // each Drawer's slide position (drawer.go)
+	activities    map[string]*ui.Activity           // each indeterminate ProgressBar's / BusyIndicator's loop
+	activitySeen  map[string]bool                   // ... built this frame (the rest are stopped)
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
 	groupOfButton map[string]string                 // button id -> the ButtonGroup that lists it
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
@@ -3173,6 +3175,7 @@ func derivedIn(env *Env, name string) (bool, *core.Property[uint64]) {
 // previous-frame element.
 func (doc *docState) beginFrame() {
 	doc.timed = 0 // recounted by this build
+	doc.sweepActivities()
 	doc.keySeen.clear()
 	// Rotate the two registries and clear the older one: it keeps its
 	// slots, so the frame neither allocates a registry nor regrows it.
@@ -4663,11 +4666,7 @@ func (doc *docState) noteGround(root ui.Element) {
 
 // tooltipPanel is an unstyled ToolTip: Qt's Basic look, a small dark panel
 // holding the text, which is all a ToolTip is.
-func tooltipPanel(text string) ui.Element {
-	return ui.Div().Row().ItemsCenter().Padding(6, 12, 6, 12).Rounded(6).
-		Bg(ui.RGB(0x333333)).
-		Children(ui.Text(text, ui.RGB(0xffffff)).SizePx(12))
-}
+func tooltipPanel(text string) ui.Element { return ui.ToolTip(text) }
 
 // popupText reads a popup's own `text:` (a ToolTip's label).
 func popupText(n *node, env *Env) string {
@@ -7092,9 +7091,9 @@ func buildRadioButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 }
 
 // buildProgressBar is a Qt Quick Controls ProgressBar: a track with a filled
-// portion for value in [from,to] (default [0,1]). indeterminate is accepted
-// but rendered as a half-filled bar.
-func buildProgressBar(n *node, env *Env) (ui.Element, error) {
+// portion for value in [from,to] (default [0,1]); an indeterminate one sweeps
+// a segment along the track (ui.ProgressBar).
+func buildProgressBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var value, from, to float32 = 0, 0, 1
 	w := float32(200)
 	indeterminate := false
@@ -7136,29 +7135,31 @@ func buildProgressBar(n *node, env *Env) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: ProgressBar has no attribute %q", a.line, a.name)
 		}
 	}
-	frac := float32(0.5)
-	if !indeterminate {
-		if to != from {
-			frac = (value - from) / (to - from)
-		}
-		if frac < 0 {
-			frac = 0
-		}
-		if frac > 1 {
-			frac = 1
-		}
+	o := ui.ProgressOpts{From: from, To: to, Width: w}
+	if to == from {
+		o.From, o.To = 0, 1 // an empty range shows nothing done
+		value = 0
 	}
-	fill := ui.Div().Size(w*frac, 6).Rounded(3).Bg(ui.RGB(0x3b5bdb))
-	return ui.Div().Size(w, 6).Rounded(3).Bg(ui.RGB(0xced4da)).Justify(ui.AlignStart).Children(fill), nil
+	act := doc.activity(n)
+	act.Run(indeterminate)
+	if indeterminate {
+		o.Indeterminate = act
+	}
+	return ui.ProgressBar(value, o), nil
 }
 
-// buildBusyIndicator is a Qt Quick Controls BusyIndicator, rendered as a static
-// ring (the immediate-mode renderer has no per-frame spin yet).
-func buildBusyIndicator(n *node, env *Env) (ui.Element, error) {
+// buildBusyIndicator is a Qt Quick Controls BusyIndicator: a ring with a dot
+// going round while `running` (ui.BusyIndicator).
+func buildBusyIndicator(n *node, env *Env, doc *docState) (ui.Element, error) {
 	size := float32(32)
+	running := true
 	for _, a := range n.attrs {
 		switch a.name {
-		case "id", "running", "enabled":
+		case "running":
+			if b, err := attrBool(a, env); err == nil {
+				running = b
+			}
+		case "id", "enabled":
 		case "width", "height":
 			f, err := attrFloat(a, env)
 			if err != nil {
@@ -7174,7 +7175,9 @@ func buildBusyIndicator(n *node, env *Env) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: BusyIndicator has no attribute %q", a.line, a.name)
 		}
 	}
-	return ui.Div().Size(size, size).Rounded(size/2).Border(3, ui.RGB(0x3b5bdb)), nil
+	act := doc.activity(n)
+	act.Run(running)
+	return ui.BusyIndicator(act, size), nil
 }
 
 // buildSeparator is a thin divider line: ToolSeparator (vertical, for a

@@ -153,7 +153,7 @@ Item {
     Rectangle { id: two; color: "#0000ff"; x: 0; y: 50; width: 50; height: 20 }
 }`)
 	settle := func() {
-		for core.AnimationsRunning() {
+		for i := 0; i < 100 && core.AnimationsRunning(); i++ {
 			core.TickAnimations(50 * time.Millisecond)
 			h.frame()
 		}
