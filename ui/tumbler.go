@@ -120,6 +120,7 @@ func Tumbler(st *TumblerState, current int, set func(int), o TumblerOpts, item f
 		st.spin.Set(float32(cur))
 	}
 	st.cur = cur
+	box.Access(Access{Role: RoleSpinButton, Value: itoa(cur), Checked: -1, Expanded: -1})
 	tm := CurrentTheme()
 	for _, slot := range TumblerWindow(cur, count, visible, wrap) {
 		if slot.Index < 0 {

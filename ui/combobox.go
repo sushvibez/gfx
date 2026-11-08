@@ -56,6 +56,7 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 	arrow := Text("▾", tm.Dim)
 	box := Div().Size(w, 32).Bg(tm.Field).Border(1, tm.Border).Rounded(4).
 		Row().ItemsCenter().PadXY(8, 0).Gap(6)
+	box.Access(Access{Role: RoleComboBox, Value: text, Checked: -1, Expanded: checkState(open.Get()), Disabled: o.Disabled})
 	if o.Input != nil {
 		in := o.Input
 		// The field takes the current item when the selection changes, and

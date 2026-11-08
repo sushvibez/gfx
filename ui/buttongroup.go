@@ -62,6 +62,7 @@ func RadioRing(checked *core.Property[bool], group *ButtonGroup, onToggle ...fun
 	if group != nil {
 		group.Add(checked)
 	}
+	ring.Access(Access{Role: RoleRadio, Checked: checkState(checked.Get()), Expanded: -1})
 	return ring.OnClick(func() {
 		if checked.Get() {
 			return
@@ -81,7 +82,9 @@ func RadioRing(checked *core.Property[bool], group *ButtonGroup, onToggle ...fun
 func Radio(checked *core.Property[bool], label string, group *ButtonGroup, onToggle ...func(bool)) Element {
 	tm := CurrentTheme()
 	ring := RadioRing(checked, group, onToggle...)
+	ring.acc = nil // the labelled row below is the radio
 	return Div().Row().Gap(10).ItemsCenter().OnClick(ring.onClick()).
+		Access(Access{Role: RoleRadio, Name: label, Checked: checkState(checked.Get()), Expanded: -1}).
 		Children(ring, Text(label, tm.Label))
 }
 
@@ -110,6 +113,7 @@ func TriCheckbox(state *core.Property[int], label string, onChange ...func(int))
 		box.Border(2, tm.Outline)
 	}
 	return Div().Row().Gap(10).ItemsCenter().
+		Access(Access{Role: RoleCheckBox, Name: label, Checked: [3]int8{0, 2, 1}[min(max(state.Get(), 0), 2)], Expanded: -1}).
 		OnClick(func() {
 			v := (state.Get() + 1) % 3
 			state.Set(v)

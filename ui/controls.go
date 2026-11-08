@@ -136,6 +136,14 @@ func styleButton(d *DivEl, label string, o ButtonOpts) {
 	if len(kids) > 1 {
 		d.Row().Gap(6)
 	}
+	chk := int8(-1)
+	if o.Checked != nil {
+		chk = 0
+		if checked {
+			chk = 1
+		}
+	}
+	d.Access(Access{Role: RoleButton, Name: label, Checked: chk, Expanded: -1, Disabled: o.Disabled})
 	d.Clip().Children(kids...)
 }
 
@@ -170,6 +178,11 @@ func (o SwitchOpts) build(checked *core.Property[bool], label string, onToggle [
 		track.Bg(tm.SwitchOff).Justify(AlignStart)
 	}
 	track.Children(Div().Size(18, 18).Rounded(9).Bg(tm.OnAccent))
+	on := int8(0)
+	if checked.Get() {
+		on = 1
+	}
+	track.Access(Access{Role: RoleSwitch, Name: label, Checked: on, Expanded: -1, Disabled: o.Disabled})
 	if o.Disabled {
 		track.Opacity(0.5)
 	} else {
@@ -184,7 +197,14 @@ func (o SwitchOpts) build(checked *core.Property[bool], label string, onToggle [
 	if label == "" {
 		return track
 	}
-	return Div().Row().ItemsCenter().Gap(8).Children(track, Text(label, tm.Text))
+	// Labelled, the whole row is the switch: the label clicks it too (as
+	// in Qt), and assistive technology sees one switch named by it.
+	row := Div().Row().ItemsCenter().Gap(8).Children(track, Text(label, tm.Text))
+	row.acc, track.acc = track.acc, nil
+	if c := track.onClick(); c != nil {
+		row.OnClick(c)
+	}
+	return row
 }
 
 // Pane, Frame and Page are boxes with a name — sugar for Div — so a view

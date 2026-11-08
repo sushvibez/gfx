@@ -123,7 +123,12 @@ func TreeView(st *TreeState, roots []TreeNode, o TreeOpts) Element {
 			}
 			arrow.Children(Text(glyph, tm.Dim)).OnClick(func() { st.Toggle(path) })
 		}
+		exp := int8(-1)
+		if r.HasChildren {
+			exp = checkState(r.Expanded)
+		}
 		row := Div().Row().H(h).ItemsCenter().Gap(4).Padding(0, 8, 0, 4+16*float32(r.Depth)).
+			Access(Access{Role: RoleTreeItem, Name: r.Node.Label, Selected: r.Index == cur, Checked: -1, Expanded: exp, Level: r.Depth + 1}).
 			OnClick(func() { st.SetCurrent(idx) }).
 			Children(arrow, Text(r.Node.Label, tm.Text).Truncate())
 		if r.Index == cur {
@@ -157,7 +162,7 @@ func TreeView(st *TreeState, roots []TreeNode, o TreeOpts) Element {
 		}
 		body = s
 	}
-	return Div().Col().Focusable().OnKeyAccept(func(ev app.KeyEvent) bool { return treeKey(st, o, ev) }).
+	return Div().Col().Role(RoleTree, "").Focusable().OnKeyAccept(func(ev app.KeyEvent) bool { return treeKey(st, o, ev) }).
 		Children(body)
 }
 

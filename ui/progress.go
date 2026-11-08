@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/sushvibez/gfx/core"
@@ -71,6 +72,7 @@ func ProgressBar(value float32, o ProgressOpts) *DivEl {
 	}
 	tm := themeOr(o.Theme)
 	track := Div().Row().Size(w, h).Rounded(h / 2).Bg(tm.Border).Justify(AlignStart).Clip()
+	track.Role(RoleProgressBar, "")
 	if a := o.Indeterminate; a != nil {
 		a.Run(true)
 		// A third of the track, sweeping in from the left and out the right.
@@ -100,6 +102,7 @@ func ProgressBar(value float32, o ProgressOpts) *DivEl {
 	if to != from {
 		frac = clamp01((value - from) / (to - from))
 	}
+	track.acc.Value = strconv.Itoa(int(frac*100+0.5)) + "%"
 	return track.Children(Div().Size(w*frac, h).Rounded(h / 2).Bg(tm.Accent))
 }
 
@@ -114,6 +117,7 @@ func BusyIndicator(a *Activity, size float32) *DivEl {
 	dot := size / 5
 	// The ring looks the same at any angle, so it turns with the dot on it.
 	ring := Div().Size(size, size).Rounded(size/2).Border(3, tm.Border).
+		Role(RoleProgressBar, "Busy").
 		Col().ItemsCenter().P(2).
 		Children(Div().Size(dot, dot).Rounded(dot / 2).Bg(tm.Accent))
 	if a != nil && a.Running() {

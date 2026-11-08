@@ -216,7 +216,7 @@ func TableView(st *TableState, o TableOpts) Element {
 	}
 	rowEl := func(i int) *DivEl {
 		r := order[i]
-		row := Div().Row()
+		row := Div().Row().Access(Access{Role: RoleRow, Selected: r == sel, Checked: -1, Expanded: -1})
 		for _, c := range disp {
 			isEditing := editing && r == er && c == ec
 			var el Element
@@ -250,7 +250,7 @@ func TableView(st *TableState, o TableOpts) Element {
 			if d, ok := el.(*DivEl); ok {
 				d.W(widths[c])
 			}
-			box := Div().W(widths[c])
+			box := Div().W(widths[c]).Role(RoleCell, "")
 			var ed Element
 			if isEditing && o.Editor != nil {
 				ed = o.Editor(r, c)
@@ -295,6 +295,9 @@ func TableView(st *TableState, o TableOpts) Element {
 		body = l
 	} else {
 		grid := Div().Col()
+		if plain {
+			grid.Role(RoleTable, "") // otherwise the box around it is the table
+		}
 		st.rowEls = st.rowEls[:0]
 		for i := range order {
 			row := rowEl(i)
@@ -317,6 +320,7 @@ func TableView(st *TableState, o TableOpts) Element {
 	}
 	// A header, or the keyboard: the table is a box around the rows.
 	box := Div().Col()
+	box.Role(RoleTable, "")
 	if o.H > 0 {
 		box.H(o.H)
 	} else {
@@ -356,6 +360,7 @@ func tableHeader(st *TableState, o TableOpts, disp []int, widths []float32, tm T
 		}
 		h := Div().Row().H(32).PadXY(8, 0).ItemsCenter().Bg(tm.Band).
 			Children(Text(t, tm.BandText).Bold().Truncate().Grow())
+		h.Role(RoleColumnHeader, o.Title(c))
 		if st.dragCol == pos+1 {
 			h.Bg(tm.BandOpen) // the column being moved
 		}

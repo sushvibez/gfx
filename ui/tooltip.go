@@ -16,7 +16,7 @@ func ToolTip(text string) *DivEl {
 	tm := CurrentTheme()
 	return Div().Row().ItemsCenter().Padding(6, 12, 6, 12).Rounded(6).
 		Bg(tm.ToolTip).
-		Children(Text(text, tm.ToolTipText).SizePx(12))
+		Children(Text(text, tm.ToolTipText).SizePx(12)).Role(RoleToolTip, text)
 }
 
 // ToolTipOpts configures an attached tool tip.

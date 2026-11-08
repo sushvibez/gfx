@@ -107,6 +107,7 @@ func dialogButtonBox(tm Theme, buttons StandardButton, onButton func(StandardBut
 		btn := Div().Row().Size(dialogButtonW, dialogButtonH).ItemsCenter().JustifyCenter().
 			HoverBg(tm.BandHover).PressBg(tm.BandOpen).Focusable().
 			Children(Text(s.label, tm.BandText).SizePx(14))
+		btn.Role(RoleButton, s.label)
 		if onButton != nil {
 			btn.OnClick(func() { onButton(b) })
 		}
@@ -143,6 +144,7 @@ func DialogFrame(content Element, close func(), o DialogOpts) *DivEl {
 		card = DarkTheme()
 	}
 	frame := Div().Col().MinW(320)
+	frame.Role(RoleDialog, o.Title)
 	if o.Title != "" {
 		c := card.Text
 		// Qt's header: the title leads, centred in a 48 px band.

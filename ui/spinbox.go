@@ -120,6 +120,7 @@ func SpinBox(value *core.Property[int], o SpinOpts) *DivEl {
 	}
 	box := Div().Row().ItemsCenter().Gap(4).Children(
 		btn("−", -1, o.Wrap || cur > lo), val, btn("+", 1, o.Wrap || cur < hi))
+	box.Access(Access{Role: RoleSpinButton, Value: format(cur), Checked: -1, Expanded: -1, Disabled: o.Disabled})
 	if o.Disabled {
 		return box.Opacity(0.5)
 	}

@@ -20,6 +20,7 @@ func Checkbox(checked *core.Property[bool], label string, onToggle ...func(bool)
 		box.Border(2, tm.Outline)
 	}
 	return Div().Row().Gap(10).ItemsCenter().
+		Access(Access{Role: RoleCheckBox, Name: label, Checked: checkState(checked.Get()), Expanded: -1}).
 		OnClick(func() {
 			v := !checked.Get()
 			checked.Set(v)

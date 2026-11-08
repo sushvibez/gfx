@@ -176,6 +176,7 @@ func PageIndicator(count, current int, onSelect func(int), o PageIndicatorOpts) 
 	}
 	tm := CurrentTheme()
 	row := Div().Row().ItemsCenter().Gap(gap)
+	row.Role(RoleTabList, "")
 	for i := 0; i < count; i++ {
 		var dot Element
 		if o.Dot != nil {
@@ -191,6 +192,9 @@ func PageIndicator(count, current int, onSelect func(int), o PageIndicatorOpts) 
 			pick := i
 			dot = Div().ItemsCenter().JustifyCenter().OnClick(func() { onSelect(pick) }).Children(dot)
 		}
+		if d, ok := dot.(*DivEl); ok {
+			d.Access(Access{Role: RoleTab, Name: "Page " + itoa(i+1), Selected: i == current, Checked: -1, Expanded: -1})
+		}
 		row.Children(dot)
 	}
 	return row
@@ -202,23 +206,23 @@ func PageIndicator(count, current int, onSelect func(int), o PageIndicatorOpts) 
 func Separator(vertical bool) *DivEl {
 	c := CurrentTheme().Border
 	if vertical {
-		return Div().Size(1, 24).Bg(c)
+		return Div().Size(1, 24).Bg(c).Role(RoleSeparator, "")
 	}
-	return Div().H(1).Grow().Bg(c)
+	return Div().H(1).Grow().Bg(c).Role(RoleSeparator, "")
 }
 
 // ToolBar is a 48 px band holding a row of tool buttons (QML's ToolBar),
 // sugar for a Div.
 func ToolBar(children ...Element) *DivEl {
 	return Div().Row().ItemsCenter().H(48).PadXY(6, 0).Gap(4).Bg(CurrentTheme().Band).
-		Children(children...)
+		Role(RoleToolBar, "").Children(children...)
 }
 
 // GroupBox is a titled Frame (QML's GroupBox): the title above, the
 // content in the frame.
 func GroupBox(title string, content ...Element) *DivEl {
 	tm := CurrentTheme()
-	return Div().Col().Gap(6).Children(
+	return Div().Col().Gap(6).Role(RoleGroup, title).Children(
 		Text(title, tm.Text).Bold(),
 		Frame().Col().Gap(8).Children(content...))
 }

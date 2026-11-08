@@ -12,6 +12,7 @@ import (
 //
 //	ui.Div().Row().Gap(8).P(16).Bg(ui.RGB(0x202030)).Children(...)
 type DivEl struct {
+	acc    *Access // what it is to assistive technology (access.go)
 	row    bool
 	w, h   float32 // 0 = auto
 	grow   float32

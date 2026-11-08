@@ -34,6 +34,7 @@ const (
 func TabBar(current int, tabs []Tab, onSelect func(int)) *DivEl {
 	tm := CurrentTheme()
 	bar := Div().Row().Gap(TabGap).Bg(tm.Band).Focusable()
+	bar.Role(RoleTabList, "")
 	for i, t := range tabs {
 		active := i == current
 		textCol, bg := tm.TabInactiveText, tm.TabInactive
@@ -57,6 +58,7 @@ func TabBar(current int, tabs []Tab, onSelect func(int)) *DivEl {
 			i := i
 			tab.OnClick(func() { onSelect(i) })
 		}
+		tab.Access(Access{Role: RoleTab, Name: t.Label, Selected: active, Checked: -1, Expanded: -1})
 		bar.Children(tab)
 	}
 	if onSelect != nil && len(tabs) > 0 {

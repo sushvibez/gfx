@@ -84,6 +84,7 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 	// (no ring round a menu).
 	list := Div().Col().P(4).Rounded(6).Bg(tm.Menu).Border(1, tm.MenuBorder).MinW(160).
 		FocusBorder(1, tm.MenuBorder)
+	list.Role(RoleMenu, "")
 	hl, sub := st.hl.Get()-1, st.sub.Get()-1
 	trigger := func(i int) {
 		it := items[i]
@@ -145,6 +146,14 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 				trigger(i)
 			})
 		}
+		chk, exp := int8(-1), int8(-1)
+		if it.Checkable {
+			chk = checkState(it.Checked != nil && it.Checked.Get())
+		}
+		if len(it.Sub) > 0 {
+			exp = checkState(i == sub)
+		}
+		row.Access(Access{Role: RoleMenuItem, Name: it.Text, Checked: chk, Expanded: exp, Disabled: it.Disabled})
 		rows[i] = row
 		list.Children(row)
 	}
@@ -249,6 +258,7 @@ const (
 func MenuBar(st *MenuBarState, menus []MenuBarMenu) *DivEl {
 	tm := CurrentTheme()
 	bar := Div().Row().ItemsCenter().H(menuBarHeight).Bg(tm.Band)
+	bar.Role(RoleMenuBar, "")
 	open := st.OpenMenu()
 	titles := make([]*DivEl, len(menus))
 	for i, m := range menus {
@@ -267,6 +277,7 @@ func MenuBar(st *MenuBarState, menus []MenuBarMenu) *DivEl {
 			st.open.Set(i + 1)
 			st.menu(i).Open()
 		})
+		t.Access(Access{Role: RoleMenuItem, Name: m.Title, Checked: -1, Expanded: checkState(i == open)})
 		titles[i] = t
 		bar.Children(t)
 	}
