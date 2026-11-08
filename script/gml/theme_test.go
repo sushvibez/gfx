@@ -66,3 +66,34 @@ Item {
 		t.Errorf("Material.color(Material.Teal) = %v (%v)", v, err)
 	}
 }
+
+// On a dark page the text and fields go dark, but Qt's Basic tab bar and
+// menu bar keep their light bands, as Qt draws them on any page.
+func TestDarkPageKeepsBasicBands(t *testing.T) {
+	defer ui.SetTheme(ui.LightTheme())
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Rectangle {
+    width: 400; height: 300; color: "#1e1f24"
+    Column {
+        TabBar { id: tabs; TabButton { text: "A" } }
+        CheckBox { text: "Wrap" }
+    }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	for i := 0; i < 4; i++ {
+		u.Layout(400, 300)
+	}
+	if c, _ := ui.FillColor(d.doc.elems.get(d.doc.intern("tabs"))); c != ui.LightTheme().Band {
+		t.Errorf("tab bar on a dark page is %v, want the light band %v", c, ui.LightTheme().Band)
+	}
+	if !d.doc.groundDark {
+		t.Error("the page did not read as dark")
+	}
+}

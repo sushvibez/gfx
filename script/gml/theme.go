@@ -215,7 +215,14 @@ func pageTheme(dark bool) ui.Theme {
 	}
 	t := ui.LightTheme()
 	if dark {
+		// Qt's Basic style keeps its opaque light surfaces on any page — the
+		// tab bar, the menu bar, a dialog's button box — so those keep the
+		// light theme's bands; what follows the dark ground is the text and
+		// the fields.
+		light := t
 		t = ui.DarkTheme()
+		t.Band, t.BandHover, t.BandOpen, t.BandText = light.Band, light.BandHover, light.BandOpen, light.BandText
+		t.TabInactive, t.TabHover, t.TabText, t.TabInactiveText = light.TabInactive, light.TabHover, light.TabText, light.TabInactiveText
 	}
 	return t.WithAccent(cur.Accent)
 }

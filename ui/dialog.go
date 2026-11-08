@@ -106,7 +106,7 @@ func dialogButtonBox(tm Theme, buttons StandardButton, onButton func(StandardBut
 		b := s.b
 		btn := Div().Row().Size(dialogButtonW, dialogButtonH).ItemsCenter().JustifyCenter().
 			HoverBg(tm.BandHover).PressBg(tm.BandOpen).Focusable().
-			Children(Text(s.label, tm.Text).SizePx(14))
+			Children(Text(s.label, tm.BandText).SizePx(14))
 		if onButton != nil {
 			btn.OnClick(func() { onButton(b) })
 		}
