@@ -15,13 +15,9 @@ package gml
 
 import (
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/sushvibez/gfx/core"
-
-	"github.com/sushvibez/gfx/app"
-
 	"github.com/sushvibez/gfx/ui"
 )
 
@@ -124,151 +120,37 @@ func buildTumblerWheel(n *node, env *Env, doc *docState, idx Ref) (ui.Element, e
 	doc.exposeIDProp(n, "visibleItemCount", float64(visible))
 	doc.exposeIDProp(n, "wrap", wrap)
 	doc.exposeIDProp(n, "moving", false)
-	// The wheel shows a fixed number of slots in its own height, and never
-	// paints outside it — a long label (a month name in a narrow column)
-	// is cut, not spilled over the neighbouring wheel.
-	box := ui.Div().ItemsCenter().JustifyCenter().Clip()
-	if w > 0 {
-		box.W(w)
-	}
-	if h > 0 {
-		box.H(h)
-	}
-	if spacing > 0 {
-		box.Gap(spacing)
-	}
-	if count == 0 {
-		return box, nil
-	}
-	// A model shorter than the window cannot wrap, and the index stays in
-	// range even after the model shrinks under it (a month change dropping
-	// February's 29th).
-	if count < visible {
-		wrap = false
-	}
-	cur := refInt(idxRef)
-	if cur >= count || cur < 0 {
-		cur = min(max(cur, 0), count-1)
-		_ = idxRef.set(cur)
-	}
-	delegate, err := delegateChild(n)
-	if err != nil {
-		// No delegate: QML's default renders the model's string value.
-		delegate = nil
+	// The wheel itself — slots, clicks, keys, drag and fling — is
+	// ui.Tumbler's; the rows are the delegate's, in each row's scope.
+	if doc.tumblers == nil {
+		doc.tumblers = map[string]*ui.TumblerState{}
 	}
 	viewKey := doc.key(n)
-	for _, slot := range tumblerWindow(cur, count, visible, wrap) {
-		if slot.index < 0 {
-			// Off the ends of a non-wrapping wheel: an empty slot keeps the
-			// centred item centred.
-			box.Children(ui.Div().Grow())
-			continue
-		}
-		i := slot.index
-		el, err := tumblerItem(delegate, viewKey, i, slot.displacement, rows, env, doc)
-		if err != nil {
-			return nil, err
-		}
-		pick := i
-		box.Children(ui.Div().ItemsCenter().JustifyCenter().Grow().
-			OnClick(func() { _ = idxRef.set(pick) }).Children(el))
+	st := doc.tumblers[viewKey]
+	if st == nil {
+		st = &ui.TumblerState{}
+		doc.tumblers[viewKey] = st
 	}
-	// spin is the wheel's CONTINUOUS position: the index is where it points
-	// (rounded), and a flick tweens it so the wheel rolls to a stop instead
-	// of jumping. Every other input keeps it in step.
-	spinRef := doc.floatProp(doc.key(n)+"|spin", float32(cur))
-	settle := func(next int) int {
-		if wrap {
-			return ((next % count) + count) % count
-		}
-		return min(max(next, 0), count-1)
+	doc.exposeIDProp(n, "moving", st.Moving())
+	delegate, err := delegateChild(n)
+	if err != nil {
+		delegate = nil // QML's default renders the model's string value
 	}
-	// While a flick is in flight the animation owns the wheel: follow the
-	// continuous position. Once it stops, the index is the truth again.
-	if p := spinProp(spinRef); p != nil && core.TweenRunning(p) {
-		if at := settle(int(math.Round(float64(p.Get())))); at != cur {
-			cur = at
-			_ = idxRef.set(at)
-		}
-	}
-	// step moves the wheel by whole items, wrapping or stopping at the ends
-	// the way the model allows.
-	step := func(from, by int) {
-		next := settle(from + by)
-		_ = idxRef.set(next)
-		_ = spinRef.set(float32(next)) // the continuous position follows
-	}
-	// Arrow keys move the wheel, as they do in QML.
-	box.Focusable().OnKey(func(e app.KeyEvent) {
-		switch {
-		case !e.Down:
-		case e.Key == app.KeyUp:
-			step(refInt(idxRef), -1)
-		case e.Key == app.KeyDown:
-			step(refInt(idxRef), 1)
-		}
-	})
-	// Dragging spins it: the wheel follows the pointer a row at a time, from
-	// the item that was centred when the press landed — so a drag of half a
-	// row does nothing and letting go leaves it snapped, as a detented wheel
-	// does. Dragging DOWN brings earlier items down into view.
-	rowH := h / float32(visible)
-	if rowH <= 0 {
-		// No stated height: the box the wheel was given last frame.
-		if pe := doc.prevGeom(doc.keyID(n)); pe != nil {
-			rowH = ui.Bounds(pe).H / float32(visible)
-		}
-	}
-	if rowH > 0 && count > 1 {
-		startRef := doc.intProp(doc.key(n)+"|dragFrom", 0)
-		box.OnDrag(func(_, dy float32, phase ui.DragPhase) {
-			if phase == ui.DragStart {
-				core.StopTween(spinProp(spinRef)) // a press catches a spinning wheel
-				_ = startRef.set(refInt(idxRef))
-				return
+	var buildErr error
+	wheel := ui.Tumbler(st, refInt(idxRef), func(i int) { _ = idxRef.set(i) },
+		ui.TumblerOpts{Count: count, Visible: visible, Wrap: wrap, W: w, H: h, Spacing: spacing},
+		func(i int, displacement float32) ui.Element {
+			el, err := tumblerItem(delegate, viewKey, i, displacement, rows, env, doc)
+			if err != nil {
+				buildErr = err
+				return ui.Div()
 			}
-			step(refInt(startRef), -int(math.Round(float64(dy/rowH))))
+			return el
 		})
-		// Letting go while still moving rolls the wheel on and settles it,
-		// slowing at the same rate a flicked list does.
-		box.OnFling(func(_, vy float32) {
-			p := spinProp(spinRef)
-			if p == nil {
-				return
-			}
-			rows := -flingDistance(vy) / rowH
-			target := settle(refInt(idxRef) + int(math.Round(float64(rows))))
-			p.Set(float32(refInt(idxRef)))
-			core.Tween(p, float32(target), flingDuration(vy), core.EaseOutQuad)
-		})
+	if buildErr != nil {
+		return nil, buildErr
 	}
-	return box, nil
-}
-
-// wheelSlot is one visible position on the wheel: which model index it shows
-// (-1 for an empty slot past the end of a non-wrapping wheel) and how far it
-// sits from the centred item, which the delegates fade and shrink by.
-type wheelSlot struct {
-	index        int
-	displacement float32
-}
-
-// tumblerWindow is the visible window: `visible` slots centred on cur,
-// wrapping around the model when the wheel wraps.
-func tumblerWindow(cur, count, visible int, wrap bool) []wheelSlot {
-	half := visible / 2
-	slots := make([]wheelSlot, 0, visible)
-	for d := -half; d <= half; d++ {
-		i := cur + d
-		switch {
-		case wrap:
-			i = ((i % count) + count) % count
-		case i < 0 || i >= count:
-			i = -1
-		}
-		slots = append(slots, wheelSlot{index: i, displacement: float32(d)})
-	}
-	return slots
+	return wheel, nil
 }
 
 // tumblerItem builds one wheel slot: the delegate in row i's scope with

@@ -54,34 +54,31 @@ func buildPageIndicator(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	doc.exposeIDProp(n, "currentIndex", idxRef)
 	doc.exposeIDProp(n, "count", float64(count))
-	cur := refInt(idxRef)
-	row := ui.Div().Row().ItemsCenter().Gap(spacing)
-	delegate, _ := delegateChild(n)
-	viewKey := doc.key(n)
-	for i := 0; i < count; i++ {
-		var dot ui.Element
-		if delegate != nil {
+	// The row and its default dots are ui.PageIndicator's; a delegate draws
+	// each dot in its row's scope instead.
+	o := ui.PageIndicatorOpts{Spacing: spacing}
+	var buildErr error
+	if delegate, _ := delegateChild(n); delegate != nil {
+		viewKey := doc.key(n)
+		o.Dot = func(i int, _ bool) ui.Element {
 			restore := enterRow(viewKey, delegate, env, doc, nil, i)
 			el, err := build(delegate, env, doc)
 			restore()
 			if err != nil {
-				return nil, err
+				buildErr = err
+				return ui.Div()
 			}
-			dot = el
-		} else {
-			// The built-in dot: 8px, dim unless current.
-			c := ui.RGBA{R: 0.6, G: 0.6, B: 0.6, A: 0.45}
-			if i == cur {
-				c = ui.RGBA{R: 0.6, G: 0.6, B: 0.6, A: 1}
-			}
-			dot = ui.Div().W(8).H(8).Rounded(4).Bg(c)
+			return el
 		}
-		if interactive {
-			pick, ref := i, idxRef
-			dot = ui.Div().ItemsCenter().JustifyCenter().
-				OnClick(func() { _ = ref.set(pick) }).Children(dot)
-		}
-		row.Children(dot)
+	}
+	var pick func(int)
+	if interactive {
+		ref := idxRef
+		pick = func(i int) { _ = ref.set(i) }
+	}
+	row := ui.PageIndicator(count, refInt(idxRef), pick, o)
+	if buildErr != nil {
+		return nil, buildErr
 	}
 	return row, nil
 }

@@ -1,9 +1,14 @@
 package gml
 
 // Retained state for the controls kit's gml controls that own some:
-// spinners and indeterminate bars (ui.Activity).
+// spinners and indeterminate bars (ui.Activity) and DelayButtons
+// (ui.DelayState).
 
-import "github.com/sushvibez/gfx/ui"
+import (
+	"time"
+
+	"github.com/sushvibez/gfx/ui"
+)
 
 // activity is the element's own ui.Activity, the loop an indeterminate
 // ProgressBar or a BusyIndicator draws from.
@@ -36,4 +41,25 @@ func (doc *docState) sweepActivities() {
 		}
 	}
 	clear(doc.activitySeen)
+}
+
+// delayButton is a DelayButton (ui.DelayButton): held for `delay` ms (Qt's
+// 300 by default) it runs onActivated; its `progress` is on its id.
+func (doc *docState) delayButton(n *node, env *Env, label string, o ui.ButtonOpts, delayMs float32, onActivated []stmt) *ui.DivEl {
+	if doc.delays == nil {
+		doc.delays = map[string]*ui.DelayState{}
+	}
+	key := doc.key(n)
+	st := doc.delays[key]
+	if st == nil {
+		st = &ui.DelayState{}
+		doc.delays[key] = st
+	}
+	doc.exposeIDProp(n, "progress", float64(st.Progress()))
+	do := ui.DelayOpts{ButtonOpts: o, Delay: time.Duration(delayMs) * time.Millisecond}
+	if onActivated != nil {
+		run := doc.handlerRunner(env)
+		do.OnActivated = func() { run(onActivated, "onActivated") }
+	}
+	return ui.DelayButton(label, st, do)
 }

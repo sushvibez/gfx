@@ -11,24 +11,24 @@ import (
 // current index, wraps around the model when it wraps, and leaves the slots
 // past the ends empty when it does not.
 func TestTumblerWindow(t *testing.T) {
-	got := tumblerWindow(7, 12, 3, true)
-	want := []wheelSlot{{6, -1}, {7, 0}, {8, 1}}
+	got := ui.TumblerWindow(7, 12, 3, true)
+	want := []ui.TumblerSlot{{Index: 6, Displacement: -1}, {Index: 7}, {Index: 8, Displacement: 1}}
 	for i, w := range want {
 		if got[i] != w {
 			t.Errorf("slot %d = %v, want %v", i, got[i], w)
 		}
 	}
 	// Wrapping past the start: index 0 shows the last item above the first.
-	if wrapped := tumblerWindow(0, 12, 3, true); wrapped[0].index != 11 {
-		t.Errorf("wrapped slot above 0 = %d, want 11", wrapped[0].index)
+	if wrapped := ui.TumblerWindow(0, 12, 3, true); wrapped[0].Index != 11 {
+		t.Errorf("wrapped slot above 0 = %d, want 11", wrapped[0].Index)
 	}
 	// Not wrapping: that slot is empty instead.
-	if fixed := tumblerWindow(0, 12, 3, false); fixed[0].index != -1 {
-		t.Errorf("non-wrapping slot above 0 = %d, want -1 (empty)", fixed[0].index)
+	if fixed := ui.TumblerWindow(0, 12, 3, false); fixed[0].Index != -1 {
+		t.Errorf("non-wrapping slot above 0 = %d, want -1 (empty)", fixed[0].Index)
 	}
 	// A five-item window reaches two steps out either way.
-	if wide := tumblerWindow(5, 12, 5, false); len(wide) != 5 ||
-		wide[0].index != 3 || wide[4].index != 7 || wide[4].displacement != 2 {
+	if wide := ui.TumblerWindow(5, 12, 5, false); len(wide) != 5 ||
+		wide[0].Index != 3 || wide[4].Index != 7 || wide[4].Displacement != 2 {
 		t.Errorf("five-slot window = %v", wide)
 	}
 }

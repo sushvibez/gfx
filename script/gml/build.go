@@ -1832,6 +1832,9 @@ type docState struct {
 	menuBars      map[string]*ui.MenuBarState       // each MenuBar's open menu and menu states (menu.go)
 	menus         map[string]*ui.MenuState          // each standalone Menu's highlight and submenus
 	drawers       map[string]*ui.DrawerState        // each Drawer's slide position (drawer.go)
+	tumblers      map[string]*ui.TumblerState       // each Tumbler's wheel position (tumbler.go)
+	delays        map[string]*ui.DelayState         // each DelayButton's hold progress
+	splits        map[string]*ui.SplitState         // each SplitView's dragged handles
 	activities    map[string]*ui.Activity           // each indeterminate ProgressBar's / BusyIndicator's loop
 	activitySeen  map[string]bool                   // ... built this frame (the rest are stopped)
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
@@ -6371,6 +6374,8 @@ func textAlign(a attr, env *Env, horizontal bool) (ui.Align, error) {
 // buildButton is the Qt-Quick-Controls-flavored button: text + onClicked,
 // styled with the framework's defaults unless overridden.
 func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
+	var delayMs float32 // a DelayButton's hold time
+	var onActivated []stmt
 	var o ui.ButtonOpts
 	var label string
 	var onClicked []stmt
@@ -6437,6 +6442,12 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 				return nil, err
 			}
 			o.Color = c
+		case "delay":
+			if v, err := attrFloat(a, env); err == nil {
+				delayMs = v
+			}
+		case "onActivated":
+			onActivated = a.stmt
 		case "onClicked":
 			onClicked = a.stmt
 		case "flat", "highlighted", "enabled":
@@ -6499,7 +6510,11 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 		}
 	}
-	d = ui.Button(label, o)
+	if n.typeName == "DelayButton" {
+		d = doc.delayButton(n, env, label, o, delayMs, onActivated)
+	} else {
+		d = ui.Button(label, o)
+	}
 	out := d
 
 	// A button's children: the Menu a ToolButton opens (`onClicked:
@@ -7190,10 +7205,7 @@ func buildSeparator(n *node, env *Env) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: %s has no attribute %q", a.line, n.typeName, a.name)
 		}
 	}
-	if n.typeName == "MenuSeparator" {
-		return ui.Div().H(1).Grow().Bg(ui.RGB(0xced4da)), nil
-	}
-	return ui.Div().Size(1, 24).Bg(ui.RGB(0xced4da)), nil
+	return ui.Separator(n.typeName != "MenuSeparator"), nil
 }
 
 // buildDial is a Qt Quick Controls Dial, rendered as a ring with a notch at the
@@ -7262,51 +7274,18 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if ok && ref != nil {
 		value = pr.p.Get()
 	}
-	pos := float32(0)
-	if to != from {
-		pos = (value - from) / (to - from)
-	}
-	pos = min(max(pos, 0), 1)
-	drawn := ui.NewCanvas(size, size, func(r *render.Renderer2D, rect ui.Rect) {
-		d := min(rect.W, rect.H)
-		if d <= 0 {
-			return
-		}
-		cx, cy := rect.X+rect.W/2, rect.Y+rect.H/2
-		lw := max(d*0.09, 2)
-		rad := (d - lw) / 2
-		const start, sweep = -140.0, 280.0 // degrees, 0 = 12 o'clock
-		arc := func(fromDeg, toDeg float64) *render.Path {
-			p := render.NewPath()
-			steps := 48
-			for i := 0; i <= steps; i++ {
-				a := (fromDeg + (toDeg-fromDeg)*float64(i)/float64(steps) - 90) * math.Pi / 180
-				p.LineTo(cx+rad*float32(math.Cos(a)), cy+rad*float32(math.Sin(a)))
-			}
-			return p
-		}
-		r.StrokePathRound(arc(start, start+sweep), lw, ui.RGB(0x5a5f6a))
-		if pos > 0 {
-			r.StrokePathRound(arc(start, start+sweep*float64(pos)), lw, ui.RGB(0x3b5bdb))
-		}
-		// Handle: a filled dot on the track at the current value.
-		ha := (start + sweep*float64(pos) - 90) * math.Pi / 180
-		hx, hy := cx+rad*float32(math.Cos(ha)), cy+rad*float32(math.Sin(ha))
-		hp := render.NewPath()
-		for i := 0; i <= 24; i++ {
-			a := 2 * math.Pi * float64(i) / 24
-			hp.LineTo(hx+lw*0.75*float32(math.Cos(a)), hy+lw*0.75*float32(math.Sin(a)))
-		}
-		r.FillPath(hp.Close(), ui.RGB(0xffffff))
-	})
 	if !ok || !enabled {
-		return drawn, nil
+		pos := float32(0)
+		if to != from {
+			pos = (value - from) / (to - from)
+		}
+		return ui.DialFace(min(max(pos, 0), 1), size, ui.CurrentTheme()), nil
 	}
-	dl := ui.Dial(pr.p, from, to).Step(step, snapAlways(n, env))
+	o := ui.DialOpts{Size: size, Step: step, Snap: snapAlways(n, env)}
 	if onMoved != nil || broke != "" || writeBack != nil {
 		run := doc.handlerRunner(env)
 		p := pr.p
-		dl.OnMoved(func() {
+		o.OnMoved = func() {
 			if writeBack != nil {
 				writeBack(p.Get())
 			}
@@ -7318,11 +7297,9 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 				run(onMoved, "onMoved")
 				delete(env.vars, "value")
 			}
-		})
+		}
 	}
-	return ui.Div().Size(size, size).AnchorMode().Children(
-		ui.Anchored(drawn, "", ui.Anchors{Fill: "parent"}),
-		ui.Anchored(dl, "", ui.Anchors{Fill: "parent"})), nil
+	return ui.DialControl(pr.p, from, to, o), nil
 }
 
 // buildSpinBox is a Qt Quick Controls SpinBox: a value box flanked by - / +
