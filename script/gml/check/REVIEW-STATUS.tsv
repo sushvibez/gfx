@@ -8,28 +8,28 @@ sliders	pending	port built, NOT yet reviewed: ui.Slider gained Colors/Thickness/
 rangesliders	pending	pending
 switches	pending	pending
 combobox	pending	pending
-tabbar	pending	pending
+tabbar	reviewing: static render 1.0 vs Qt (dark-page band fix, 2026-11-08)	pending
 toolbar	pending	pending
-menubar	pending	pending
-popups	pending	pending
-drawers	pending	pending
+menubar	reviewing: static render 0.9 vs Qt (dark-page band fix, 2026-11-08)	pending
+popups	reviewing: static render 1.2 vs Qt, matches	pending
+drawers	reviewing: static render 1.5 vs Qt; open: a contentItem Text button label renders larger than Qt's default font	pending
 scrollview	pending	pending
-splitview	pending	pending
+splitview	reviewing: static render 0.5 vs Qt, matches	pending
 swipeview	pending	pending
 layouts	pending	pending
 lists	pending	pending
 gridview	pending	pending
 indicators	pending	pending
 textinputs	pending	pending
-date	pending	pending
+date	reviewing: MonthGrid now opens a week early when the 1st is a Sunday, as Qt (2.1 before)	pending
 filedialogs	pending	pending
 flickable	pending	pending
 pathview	pending	pending
 states	pending	pending
 animations	pending	pending
 loaderex	pending	pending
-treeview	pending	pending
-tableview	pending	pending
+treeview	reviewing: no Qt reference (C++ model); ours renders	pending
+tableview	reviewing: no Qt reference (C++ model); ours renders	pending
 settings	pending	pending
 chatui	pending	pending
 toasts	pending	pending

@@ -46,6 +46,29 @@ Only 37 of the 65 Qt references carry content: the rest are pages built
 on the app's C++ types, which the bare `qml` runtime cannot instantiate,
 so it renders them empty. Those pages can only be read on our side.
 
+## Automated parity scores (2026-11-08)
+
+`scripts/qml-compare.sh` now runs in WSL (Qt 6.10.1 at `~/Qt`, installed
+with aqtinstall; the corpus at `~/workspace/qml-examples`). Each page's
+score is the mean absolute pixel difference between Qt's render and ours
+(0–255 per channel, after resizing to the same size): a few points is
+font rasterisation and antialiasing, double digits is a visible
+difference. Pages whose reference is blank (built on the app's C++
+types, or needing a GPU display) cannot be scored.
+
+| score | pages |
+| --- | --- |
+| ≤ 1.0 | splitview 0.5, states 0.6, filedialogs 0.7, toolbar 0.7, gridview 0.7, flickable 0.8, swipeview 0.8, loaderex 0.9, shapes 0.9, network 0.9, menubar 0.9, tabbar 1.0 |
+| 1.0–2.2 | pathview 1.1, scrollview 1.1, popups 1.2, rangesliders 1.3, hud 1.3, sliders 1.4, toasts 1.4, drawers 1.5, layouts 1.5, textinputs 1.6, combobox 1.6, indicators 1.7, ecam 1.7, buttons 1.7, canvas 1.8, navdisplay 1.8, lists 1.9, pfd 2.0, date 2.1 (before the fix below), chatui 2.2 |
+| no reference | asynccpp, charts3d, customitem, database, ethernet, graphs, maps, multimedia, pdfreader, qmlcppbridge, settings, tableview, theorycpp, threads, treeview, websocket; multiplane (no render of ours) |
+
+Found and fixed by it: tabbar and menubar had scored 10.5 and 9.6 — a dark
+page's theme had darkened Qt's light Basic bands — now 1.0 and 0.9; date's
+MonthGrid started on the 1st when the month began on a Sunday, where Qt
+always shows some of the previous month. Open: on drawers, a button whose
+`contentItem: Text` sets no size renders its label larger and bolder than
+Qt's default font (Qt does not pass a control's font to a plain Text).
+
 ## Status (2026-07)
 
 **65 / 65 pages render.** No banners, crashes or timeouts. Pages using

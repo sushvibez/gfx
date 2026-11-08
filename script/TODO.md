@@ -48,27 +48,27 @@ exists (`examples/qmlgo/<page>`).
 | rangesliders | two-handle sliders, labelled and vertical; neither handle may pass the other | ▢ |
 | switches | ten toggle shapes — switch, checkbox, radio, segmented, pill, day/night, large knob, icon, coloured track, a smart-home panel | ▢ |
 | combobox | basic, editable, model-backed, interactive | ▢ |
-| tabbar | basic, icon, dynamically added tabs, interactive | ▢ |
+| tabbar | basic, icon, dynamically added tabs, interactive | 👀 |
 | toolbar | basic, action, context, interactive | ▢ |
-| menubar | menu bar, checkable items, context menu, interactive | ▢ |
-| popups | ten: dialog, popup, menu, tooltip, snackbar, toasts, alerts, bottom sheet, command palette, floating action button | ▢ |
-| drawers | four edges plus a contained drawer | ▢ |
+| menubar | menu bar, checkable items, context menu, interactive | 👀 |
+| popups | ten: dialog, popup, menu, tooltip, snackbar, toasts, alerts, bottom sheet, command palette, floating action button | 👀 |
+| drawers | four edges plus a contained drawer | 👀 |
 | scrollview | basic, custom scrollbar, Flickable, interactive | ▢ |
-| splitview | horizontal, vertical, nested, interactive | ▢ |
+| splitview | horizontal, vertical, nested, interactive | 👀 |
 | swipeview | basic, carousel, page indicator, interactive | ▢ |
 | layouts | ten: Row/Column, Grid, Flow, StackLayout, responsive breakpoints, holy grail, masonry, collapsible sidebar, draggable split, nested dashboard | ▢ |
 | lists | ten: ListView, GridView, sections, carousel, kanban, timeline, accordion, swipe-to-action, chat bubbles, dynamic | ▢ |
 | gridview | basic, dynamic, photo grid, interactive | ▢ |
 | indicators | twelve gauges: progress bar, busy, dial, battery, signal, speedometer, tachometer, thermometer, VU meter, step progress, circular rings, system monitor | ▢ |
 | textinputs | eleven: text field, text area, search, PIN, tags, char limit, editable labels, star rating, colour picker, spin/combo, a form builder | ▢ |
-| date | a calendar and a Tumbler date picker | ▢ |
+| date | a calendar and a Tumbler date picker | 👀 |
 | filedialogs | file, folder, save and an interactive dialog | ▢ |
 | flickable | basic, snapping, pinch-zoom, interactive | ▢ |
 | pathview | circular, arc, cover flow, interactive | ▢ |
 | states | states, transitions, a state machine, interactive | ▢ |
 | loaderex | Loader: basic, from a Component, dynamic creation, interactive | ▢ |
-| treeview | file system, organisation chart, interactive | ▢ |
-| tableview | basic, editable cells, sort/filter | ▢ |
+| treeview | file system, organisation chart, interactive | 👀 |
+| tableview | basic, editable cells, sort/filter | 👀 |
 | settings | preferences, key/value, recent files, an info card | ▢ |
 
 **Graphics and animation** — the pages that exercise the renderer more
