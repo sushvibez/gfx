@@ -47,7 +47,6 @@ type state struct {
 	tree  ui.TreeState
 
 	bar     ui.MenuBarState
-	ctx     ui.MenuState
 	align   *ui.ButtonGroup
 	left    core.Property[bool]
 	right   core.Property[bool]
