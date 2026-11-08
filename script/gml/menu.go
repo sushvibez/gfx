@@ -1,14 +1,14 @@
 package gml
 
-// Qt Quick Controls' MenuBar and Menu.
+// Qt Quick Controls' MenuBar and Menu, over ui.MenuBar / ui.MenuPanel (the
+// Go API for the same).
 //
 // A MenuBar is a row of titles, one per Menu child; clicking a title opens
 // that menu below it. A Menu is a popup list of Action / MenuItem entries
-// (with MenuSeparator lines and checkable entries), which also opens on its
-// own — from a button's `menu.popup()` or a right-click handler.
-//
-// Which menu is open is engine state keyed to the bar, so a click opens it
-// and a second click (or picking an entry) closes it.
+// (with MenuSeparator lines, checkable entries and nested Menus as
+// submenus), which also opens on its own — from a button's `menu.popup()`
+// or a right-click handler. An Action's `shortcut` shows beside it, and
+// inside a MenuBar it triggers the entry from anywhere in the window.
 
 import "github.com/sushvibez/gfx/ui"
 
@@ -32,15 +32,26 @@ func buildMenuBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 			// id, anchors, chrome and the Controls contract: accepted.
 		}
 	}
-	openRef := doc.intProp(doc.key(n)+"|openMenu", -1)
-	openIdx := refInt(openRef)
-
-	// Qt's Basic style again (see the tab palette in stack.go): a menu bar
-	// is the same near-white as a current tab, with dark titles. Its
-	// metrics are Basic's own, measured from Qt: the bar is 40 tall with
-	// no padding of its own, and each title is inset 12 left and 16 right
-	// at a 12px font.
-	bar := ui.Div().Row().ItemsCenter().H(basicMenuBarHeight).Bg(ui.RGB(basicTabCurrent))
+	var menus []ui.MenuBarMenu
+	for _, c := range n.children {
+		if c.typeName != "Menu" {
+			if isNonVisual(c) {
+				doc.refreshNonVisual(c, env)
+			}
+			continue
+		}
+		menus = append(menus, ui.MenuBarMenu{Title: menuTitle(c, env), Items: doc.menuItems(c, env)})
+	}
+	if doc.menuBars == nil {
+		doc.menuBars = map[string]*ui.MenuBarState{}
+	}
+	key := doc.key(n)
+	st := doc.menuBars[key]
+	if st == nil {
+		st = &ui.MenuBarState{}
+		doc.menuBars[key] = st
+	}
+	bar := ui.MenuBar(st, menus)
 	if w > 0 {
 		bar.W(w)
 	}
@@ -50,72 +61,33 @@ func buildMenuBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if grow {
 		bar.Grow()
 	}
-	var menus []*node
-	for _, c := range n.children {
-		if c.typeName != "Menu" {
-			if isNonVisual(c) {
-				doc.refreshNonVisual(c, env)
+	// The entries' shortcuts work from anywhere in the window.
+	var wire func(items []ui.MenuItem)
+	wire = func(items []ui.MenuItem) {
+		for _, it := range items {
+			if len(it.Sub) > 0 {
+				wire(it.Sub)
+				continue
 			}
-			continue
-		}
-		menus = append(menus, c)
-	}
-	// Each title's own element, so the open menu can be anchored UNDER it:
-	// an overlay's x/y are window coordinates, so a menu positioned from
-	// the title's offset within the bar dropped at the window's corner
-	// instead of under the title that opened it.
-	items := make([]ui.Element, len(menus))
-	for i, m := range menus {
-		title := menuTitle(m, env)
-		idx := i
-		item := ui.Div().Row().ItemsCenter().H(basicMenuBarHeight).
-			PadXY(14, 6). // Qt insets 12 left / 16 right; the total is what shows
-
-			HoverBg(ui.RGBA{R: 0.85, G: 0.86, B: 0.88, A: 1}).
-			Children(ui.Text(title, ui.RGB(0x1a1a1a)).SizePx(basicMenuFontPx))
-		if i == openIdx {
-			item.Bg(ui.RGBA{R: 0.80, G: 0.82, B: 0.86, A: 1})
-		}
-		ref := openRef
-		item.OnClick(func() {
-			if refInt(ref) == idx {
-				_ = ref.set(-1)
-			} else {
-				_ = ref.set(idx)
+			if it.Shortcut == "" || it.Disabled || (it.OnTrigger == nil && it.Checked == nil) {
+				continue
 			}
-		})
-		bar.Children(item)
-		items[i] = item
-	}
-	// The open menu floats under its title.
-	if openIdx >= 0 && openIdx < len(menus) {
-		list, err := buildMenuList(menus[openIdx], env, doc, func() { _ = openRef.set(-1) })
-		if err != nil {
-			return nil, err
+			it := it
+			bar.Shortcut(func() {
+				if it.Checkable && it.Checked != nil {
+					it.Checked.Set(!it.Checked.Get())
+				}
+				if it.OnTrigger != nil {
+					it.OnTrigger()
+				}
+			}, it.Shortcut)
 		}
-		// Anchored to the title, resolved at layout time (so it follows the
-		// bar through resizes and reflows) — the overlay is added after the
-		// items, which is what AnchorBelow needs.
-		// A click anywhere else closes it, and so does Escape (the overlay's
-		// dismiss scrim is what both go through) — Qt's menus do both, and
-		// ours could only be closed by picking something.
-		// No snapping to the window: a menu that does not fit below its
-		// title is CLIPPED by the window, as Qt's is here — pulling it up
-		// to fit would cover the bar that opened it.
-		bar.Children(ui.Overlay(list, 0, 0).AnchorBelow(items[openIdx], 0).
-			OnClickOutside(func() { _ = openRef.set(-1) }))
+	}
+	for _, m := range menus {
+		wire(m.Items)
 	}
 	return bar, nil
 }
-
-const (
-	// Qt's Basic MenuBar, measured: the bar and its items are 40 tall, the
-	// items carry 12/16 horizontal and 6 vertical padding, and their
-	// labels are 12px in the default family (Basic does not take the
-	// application font).
-	basicMenuBarHeight = 40
-	basicMenuFontPx    = 12
-)
 
 // menuTitle reads a Menu's title.
 func menuTitle(n *node, env *Env) string {
@@ -129,76 +101,50 @@ func menuTitle(n *node, env *Env) string {
 	return ""
 }
 
-// buildMenuList renders a Menu's entries as a floating list. onPick runs
-// after an entry's own handler, to close the menu.
-func buildMenuList(n *node, env *Env, doc *docState, onPick func()) (ui.Element, error) {
-	list := ui.Div().Col().P(4).Rounded(6).
-		Bg(ui.RGBA{R: 0.16, G: 0.17, B: 0.20, A: 1}).
-		Border(1, ui.RGBA{R: 0.30, G: 0.31, B: 0.35, A: 1}).
-		MinW(160)
+// menuItems reads a Menu's entries: Actions and MenuItems, separators,
+// and nested Menus as submenus.
+func (doc *docState) menuItems(n *node, env *Env) []ui.MenuItem {
+	var out []ui.MenuItem
 	for _, c := range n.children {
 		switch c.typeName {
 		case "MenuSeparator":
-			list.Children(ui.Div().H(1).Bg(ui.RGBA{R: 0.3, G: 0.31, B: 0.35, A: 1}))
-			continue
-		case "Action", "MenuItem":
+			out = append(out, ui.MenuItem{Separator: true})
 		case "Menu":
-			// A submenu: shown as its title, not expandable here.
-			list.Children(ui.Div().Row().ItemsCenter().PadXY(10, 6).
-				Children(ui.Text(menuTitle(c, env)+"  >", ui.RGB(0xdddddd))))
-			continue
+			out = append(out, ui.MenuItem{Text: menuTitle(c, env), Sub: doc.menuItems(c, env)})
+		case "Action", "MenuItem":
+			out = append(out, doc.menuEntry(c, env))
 		default:
 			if isNonVisual(c) {
 				doc.refreshNonVisual(c, env)
 			}
-			continue
 		}
-		text, checkable, checked, enabled, handler := menuEntry(c, env, doc)
-		label := text
-		if checkable {
-			mark := "  "
-			if checked {
-				mark = "✓ "
-			}
-			label = mark + text
-		}
-		color := ui.RGB(0xeeeeee)
-		if !enabled {
-			color = ui.RGB(0x777777)
-		}
-		row := ui.Div().Row().ItemsCenter().PadXY(10, 6).Rounded(4).
-			Children(ui.Text(label, color))
-		if enabled {
-			row.HoverBg(ui.RGBA{R: 0.24, G: 0.25, B: 0.30, A: 1})
-			run, close := handler, onPick
-			row.OnClick(func() {
-				if run != nil {
-					run()
-				}
-				if close != nil {
-					close()
-				}
-			})
-		}
-		list.Children(row)
 	}
-	return list, nil
+	return out
 }
 
-// menuEntry reads one Action / MenuItem: its text, checkable state and
-// trigger handler.
-func menuEntry(n *node, env *Env, doc *docState) (text string, checkable, checked, enabled bool, run func()) {
-	enabled = true
+// menuEntry reads one Action / MenuItem: its text, shortcut, enabled,
+// checkable state (its own, toggled by the menu) and trigger handler.
+func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
+	var it ui.MenuItem
 	var stmts []stmt
+	checked := false
 	for _, a := range n.attrs {
 		switch a.name {
 		case "text":
 			if v, err := a.expr.eval(env); err == nil {
-				text = str(v)
+				it.Text = str(v)
+			}
+		case "shortcut":
+			if v, err := a.expr.eval(env); err == nil {
+				if s, ok := v.(string); ok {
+					it.Shortcut = s
+				} else if cs := keyCombosOf(v); len(cs) > 0 {
+					it.Shortcut = shortcutText(cs[0])
+				}
 			}
 		case "checkable":
 			if b, err := attrBool(a, env); err == nil {
-				checkable = b
+				it.Checkable = b
 			}
 		case "checked":
 			if b, err := attrBool(a, env); err == nil {
@@ -206,44 +152,84 @@ func menuEntry(n *node, env *Env, doc *docState) (text string, checkable, checke
 			}
 		case "enabled":
 			if b, err := attrBool(a, env); err == nil {
-				enabled = b
+				it.Disabled = !b
 			}
 		case "onTriggered", "onClicked", "onToggled":
 			stmts = append(stmts, a.stmt...)
 		}
 	}
 	// A checkable entry owns its state, like the control it stands for.
-	if checkable {
+	if it.Checkable {
 		ref := doc.boolProp(doc.key(n)+".checked", checked)
-		checked = ref.get() == true
-		if len(stmts) > 0 || true {
-			runner := doc.handlerRunner(env)
-			body := stmts
-			run = func() {
-				_ = ref.set(!(ref.get() == true))
-				if len(body) > 0 {
-					runner(body, "onTriggered")
-				}
-			}
+		doc.exposeIDProp(n, "checked", ref)
+		if pr, _, ok := propOf[bool](ref); ok {
+			it.Checked = pr.p
 		}
-		return text, checkable, checked, enabled, run
 	}
 	if len(stmts) > 0 {
 		runner := doc.handlerRunner(env)
 		body := stmts
-		run = func() { runner(body, "onTriggered") }
+		it.OnTrigger = func() { runner(body, "onTriggered") }
 	}
-	return text, checkable, checked, enabled, run
+	return it
+}
+
+// shortcutText writes a key combination the way a menu shows it.
+func shortcutText(c ui.KeyCombo) string {
+	s := ""
+	if c.Ctrl {
+		s += "Ctrl+"
+	}
+	if c.Alt {
+		s += "Alt+"
+	}
+	if c.Shift {
+		s += "Shift+"
+	}
+	if c.Rune != 0 {
+		return s + string(c.Rune)
+	}
+	for name, k := range map[string]string{"Esc": "Key_Escape", "Del": "Key_Delete", "Ins": "Key_Insert"} {
+		if qtCodeKeys[qtKeyCodes[k]] == c.Key {
+			return s + name
+		}
+	}
+	for i := 1; i <= 12; i++ {
+		if qtCodeKeys[qtKeyCodes["Key_F"+itoa(i)]] == c.Key {
+			return s + "F" + itoa(i)
+		}
+	}
+	return s
+}
+
+func itoa(i int) string {
+	if i < 10 {
+		return string(rune('0' + i))
+	}
+	return "1" + string(rune('0'+i-10))
 }
 
 // buildMenu renders a standalone Menu (not inside a MenuBar): a popup that
 // shows while its `visible`/`opened` state is set, which popup() sets.
 func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	openRef := doc.boolProp(doc.key(n)+"|open", false)
+	if doc.menus == nil {
+		doc.menus = map[string]*ui.MenuState{}
+	}
+	key := doc.key(n)
+	st := doc.menus[key]
+	if st == nil {
+		st = &ui.MenuState{}
+		doc.menus[key] = st
+	}
+	open := func() (any, error) {
+		st.Open() // a fresh highlight and no submenu open
+		return nil, openRef.set(true)
+	}
 	// popup()/open()/close() on the menu's id, so a button can show it.
 	doc.exposeIDMethods(n, map[string]any{
-		"popup": jsFunc(func([]any) (any, error) { return nil, openRef.set(true) }),
-		"open":  jsFunc(func([]any) (any, error) { return nil, openRef.set(true) }),
+		"popup": jsFunc(func([]any) (any, error) { return open() }),
+		"open":  jsFunc(func([]any) (any, error) { return open() }),
 		"close": jsFunc(func([]any) (any, error) { return nil, openRef.set(false) }),
 	})
 	doc.exposeIDProp(n, "opened", openRef.get() == true)
@@ -260,12 +246,10 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if openRef.get() != true {
 		return ui.Div(), nil
 	}
-	list, err := buildMenuList(n, env, doc, func() { _ = openRef.set(false) })
-	if err != nil {
-		return nil, err
-	}
+	closeMenu := func() { _ = openRef.set(false) }
+	list := ui.MenuPanel(st, doc.menuItems(n, env), closeMenu)
 	x, y := menuPos(n, env)
-	return ui.Overlay(list, x, y).OnClickOutside(func() { _ = openRef.set(false) }), nil
+	return ui.Overlay(list, x, y).OnClickOutside(closeMenu), nil
 }
 
 // menuPos reads a Menu's x/y (where popup() placed it) — in its parent
@@ -286,3 +270,6 @@ func menuPos(n *node, env *Env) (float32, float32) {
 	}
 	return x, y
 }
+
+// basicMenuBarHeight is Qt's Basic MenuBar height, which ui.MenuBar draws.
+const basicMenuBarHeight = 40

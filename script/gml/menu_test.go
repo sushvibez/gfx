@@ -184,3 +184,54 @@ Rectangle {
 		t.Error("a click outside did not close the menu")
 	}
 }
+
+// A nested Menu opens as a submenu from the keyboard, and an Action's
+// shortcut triggers it from anywhere in the window.
+func TestMenuSubmenuAndShortcut(t *testing.T) {
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property string did: ""
+    MenuBar { id: bar; width: 400
+        Menu { title: "File"
+            Action { text: "Save"; shortcut: "Ctrl+S"; onTriggered: root.did = "save" }
+            Menu { title: "Export"
+                Action { text: "PNG"; onTriggered: root.did = "png" } } } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(400, 300); u.Layout(400, 300) }
+	frame()
+	get := func(expr string) string {
+		v, err := evalString(expr, env)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		return str(v)
+	}
+	u.Key(app.KeyEvent{Down: true, Rune: 's', Ctrl: true})
+	frame()
+	if got := get("root.did"); got != "save" {
+		t.Errorf("Ctrl+S did %q, want save (the Action's shortcut)", got)
+	}
+	// Open File (its title is the bar's first child) and walk into Export.
+	el := d.doc.elems.get(d.doc.intern("bar"))
+	title := ui.Bounds(ui.Children(el)[0])
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: title.X + 5, Y: title.Y + 5}, {Kind: app.MouseDown, X: title.X + 5, Y: title.Y + 5, Button: 1},
+		{Kind: app.MouseUp, X: title.X + 5, Y: title.Y + 5, Button: 1}})
+	frame()
+	for _, k := range []app.Key{app.KeyDown, app.KeyDown, app.KeyRight, app.KeyDown, app.KeyEnter} {
+		u.Key(app.KeyEvent{Down: true, Key: k})
+		frame()
+	}
+	if got := get("root.did"); got != "png" {
+		t.Errorf("File > Export > PNG by keyboard did %q, want png", got)
+	}
+}

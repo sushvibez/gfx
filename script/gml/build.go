@@ -1830,6 +1830,8 @@ type docState struct {
 	animPlayers   map[string]*animPlayer            // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState       // MouseArea drags, by element (dragtarget.go)
 	buttonGroups  map[string]*buttonGroup           // exclusive button groups, named or automatic (buttongroup.go)
+	menuBars      map[string]*ui.MenuBarState       // each MenuBar's open menu and menu states (menu.go)
+	menus         map[string]*ui.MenuState          // each standalone Menu's highlight and submenus
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
 	groupOfButton map[string]string                 // button id -> the ButtonGroup that lists it
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)

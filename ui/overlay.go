@@ -31,6 +31,7 @@ type OverlayEl struct {
 	anchor  Element // when set, position derives from this element's rect
 	ax, ay  float32 // offset from the anchor's top-left
 	below   bool    // offset from the anchor's BOTTOM-left instead
+	beside  bool    // ... or from its top-RIGHT corner (a submenu)
 	above   bool    // ... or centred ABOVE it (a tooltip)
 	pin     Anchor  // which point of the overlay lands on the position
 	snap    float32 // snap-to-window margin (GPUI snap_to_window_with_margin); <0 = off
@@ -56,6 +57,14 @@ func (o *OverlayEl) AnchorTo(el Element, dx, dy float32) *OverlayEl {
 // popover under its trigger).
 func (o *OverlayEl) AnchorBelow(el Element, gap float32) *OverlayEl {
 	o.anchor, o.ax, o.ay, o.below = el, 0, gap, true
+	return o
+}
+
+// AnchorRight sits the overlay against the anchor's right edge, its top
+// dy below the anchor's, gap px clear — a submenu beside its entry.
+// Resolved at layout time, when the anchor's width is known.
+func (o *OverlayEl) AnchorRight(el Element, gap, dy float32) *OverlayEl {
+	o.anchor, o.ax, o.ay, o.below, o.above, o.beside = el, gap, dy, false, false, true
 	return o
 }
 
@@ -95,6 +104,8 @@ func (o *OverlayEl) layout(ctx *Context, _ Rect) {
 		switch {
 		case o.below:
 			y += b.H
+		case o.beside:
+			x += b.W
 		case o.above:
 			// Centred over the anchor and clear of it (a tooltip): needs
 			// both the anchor's width and the overlay's own size, which is
