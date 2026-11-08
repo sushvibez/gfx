@@ -205,10 +205,12 @@ func (s *state) view() ui.Element {
 		{"Margaret", "Director", "33"}, {"Ken", "Researcher", "52"}}
 	widths := []float32{110, 120, 60}
 	data := ui.GroupBox("Data",
-		// Click a title to sort; arrows move the selection while it has focus.
+		// Click a title to sort, drag its edge to resize, drag it to move the
+		// column; arrows move the selection while the table has focus.
 		ui.TableView(&s.table, ui.TableOpts{Rows: len(people), Cols: 3, ColWidths: widths, H: 200, Selectable: true,
-			Sortable: true, Title: func(c int) string { return []string{"Name", "Role", "Age"}[c] },
-			Text: func(r, c int) string { return people[r][c] }}),
+			Sortable: true, Resizable: true, Reorderable: true,
+			Title: func(c int) string { return []string{"Name", "Role", "Age"}[c] },
+			Text:  func(r, c int) string { return people[r][c] }}),
 		ui.Div().W(290).Children(ui.TreeView(&s.tree, []ui.TreeNode{
 			{Label: "src", Children: []ui.TreeNode{
 				{Label: "main.go"},

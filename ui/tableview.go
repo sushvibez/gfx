@@ -26,6 +26,12 @@ type TableState struct {
 	order        []int    // model row of each visible row, last build
 	rowEls       []*DivEl // each visible row's element, last build (not virtualised)
 	rowH         float32  // RowHeight of the last build
+
+	colW    map[int]float32    // widths the user dragged, by model column
+	colOrd  []int              // model column at each display position (nil: natural)
+	cols    core.Property[int] // bumped when widths or order change
+	dragCol int                // display position of a header being moved + 1 (0: none)
+	headEls []*DivEl           // the header cells, last build, in display order
 }
 
 // Selected is the selected row, or -1; Select selects row (-1: none).
@@ -44,6 +50,51 @@ func (s *TableState) StopEditing()      { s.editR.Set(0); s.editC.Set(0) }
 // whether descending; SortBy sorts it (col -1: back to model order).
 func (s *TableState) SortColumn() (col int, desc bool) { return s.sortCol.Get() - 1, s.sortDesc.Get() }
 func (s *TableState) SortBy(col int, desc bool)        { s.sortCol.Set(col + 1); s.sortDesc.Set(desc) }
+
+// ColumnWidth is the width the user gave a model column (ok false: none);
+// SetColumnWidth sets one, as dragging a header's edge does.
+func (s *TableState) ColumnWidth(col int) (w float32, ok bool) {
+	w, ok = s.colW[col]
+	return w, ok
+}
+func (s *TableState) SetColumnWidth(col int, w float32) {
+	if s.colW == nil {
+		s.colW = map[int]float32{}
+	}
+	s.colW[col] = w
+	s.cols.Set(s.cols.Get() + 1)
+}
+
+// ColumnOrder is the model column at each display position (nil: the
+// model's order); MoveColumn moves the column at display position from to
+// position to, as dragging a header does; ResetColumns forgets widths and
+// order.
+func (s *TableState) ColumnOrder() []int { return s.colOrd }
+func (s *TableState) MoveColumn(from, to int) {
+	if from == to || from < 0 || to < 0 || from >= len(s.colOrd) || to >= len(s.colOrd) {
+		return
+	}
+	c := s.colOrd[from]
+	s.colOrd = append(s.colOrd[:from], s.colOrd[from+1:]...)
+	s.colOrd = append(s.colOrd[:to], append([]int{c}, s.colOrd[to:]...)...)
+	s.cols.Set(s.cols.Get() + 1)
+}
+func (s *TableState) ResetColumns() {
+	s.colW, s.colOrd = nil, nil
+	s.cols.Set(s.cols.Get() + 1)
+}
+
+// displayCols is the model column at each display position for cols
+// columns (the user's order while it still fits the table).
+func (s *TableState) displayCols(cols int) []int {
+	if len(s.colOrd) != cols {
+		s.colOrd = make([]int, cols)
+		for i := range s.colOrd {
+			s.colOrd[i] = i
+		}
+	}
+	return s.colOrd
+}
 
 // VisibleRows is the model row shown at each visible position, after the
 // filter and the sort (as of the last build).
@@ -79,6 +130,12 @@ type TableOpts struct {
 	// rows in view (ui.List), so a table of 100,000 rows costs what one
 	// screenful does.
 	RowHeight float32
+	// Resizable: a grip on each title's right edge drags the column's
+	// width (MinColW, 0: 40, the least). Reorderable: dragging a title onto
+	// another column's place moves it there. Both need Title; the state
+	// keeps what the user did (ColumnWidth, ColumnOrder).
+	Resizable, Reorderable bool
+	MinColW                float32
 }
 
 // TableColumnWidths is the width of each of cols columns: widths where
@@ -136,7 +193,14 @@ func tableOrder(st *TableState, o TableOpts) []int {
 
 // TableView draws a table of Rows×Cols cells, scrolling.
 func TableView(st *TableState, o TableOpts) Element {
+	st.cols.Get() // the columns the user resized or moved
 	widths := TableColumnWidths(o.ColWidths, o.Cols)
+	for c, w := range st.colW {
+		if c < len(widths) {
+			widths[c] = w
+		}
+	}
+	disp := st.displayCols(o.Cols) // model column at each display position
 	tm := CurrentTheme()
 	order := tableOrder(st, o)
 	st.order, st.rowH = order, o.RowHeight
@@ -153,7 +217,7 @@ func TableView(st *TableState, o TableOpts) Element {
 	rowEl := func(i int) *DivEl {
 		r := order[i]
 		row := Div().Row()
-		for c := 0; c < o.Cols; c++ {
+		for _, c := range disp {
 			isEditing := editing && r == er && c == ec
 			var el Element
 			if o.Cell != nil {
@@ -259,7 +323,7 @@ func TableView(st *TableState, o TableOpts) Element {
 		box.Grow()
 	}
 	if o.Title != nil {
-		box.Children(tableHeader(st, o, widths, tm))
+		box.Children(tableHeader(st, o, disp, widths, tm))
 	}
 	box.Children(body)
 	if o.Selectable {
@@ -269,9 +333,19 @@ func TableView(st *TableState, o TableOpts) Element {
 }
 
 // tableHeader is the table's own header row: the titles, sorting on click.
-func tableHeader(st *TableState, o TableOpts, widths []float32, tm Theme) *DivEl {
+func tableHeader(st *TableState, o TableOpts, disp []int, widths []float32, tm Theme) *DivEl {
 	col, desc := st.SortColumn()
-	return HeaderView(o.Cols, widths, nil, func(c int) Element {
+	minW := o.MinColW
+	if minW <= 0 {
+		minW = 40
+	}
+	shown := make([]float32, len(disp)) // widths in display order
+	for i, c := range disp {
+		shown[i] = widths[c]
+	}
+	st.headEls = st.headEls[:0]
+	strip := HeaderView(len(disp), shown, nil, func(pos int) Element {
+		c := disp[pos]
 		t := o.Title(c)
 		if o.Sortable && c == col {
 			if desc {
@@ -281,19 +355,64 @@ func tableHeader(st *TableState, o TableOpts, widths []float32, tm Theme) *DivEl
 			}
 		}
 		h := Div().Row().H(32).PadXY(8, 0).ItemsCenter().Bg(tm.Band).
-			Children(Text(t, tm.BandText).Bold().Truncate())
+			Children(Text(t, tm.BandText).Bold().Truncate().Grow())
+		if st.dragCol == pos+1 {
+			h.Bg(tm.BandOpen) // the column being moved
+		}
 		if o.Sortable {
-			cc := c
 			h.HoverBg(tm.BandHover).OnClick(func() {
-				if cur, d := st.SortColumn(); cur == cc {
-					st.SortBy(cc, !d)
+				if cur, d := st.SortColumn(); cur == c {
+					st.SortBy(c, !d)
 				} else {
-					st.SortBy(cc, false)
+					st.SortBy(c, false)
 				}
 			})
 		}
+		if o.Reorderable {
+			// A press that travels moves the column to where it is let go;
+			// one that does not is a click (the sort above).
+			var startX float32
+			h.OnPointer(func(x, _ float32, phase DragPhase) {
+				switch phase {
+				case DragStart:
+					startX = x
+				case DragMove:
+					if st.dragCol != pos+1 && abs32(x-startX) > 4 {
+						st.dragCol = pos + 1
+						st.cols.Set(st.cols.Get() + 1)
+					}
+				case DragEnd:
+					moved := st.dragCol == pos+1
+					st.dragCol = 0
+					st.cols.Set(st.cols.Get() + 1)
+					if !moved {
+						return
+					}
+					for to, el := range st.headEls {
+						if r := el.Rect(); x >= r.X && x < r.X+r.W {
+							st.MoveColumn(pos, to)
+							return
+						}
+					}
+				}
+			})
+		}
+		if o.Resizable {
+			// The grip: the right edge of the title, dragged sideways.
+			var startW float32
+			h.Padding(0, 0, 0, 8).Children(Div().Size(6, 32).Cursor(app.CursorEW).
+				OnDrag(func(dx, _ float32, phase DragPhase) {
+					if phase == DragStart {
+						startW = widths[c]
+						return
+					}
+					st.SetColumnWidth(c, max(minW, startW+dx))
+				}))
+		}
+		st.headEls = append(st.headEls, h)
 		return h
 	})
+	return strip
 }
 
 // tableKey moves the selection through the visible rows, starts an edit
@@ -338,7 +457,7 @@ func tableKey(st *TableState, o TableOpts, ev app.KeyEvent) bool {
 		if at < 0 || o.CanEdit == nil || o.Editor == nil {
 			return false
 		}
-		for c := 0; c < o.Cols; c++ {
+		for _, c := range st.displayCols(o.Cols) {
 			if o.CanEdit(st.order[at], c) {
 				st.Edit(st.order[at], c)
 				return true

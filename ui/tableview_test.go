@@ -160,3 +160,55 @@ func TestTableViewVirtual(t *testing.T) {
 		t.Errorf("after End the table is scrolled to %v, want the last row in view", off)
 	}
 }
+
+func TestTableViewResizeReorder(t *testing.T) {
+	var st TableState
+	u := New(nil, nil, func() Element {
+		return Div().Children(TableView(&st, TableOpts{Rows: 2, Cols: 3, ColWidths: []float32{100, 80, 60}, H: 150,
+			Title: func(c int) string { return []string{"A", "B", "C"}[c] }, Sortable: true,
+			Text:      func(r, c int) string { return fmt.Sprint(c) },
+			Resizable: true, Reorderable: true}))
+	})
+	frame := func() { u.Layout(500, 400); u.Layout(500, 400) }
+	frame()
+	// Drag A's grip 40 px right: A is 140 wide, and its cells follow.
+	a := st.headEls[0].Rect()
+	u.Drag(a.X+a.W-3, a.Y+16, a.X+a.W+37, a.Y+16)
+	frame()
+	if w, ok := st.ColumnWidth(0); !ok || w != 140 {
+		t.Errorf("after dragging A's edge: width %v (%v), want 140", w, ok)
+	}
+	if r := Bounds(Children(st.rowEls[0])[0]); r.W != 140 {
+		t.Errorf("A's cells are %v wide, want 140", r.W)
+	}
+	// Never under the least width.
+	a = st.headEls[0].Rect()
+	u.Drag(a.X+a.W-3, a.Y+16, a.X-200, a.Y+16)
+	frame()
+	if w, _ := st.ColumnWidth(0); w != 40 {
+		t.Errorf("dragged far left: width %v, want 40 (the least)", w)
+	}
+	// Drag C's title onto A's place: the order is C, A, B, and the cells
+	// follow it; the model columns are unchanged.
+	c := st.headEls[2].Rect()
+	a = st.headEls[0].Rect()
+	// Through real mouse events: a pointer handler is told where the press
+	// landed, which UI.Drag (offsets only) does not do.
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: c.X + 10, Y: c.Y + 16}, {Kind: app.MouseDown, X: c.X + 10, Y: c.Y + 16, Button: 1}})
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: (c.X + a.X) / 2, Y: a.Y + 16}})
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: a.X + 5, Y: a.Y + 16}, {Kind: app.MouseUp, X: a.X + 5, Y: a.Y + 16, Button: 1}})
+	frame()
+	if got := fmt.Sprint(st.ColumnOrder()); got != "[2 0 1]" {
+		t.Errorf("after moving C first: order %s, want [2 0 1]", got)
+	}
+	if got, _ := TextOf(Children(Children(Children(st.rowEls[0])[0])[0])[0]); got != "2" {
+		t.Errorf("first cell shows %q, want column 2's", got)
+	}
+	// A click (no travel) on a title still sorts.
+	b := st.headEls[2].Rect() // B, now last
+	clickAt(u, Rect{X: b.X + 10, Y: b.Y, W: 10, H: b.H})
+	frame()
+	if col, _ := st.SortColumn(); col != 1 {
+		t.Errorf("clicked B's title: sorted by %d, want 1", col)
+	}
+}
