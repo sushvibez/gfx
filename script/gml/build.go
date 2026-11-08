@@ -1544,10 +1544,16 @@ func buildElement(n *node, env *Env, doc *docState) (ui.Element, error) {
 		// Container-ish Controls and windows behave as plain boxes here:
 		// Qt Quick Controls containers (Pane/Frame/GroupBox/Page/Control) and
 		// the window roots (ApplicationWindow/Window) just lay out their
-		// children; their chrome (title bar, header/footer) is accepted no-op.
+		// children; a Page's or window's header/footer/menuBar band it
+		// (pagebands.go), and its title bar is accepted as a no-op.
 		"Pane", "Frame", "GroupBox", "Page", "Control", "Container", "FocusScope",
 		"ApplicationWindow", "Window", "ToolBar",
 		"ScrollIndicator":
+		if isBandedType(n.typeName) {
+			if el, ok, err := buildBanded(n, env, doc); ok {
+				return el, err // header/footer/menuBar around the content (pagebands.go)
+			}
+		}
 		return buildBox(n, env, doc)
 	case "MenuBar":
 		// A row of menu titles; clicking one drops its Menu (see menu.go).
@@ -1823,6 +1829,9 @@ type docState struct {
 	settingsStore settings.Store                    // where Settings values persist; nil = settings.DefaultStore()
 	animPlayers   map[string]*animPlayer            // AnimatedImage players, by element (animatedimage.go)
 	dragStates    map[string]*dragTargetState       // MouseArea drags, by element (dragtarget.go)
+	buttonGroups  map[string]*buttonGroup           // exclusive button groups, named or automatic (buttongroup.go)
+	popupPhases   map[string]*popupPhase            // popup open/closing state and enter/exit values (popuptransitions.go)
+	groupOfButton map[string]string                 // button id -> the ButtonGroup that lists it
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
 	stateAnims    map[string][]animSpec             // the transition running since that change
 	stateToks     map[string]*core.Property[uint64] // bumped on each change (stateCtx.tok)
@@ -1832,6 +1841,7 @@ type docState struct {
 	focusRefs     map[keyID]Ref                     // tracked activeFocus, by element (focus.go)
 	readsFocus    map[*node]bool                    // items whose own attributes read activeFocus (focus.go)
 	inputKeys     map[*ui.InputState]keyID          // the element key a text field's state was built under (focus.go)
+	inputMasks    map[*ui.InputState]string         // the inputMask each text field has (buildTextField)
 	focusObjs     map[keyID]any                     // what activeFocusItem names, by element (focus.go)
 	handlerStates map[string]*inputHandlerState     // Wheel/Pinch/PointHandler state (inputhandlers.go)
 	pointerSeen   map[string]*[2]float32            // MouseArea: the pointer's last window position (mousearea.go)
@@ -4576,7 +4586,10 @@ func (st *popupState) float(panel ui.Element, dimA float32) ui.Element {
 
 func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 	st := popupStateOf(n, env, doc)
-	if !st.shown {
+	// enter/exit transitions (popuptransitions.go): a closing popup with an
+	// exit transition stays drawn until it is done.
+	ph, draw := doc.popupTransition(n, env, st.shown)
+	if !draw {
 		return ui.Div(), nil // closed → no flow space, nothing floating
 	}
 	// A ToolTip is its text: there is nothing else to compose, and `text:`
@@ -4601,6 +4614,7 @@ func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 			pd.PopupSkin()
 		}
 	}
+	ph.apply(panel)
 	// A Dialog is a titled panel with a button box under it, and those
 	// buttons are the only way its accepted()/rejected() ever fire.
 	if n.typeName == "Dialog" && (st.title != "" || st.buttons != 0) {
@@ -4768,7 +4782,8 @@ func stripPopupAttrs(n *node) *node {
 			// A Dialog's button box and its signals: buildPopup draws the
 			// buttons and runs the handlers, so the content box never sees
 			// them (and used to refuse the whole dialog over them).
-			"standardButtons", "onAccepted", "onRejected", "onOpened", "onClosed":
+			"standardButtons", "onAccepted", "onRejected", "onOpened", "onClosed",
+			"enter", "exit":
 			// overlay/positioning control — handled by buildPopup
 		default:
 			cp.attrs = append(cp.attrs, a)
@@ -6634,8 +6649,9 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 
 func buildCheckbox(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var label string
-	var ref Ref
+	var ref, stateRef Ref
 	var onToggled []stmt
+	tristate := false
 	for _, a := range n.attrs {
 		switch a.name {
 		case "id":
@@ -6647,13 +6663,20 @@ func buildCheckbox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			label = str(v)
 		case "checked":
 			ref, _ = boolBinding(doc, n, a, env)
-		case "onToggled":
-			onToggled = a.stmt
-		case "scale", "opacity", "visible", "enabled", "hoverEnabled", "tristate",
-			"checkState", "ButtonGroup.group", "autoExclusive", "font.pixelSize",
+		case "checkState":
+			stateRef, _ = intBinding(doc, n, a, env)
+		case "tristate":
+			if b, err := attrBool(a, env); err == nil {
+				tristate = b
+			}
+		case "onToggled", "onClicked", "onCheckStateChanged":
+			onToggled = append(onToggled, a.stmt...)
+		case "scale", "opacity", "visible", "enabled", "hoverEnabled",
+			"ButtonGroup.group", "autoExclusive", "font.pixelSize",
 			"font.pointSize", "font.bold", "spacing", "leftPadding", "rightPadding",
-			"topPadding", "bottomPadding", "indicator", "contentItem", "background":
-			// accepted, not modeled
+			"topPadding", "bottomPadding", "indicator", "contentItem", "background",
+			"checkable", "onCheckedChanged":
+			// group membership is read by buttonGroupFor; the rest accepted
 		default:
 			if strings.HasPrefix(a.name, "palette.") {
 				continue // theme roles: our controls carry their own palette
@@ -6671,18 +6694,70 @@ func buildCheckbox(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if !ok {
 		return nil, fmt.Errorf("gml:%d: CheckBox checked wants a bool property", n.line)
 	}
-	if onToggled != nil || broke != "" {
-		run := doc.handlerRunner(env)
-		return ui.Checkbox(pr.p, label, func(bool) {
-			if broke != "" {
-				doc.assigned[broke] = true
+	run := doc.handlerRunner(env)
+	fire := func() {
+		if broke != "" {
+			doc.assigned[broke] = true
+		}
+		if onToggled != nil {
+			run(onToggled, "onToggled")
+		}
+	}
+	// A tristate box (Qt.Unchecked, PartiallyChecked, Checked): checkState
+	// is its state, and checked follows it (true only when Checked).
+	if tristate || stateRef != nil {
+		if stateRef == nil {
+			seed := ui.Unchecked
+			if pr.p.Get() {
+				seed = ui.Checked
 			}
-			if onToggled != nil {
-				run(onToggled, "onToggled")
+			stateRef = doc.intProp(doc.key(n)+".checkState", seed)
+			doc.exposeIDProp(n, "checkState", stateRef)
+		}
+		sp, _, ok := propOf[int](stateRef)
+		if !ok {
+			return nil, fmt.Errorf("gml:%d: CheckBox checkState wants an int property", n.line)
+		}
+		if tristate {
+			return ui.TriCheckbox(sp.p, label, func(v int) {
+				pr.p.Set(v == ui.Checked)
+				fire()
+			}), nil
+		}
+		// checkState bound but not tristate: a two-state box over it.
+		pr.p.Set(sp.p.Get() == ui.Checked)
+		return ui.Checkbox(pr.p, label, func(on bool) {
+			if on {
+				sp.p.Set(ui.Checked)
+			} else {
+				sp.p.Set(ui.Unchecked)
 			}
+			fire()
 		}), nil
 	}
-	return ui.Checkbox(pr.p, label), nil
+	// checkState reads off checked for a two-state box.
+	p := pr.p
+	doc.exposeIDProp(n, "checkState", computedRef{fn: func() any {
+		if p.Get() {
+			return float64(ui.Checked)
+		}
+		return float64(ui.Unchecked)
+	}})
+	bg := doc.buttonGroupFor(n, env, false)
+	if bg != nil {
+		doc.join(bg, n, p)
+	}
+	return ui.Checkbox(p, label, func(on bool) {
+		if bg != nil && bg.g.Exclusive {
+			if !on {
+				p.Set(true) // the checked member of an exclusive group stays checked
+				return
+			}
+			bg.g.Check(p)
+		}
+		fire()
+		doc.clicked(bg, p)
+	}), nil
 }
 
 func buildSlider(n *node, env *Env, doc *docState) (ui.Element, error) {
@@ -7059,7 +7134,7 @@ func buildSwitch(n *node, env *Env, doc *docState) (ui.Element, error) {
 func buildRadioButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var ref Ref
 	var label string
-	on := false
+	var onClicked []stmt
 	for _, a := range n.attrs {
 		switch a.name {
 		case "id":
@@ -7070,12 +7145,14 @@ func buildRadioButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 			label = str(v)
 		case "checked":
-			ref, on = boolBinding(doc, n, a, env)
+			ref, _ = boolBinding(doc, n, a, env)
+		case "onClicked", "onToggled":
+			onClicked = append(onClicked, a.stmt...)
 		case "enabled", "display", "focusPolicy", "autoExclusive", "hoverEnabled",
 			"scale", "opacity", "visible", "ButtonGroup.group", "font.pixelSize",
-			"font.pointSize", "font.bold", "spacing", "indicator", "contentItem":
-			// ButtonGroup exclusivity is not modeled: each button's own
-			// checked binding decides, as in a group-less QML button set.
+			"font.pointSize", "font.bold", "spacing", "indicator", "contentItem",
+			"checkable", "onCheckedChanged":
+			// group membership is read by buttonGroupFor; the rest accepted
 		default:
 			if strings.HasPrefix(a.name, "palette.") {
 				continue
@@ -7083,14 +7160,42 @@ func buildRadioButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			return nil, fmt.Errorf("gml:%d: RadioButton has no attribute %q", a.line, a.name)
 		}
 	}
-	ring := ui.Div().Size(20, 20).Rounded(10).Border(2, ui.RGB(0x3b5bdb)).JustifyCenter().ItemsCenter()
-	if on {
-		ring.Children(ui.Div().Size(10, 10).Rounded(5).Bg(ui.RGB(0x3b5bdb)))
+	if ref == nil {
+		// No `checked` attribute: the control owns its checked state.
+		ref = doc.boolProp(doc.key(n)+".checked", false)
+		doc.exposeIDProp(n, "checked", ref)
 	}
-	if ref != nil {
-		cur := on
-		ring.OnClick(func() { _ = ref.set(!cur) })
+	pr, broke, ok := propOf[bool](ref)
+	if !ok {
+		return nil, fmt.Errorf("gml:%d: RadioButton checked wants a bool property", n.line)
 	}
+	enabled := true
+	if e := attrExpr(n, "enabled"); e != nil {
+		if v, err := e.eval(env); err == nil {
+			enabled, _ = toBool(v)
+		}
+	}
+	bg := doc.buttonGroupFor(n, env, true)
+	var group *ui.ButtonGroup
+	if bg != nil {
+		doc.join(bg, n, pr.p)
+		group = bg.g
+	}
+	if !enabled {
+		ring := ui.RadioRing(pr.p, nil)
+		ring.OnClick(nil)
+		return withLabel(ring, label), nil
+	}
+	run := doc.handlerRunner(env)
+	ring := ui.RadioRing(pr.p, group, func(bool) {
+		if broke != "" {
+			doc.assigned[broke] = true // a click breaks the bound default
+		}
+		if onClicked != nil {
+			run(onClicked, "onClicked")
+		}
+		doc.clicked(bg, pr.p)
+	})
 	return withLabel(ring, label), nil
 }
 
@@ -7330,56 +7435,134 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 // buttons bound to an int property in [from,to], stepping by stepSize.
 func buildSpinBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var ref Ref
-	from, to, step, cur := 0, 99, 1, 0
+	o := ui.SpinOpts{From: 0, To: 99, Step: 1}
+	var onModified []stmt
+	var fromText, toText any
+	editable, enabled := false, true
 	for _, a := range n.attrs {
 		switch a.name {
 		case "id":
 		case "value":
-			ref, cur = intBinding(doc, n, a, env)
-		case "from":
+			ref, _ = intBinding(doc, n, a, env)
+		case "from", "to", "stepSize", "width":
 			f, err := attrFloat(a, env)
 			if err != nil {
 				return nil, err
 			}
-			from = int(f)
-		case "to":
-			f, err := attrFloat(a, env)
+			switch a.name {
+			case "from":
+				o.From = int(f)
+			case "to":
+				o.To = int(f)
+			case "stepSize":
+				o.Step = int(f)
+			case "width":
+				o.Width = max(f-72, 32) // the two 32 px buttons and their gaps take the rest
+			}
+		case "wrap", "editable", "enabled":
+			b, err := attrBool(a, env)
 			if err != nil {
 				return nil, err
 			}
-			to = int(f)
-		case "stepSize":
-			f, err := attrFloat(a, env)
-			if err != nil {
-				return nil, err
+			switch a.name {
+			case "wrap":
+				o.Wrap = b
+			case "editable":
+				editable = b
+			case "enabled":
+				enabled = b
 			}
-			step = int(f)
-		case "editable", "enabled", "width", "scale", "opacity", "visible":
+		case "textFromValue", "valueFromText":
+			if a.expr != nil {
+				if v, err := a.expr.eval(env); err == nil {
+					if a.name == "textFromValue" {
+						toText = v
+					} else {
+						fromText = v
+					}
+				}
+			}
+		case "onValueModified":
+			onModified = a.stmt
+		case "scale", "opacity", "visible", "validator", "inputMethodHints", "font.pixelSize",
+			"font.pointSize", "up.indicator", "down.indicator", "contentItem", "background",
+			"onValueChanged", "focusPolicy", "wheelEnabled", "live":
+			// accepted, not modelled (a validator: valueFromText decides)
 		default:
 			return nil, fmt.Errorf("gml:%d: SpinBox has no attribute %q", a.line, a.name)
 		}
 	}
-	setClamped := func(v int) {
-		if v < from {
-			v = from
+	if ref == nil {
+		ref = doc.intProp(doc.key(n)+".value", o.From)
+		doc.exposeIDProp(n, "value", ref)
+	}
+	pr, broke, ok := propOf[int](ref)
+	var writeBack func(int)
+	if !ok {
+		// A value that is not an int property (a literal, a real): mirror it
+		// through the box's own int state, re-seeded every build and
+		// written back on a user change (QML converts silently).
+		cur, _ := toInt(ref.get())
+		mirror := doc.intProp(doc.key(n)+".value~int", cur)
+		mp, _, mok := propOf[int](mirror)
+		if !mok {
+			return nil, fmt.Errorf("gml:%d: SpinBox value wants a number", n.line)
 		}
-		if v > to {
-			v = to
-		}
-		if ref != nil {
-			_ = ref.set(v)
+		mp.p.Set(cur)
+		pr = mp
+		target := ref
+		writeBack = func(v int) { _ = target.set(float64(v)) }
+		if t, isTracked := ref.(trackedRef); isTracked {
+			broke = t.name
 		}
 	}
-	btn := func(s string, delta int) *ui.DivEl {
-		b := ui.Div().Size(32, 32).Bg(ui.RGB(0xe9ecef)).Rounded(4).JustifyCenter().ItemsCenter().
-			Children(ui.Text(s, ui.RGB(labelColor)))
-		c := cur
-		b.OnClick(func() { setClamped(c + delta) })
-		return b
+	if toText != nil {
+		fn := toText
+		o.Format = func(v int) string {
+			out, err := callAny(fn, []any{float64(v), nil})
+			if err != nil {
+				return fmt.Sprint(v)
+			}
+			return str(out)
+		}
 	}
-	valBox := ui.Div().Size(56, 32).Bg(ui.RGB(0xffffff)).Border(1, ui.RGB(0xced4da)).
-		JustifyCenter().ItemsCenter().Children(ui.Text(fmt.Sprintf("%d", cur), ui.RGB(labelColor)))
-	return ui.Div().Row().ItemsCenter().Gap(4).Children(btn("−", -step), valBox, btn("+", step)), nil
+	if fromText != nil {
+		fn := fromText
+		o.Parse = func(s string) (int, bool) {
+			out, err := callAny(fn, []any{s, nil})
+			if err != nil {
+				return 0, false
+			}
+			v, err := toInt(out)
+			return v, err == nil
+		}
+	}
+	if editable {
+		o.Input = doc.inputFor(doc.key(n)+".edit", env)
+	}
+	// displayText, as the box shows the value.
+	format := o.Format
+	p := pr.p
+	doc.exposeIDProp(n, "displayText", computedRef{fn: func() any {
+		if format != nil {
+			return format(p.Get())
+		}
+		return fmt.Sprint(p.Get())
+	}})
+	o.Disabled = !enabled
+	run := doc.handlerRunner(env)
+	o.OnModified = func() {
+		if writeBack != nil {
+			writeBack(p.Get())
+		}
+		if broke != "" {
+			doc.assigned[broke] = true
+		}
+		if onModified != nil {
+			run(onModified, "onValueModified")
+		}
+	}
+	return ui.SpinBox(p, o), nil
 }
 
 // buildComboBox is a Qt Quick Controls ComboBox: a box showing the current
@@ -7390,6 +7573,8 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var idxRef Ref
 	var modelAttr *attr
 	var onActivated []stmt
+	var onAccepted []stmt
+	editable, enabled := false, true
 	curIdx := 0
 	w := float32(140)
 	textRole, valueRole := "", ""
@@ -7414,10 +7599,19 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if v, err := a.expr.eval(env); err == nil {
 				textRole = str(v)
 			}
-		case "onActivated", "onCurrentIndexChanged", "onCurrentTextChanged",
-			"onAccepted", "onEditTextChanged":
+		case "onActivated", "onCurrentIndexChanged", "onCurrentTextChanged":
 			onActivated = append(onActivated, a.stmt...)
-		case "editable", "enabled", "displayText", "currentValue",
+		case "onAccepted":
+			onAccepted = a.stmt
+		case "editable", "enabled":
+			if b, err := attrBool(a, env); err == nil {
+				if a.name == "editable" {
+					editable = b
+				} else {
+					enabled = b
+				}
+			}
+		case "onEditTextChanged", "displayText", "currentValue",
 			"font.pixelSize", "font.pointSize", "implicitHeight", "implicitWidth",
 			"validator", "editText", "inputMethodHints", "popup", "delegate",
 			"indicator", "background", "contentItem", "opacity", "visible",
@@ -7455,6 +7649,13 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			}
 		}
 	}
+	// The control owns currentIndex when nothing binds it; read it before
+	// the current text is worked out from it.
+	if idxRef == nil {
+		idxRef = doc.intProp(doc.key(n)+".currentIndex", curIdx)
+		doc.exposeIDProp(n, "currentIndex", idxRef)
+		curIdx, _ = toInt(idxRef.get())
+	}
 	text := ""
 	if len(items) > 0 {
 		if curIdx < 0 {
@@ -7487,25 +7688,84 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 		}
 		doc.exposeIDProp(n, "currentValue", value)
 	}
-	box := ui.Div().Size(w, 32).Bg(ui.RGB(0xffffff)).Border(1, ui.RGB(0xced4da)).Rounded(4).
-		Row().ItemsCenter().P(8).Gap(6).
-		Children(ui.Text(text, ui.RGB(labelColor)), ui.Div().Grow(), ui.Text("▾", ui.RGB(0x868e96)))
-	if idxRef != nil && len(items) > 0 {
-		cur, nItems := curIdx, len(items)
-		box.OnClick(func() {
-			next := (cur + 1) % nItems
-			_ = idxRef.set(next)
-			if onActivated != nil {
-				scope := env.child()
-				scope.vars["index"] = float64(next)
-				scope.vars["currentIndex"] = float64(next)
-				if err := runStmts(onActivated, scope); err != nil {
-					logf("gml: onActivated: %v", err)
+	ip, broke, ok := propOf[int](idxRef)
+	var writeBack func(int)
+	if !ok {
+		cur, _ := toInt(idxRef.get())
+		mirror := doc.intProp(doc.key(n)+".currentIndex~int", cur)
+		mp, _, mok := propOf[int](mirror)
+		if !mok {
+			return nil, fmt.Errorf("gml:%d: ComboBox currentIndex wants a number", n.line)
+		}
+		mp.p.Set(cur)
+		ip = mp
+		target := idxRef
+		writeBack = func(v int) { _ = target.set(float64(v)) }
+		if t, isTracked := idxRef.(trackedRef); isTracked {
+			broke = t.name
+		}
+	}
+	labels := make([]string, len(items))
+	for i, it := range items {
+		labels[i] = str(it)
+	}
+	// find(text) and indexOfValue(value), QML's lookups.
+	findFn := jsFunc(func(args []any) (any, error) {
+		if len(args) > 0 {
+			for i, l := range labels {
+				if l == str(args[0]) {
+					return float64(i), nil
 				}
 			}
-		})
+		}
+		return float64(-1), nil
+	})
+	doc.exposeIDProp(n, "find", findFn)
+	rows := modelRows
+	doc.exposeIDProp(n, "indexOfValue", jsFunc(func(args []any) (any, error) {
+		if len(args) > 0 {
+			for i := range labels {
+				v := any(labels[i])
+				if i < len(rows) && valueRole != "" {
+					v = rows[i][valueRole]
+				}
+				if str(v) == str(args[0]) {
+					return float64(i), nil
+				}
+			}
+		}
+		return float64(-1), nil
+	}))
+	o := ui.ComboOpts{Items: labels, Width: w, Disabled: !enabled}
+	if editable {
+		in := doc.inputFor(doc.key(n)+".edit", env)
+		o.Input = in
+		// editText is what is typed, which is the current item until then.
+		doc.exposeIDProp(n, "editText", computedRef{fn: func() any { return in.Text.Get() }})
 	}
-	return box, nil
+	run := doc.handlerRunner(env)
+	o.OnActivated = func(i int) {
+		if writeBack != nil {
+			writeBack(i)
+		}
+		if broke != "" {
+			doc.assigned[broke] = true
+		}
+		if onActivated != nil {
+			runEvent(run, env, onActivated, "onActivated", "index", float64(i))
+		}
+	}
+	if onAccepted != nil {
+		// The handler reads the box's own editText and find() by bare name.
+		o.OnAccepted = func(text string) {
+			withVar(env, "editText", text, func() {
+				withVar(env, "find", findFn, func() { run(onAccepted, "onAccepted") })
+			})
+		}
+	}
+	open := doc.boolProp(doc.key(n)+".open", false)
+	op, _, _ := propOf[bool](open)
+	return ui.ComboBox(ip.p, op.p, o), nil
 }
 
 // comboRowText picks a ListModel row's display string: the ComboBox's
@@ -7701,6 +7961,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var hasInitial, wantFocus bool
 	var navs []keyNav // KeyNavigation.* (focus.go)
 	var onAccepted []stmt
+	var mask string // inputMask
 	// What the field draws instead of its value (echoMode), how long it may
 	// get, and what it will accept at all.
 	var echo rune
@@ -7829,6 +8090,10 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if f, err := attrFloat(a, env); err == nil {
 				maxLen = int(f)
 			}
+		case "inputMask":
+			if v, err := a.expr.eval(env); err == nil {
+				mask = str(v)
+			}
 		case "validator":
 			// `validator: IntValidator { bottom: 0; top: 999 }` — a real
 			// QValidator refuses a keystroke that would make the field
@@ -7877,6 +8142,13 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	state.MaxLen(maxLen)
 	state.Accept(accept)
+	if mask != doc.inputMasks[state] { // Qt's input mask (ui.InputState.SetMask)
+		state.SetMask(mask)
+		if doc.inputMasks == nil {
+			doc.inputMasks = map[*ui.InputState]string{}
+		}
+		doc.inputMasks[state] = mask
+	}
 	// onAccepted fires on Enter with `text` bound to the field's content
 	// (QML exposes the field's text property; a plain scope binding keeps
 	// delegate row scope working too via handlerRunner).

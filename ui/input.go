@@ -73,7 +73,8 @@ type InputState struct {
 	// `validator:`, which rejects a keystroke rather than flagging it
 	// afterwards). nil accepts everything.
 	accept func(string) bool
-	maxLen int // rune cap (QML maximumLength); 0 = unlimited
+	maxLen int       // rune cap (QML maximumLength); 0 = unlimited
+	mask   inputMask // SetMask: a Qt input mask, applied as edits commit (inputmask.go)
 	// multiline is a text area's state (textarea.go); lines is the
 	// layout the area last drew, for Up/Down/Home/End.
 	multiline bool
@@ -110,6 +111,16 @@ func (s *InputState) MaxLen(n int) { s.maxLen = n }
 // allow it, and reports whether it went in. caretTo is where the caret
 // belongs afterwards.
 func (s *InputState) commit(text string, caretTo int) bool {
+	if s.mask != nil {
+		old := len([]rune(s.Text.Get()))
+		f, ok := s.mask.format(text, len([]rune(text)) > old)
+		if !ok {
+			return false
+		}
+		// The caret moves by what formatting put in (a literal after it).
+		caretTo = min(max(caretTo+len([]rune(f))-len([]rune(text)), 0), len([]rune(f)))
+		text = f
+	}
 	if s.maxLen > 0 && len([]rune(text)) > s.maxLen {
 		return false
 	}

@@ -868,15 +868,8 @@ func (o *elemObject) member(name string) (any, bool) {
 		}
 	}
 	if o.input != nil {
-		switch name {
-		case "text", "displayText":
-			return o.input.Text.Get(), true
-		case "length":
-			return float64(len([]rune(o.input.Text.Get()))), true
-		case "activeFocus", "focus":
-			return o.input.HasFocus(), true
-		case "acceptableInput":
-			return true, true
+		if v, ok := inputMember(o.input, name); ok {
+			return v, true
 		}
 	}
 	if name == "parent" && o.parentObj != nil {
@@ -1228,17 +1221,8 @@ func (x *memberExpr) eval(env *Env) (any, error) {
 		// A text field's id resolves to its live input state: expose the
 		// QML TextInput members bindings actually read.
 		if in, ok := base.(*ui.InputState); ok {
-			switch x.name {
-			case "text", "displayText":
-				return in.Text.Get(), nil
-			case "length":
-				return float64(len([]rune(in.Text.Get()))), nil
-			case "activeFocus", "focus":
-				return in.HasFocus(), nil
-			case "acceptableInput":
-				return true, nil
-			case "forceActiveFocus":
-				return jsFunc(func([]any) (any, error) { in.RequestFocus(); return nil, nil }), nil
+			if v, ok := inputMember(in, x.name); ok {
+				return v, nil
 			}
 			return nil, fmt.Errorf("gml:%d: no member %q", x.line, x.name)
 		}

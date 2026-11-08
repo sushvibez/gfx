@@ -76,6 +76,7 @@ func loadSource(src string, env *Env, baseDir string) (*Document, error) {
 		return nil, err
 	}
 	declareFuncs(root, env)
+	d.doc.scanButtonGroups(root) // ButtonGroup { buttons: [...] } (buttongroup.go)
 	// Connections first: a declared signal folds in the handlers that
 	// target its element.
 	d.doc.registerConnections(root)

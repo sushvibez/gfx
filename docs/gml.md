@@ -485,13 +485,13 @@ on Button, `Spacer { }`.
 | --- | --- | --- |
 | `Button`, `ToolButton`, `DelayButton`, `RoundButton`, `TabButton`, `MenuItem`, `MenuBarItem` | `text`, `icon.source/name/color/width/height`, `width`, `height`, `color`, `radius`, `flat`, `highlighted`, `checkable`, `checked`, `down`, `onClicked`, `onToggled`, `palette.button/buttonText`, `background`/`contentItem` via a style module | `autoRepeat`, `display`, `action` beyond text, `DelayButton.delay` progress |
 | `ItemDelegate`, `SwipeDelegate`, `CheckDelegate`, `RadioDelegate`, `SwitchDelegate` | a row with text, highlight, `onClicked` | swipe actions |
-| `CheckBox`, `Switch`, `RadioButton` | `text`, `checked`, `onToggled`/`onClicked`, `enabled` | `tristate`/`checkState`, `autoExclusive`, `ButtonGroup` exclusivity |
+| `CheckBox`, `Switch`, `RadioButton` | `text`, `checked`, `onToggled`/`onClicked`, `enabled`; radios sharing a parent are exclusive (`autoExclusive`, also on a CheckBox), and a `ButtonGroup` (`ButtonGroup.group: g` or `buttons: [...]`, `exclusive`, `checkedButton`, `onClicked(button)`) makes its members exclusive — a checked member stays checked when clicked (`ui.ButtonGroup`, `ui.RadioRing`); CheckBox `tristate` cycles Unchecked → PartiallyChecked → Checked with `checkState` (`ui.TriCheckbox`), and `checkState` reads off `checked` otherwise | |
 | `Slider`, `RangeSlider`, `Dial` | `value`, `from`, `to`, `stepSize`, `snapMode`, `orientation`, `onMoved`, `onValueChanged`, `live`; RangeSlider `first.value`/`second.value` with non-crossing drag; a Dial turns to the pointer's angle (`ui.Dial`: press and drag, 280° sweep from 12 o'clock, `stepSize` with `Dial.SnapAlways`, `onMoved` reading `value`, a bound non-real value written back) | `wheelEnabled`, `touchDragThreshold`, Dial `inputMode` (always circular) and `wrap` |
-| `SpinBox` | `value`, `from`, `to`, `stepSize`, `editable`, `textFromValue`/`valueFromText` via a style | `wrap`, `inputMode`, `validator` |
-| `ComboBox` | `model`, `currentIndex`, `textRole`, `valueRole`, `currentText`, `currentValue`, `displayText`, `editable`, `onActivated`, `onCurrentIndexChanged`, `popup` via a style | `editText` round-trip, `find()` |
+| `SpinBox` | `value` (its own when unbound), `from`, `to`, `stepSize`, `wrap`, `editable` (typed, committed on Enter), `textFromValue`/`valueFromText` functions, `displayText`, `onValueModified`, `enabled`; Up/Down/PageUp/PageDown and the wheel step it (`ui.SpinBox`) | `inputMode`, `validator` (`valueFromText` decides) |
+| `ComboBox` | `model`, `currentIndex` (its own when unbound), `textRole`, `valueRole`, `currentText`, `currentValue`, `displayText`, `count`, `onActivated(index)`, `onCurrentIndexChanged`; a click drops the list under it, a pick selects, Up/Down step (`ui.ComboBox`); `editable` with `editText` (kept until the selection changes) and `onAccepted` reading bare `editText`/`find()`; `find(text)`, `indexOfValue(value)`; `popup` via a style | |
 | `ProgressBar`, `BusyIndicator` | `value`, `from`, `to`, `indeterminate`, `running` | |
-| `TextField`, `TextInput`, `TextArea`, `TextEdit` | `text`, `placeholderText`, `color`, `font`, `echoMode`, `maximumLength`, `validator` (`IntValidator`, `DoubleValidator`, `RegularExpressionValidator` — `acceptableInput` reflects it), `readOnly`, `onAccepted`, `onTextChanged`, `onEditingFinished`, `Keys.onReturnPressed`, `focus`, `activeFocus`, `background`, `borderColor`/`textColor`/`radius` (extensions), `selectByMouse`, `wrapMode` | `inputMask`, `cursorPosition`, `selectionStart/End`, selection APIs, `selectAll()`, `TextArea` rich text |
-| `Pane`, `Frame`, `GroupBox`, `Page`, `Control`, `Container`, `ToolBar`, `ApplicationWindow`, `Window` | plain boxes that lay out their children; `padding`, `spacing`, `background` | `title`, `header`/`footer` on Page and ApplicationWindow, `menuBar`, window `flags`/`visibility`, `GroupBox.title` |
+| `TextField`, `TextInput`, `TextArea`, `TextEdit` | `text`, `placeholderText`, `color`, `font`, `echoMode`, `maximumLength`, `validator` (`IntValidator`, `DoubleValidator`, `RegularExpressionValidator` — `acceptableInput` reflects it), `readOnly`, `onAccepted`, `onTextChanged`, `onEditingFinished`, `Keys.onReturnPressed`, `focus`, `activeFocus`, `background`, `borderColor`/`textColor`/`radius` (extensions), `selectByMouse`, `wrapMode`; `inputMask` (Qt's mask characters, `>`/`<` case, literals put in as you type — `ui.InputState.SetMask`) with `acceptableInput` once it is filled; `selectedText`, `selectionStart`/`selectionEnd`, `cursorPosition`, `selectAll()`, `select(start, end)`, `deselect()`, `clear()` | `TextArea` rich text; a mask's blank character is not drawn |
+| `Pane`, `Frame`, `GroupBox`, `Page`, `Control`, `Container`, `ToolBar`, `ApplicationWindow`, `Window` | plain boxes that lay out their children; `padding`, `spacing`, `background`; Page and ApplicationWindow `header`/`footer` (and a window's `menuBar`) band the content, which fills what they leave | `title`, window `flags`/`visibility`, `GroupBox.title` |
 | `MenuBar`, `Menu`, `MenuItem`, `MenuSeparator`, `Action` | menu titles, open-on-click, `popup()`/`open()`/`close()`, `Action { text; checkable; checked; onTriggered }`, checkable items | submenus, `Action.shortcut` (a separate `Shortcut` works), `ActionGroup` |
 | `TabBar`, `TabButton` | `currentIndex` driven by its buttons | `position`, `contentWidth` |
 | `SplitView` | `orientation`, `handle:`, `SplitView.preferredWidth/Height`, `fillWidth/Height`, `minimum*`/`maximum*`; handles drag, stopping where a pane with a preferred size would pass its minimum or maximum, a `fillWidth/Height` pane takes what is left up to its maximum (`ui.DivEl.MaxW`/`MaxH`), and a `handle:` delegate reads `SplitHandle.hovered` and `SplitHandle.pressed` (true from press to release, wherever the pointer goes) | |
@@ -501,7 +501,7 @@ on Button, `Spacer { }`.
 | `Tumbler` | `model`, `currentIndex`, `visibleItemCount`, `delegate` with `Tumbler.displacement`; click, keys, drag, flick | `wrap` |
 | `MonthGrid`, `DayOfWeekRow` | `month`, `year`, `delegate`; weeks start Sunday, English names | `locale` |
 | `FileDialog`, `FolderDialog` | an in-app browser panel: `open()`/`close()`, `selectedFile(s)`, `currentFolder`, `fileMode`, `nameFilters`, `onAccepted`/`onRejected` | the desktop's native dialog; `MessageDialog`, `ColorDialog`, `FontDialog` are not elements |
-| `Popup`, `Dialog`, `Drawer`, `ToolTip` | floated above the page when `visible`/`opened`; `open()`/`close()`, `modal`, `dim`, `x`, `y`, `width`, `height`, `title`, `standardButtons`, `onAccepted`/`onRejected`/`onOpened`/`onClosed`, `closePolicy`, Drawer `edge`/`position`, styled through a module | `enter`/`exit` transitions, `Overlay` attached beyond `Overlay.modal` in styles |
+| `Popup`, `Dialog`, `Drawer`, `ToolTip` | floated above the page when `visible`/`opened`; `open()`/`close()`, `modal`, `dim`, `x`, `y`, `width`, `height`, `title`, `standardButtons`, `onAccepted`/`onRejected`/`onOpened`/`onClosed`, `closePolicy`, Drawer `edge`/`position`, styled through a module; `enter`/`exit` transitions animate `opacity` and `scale` (an exit keeps the popup drawn until it is done) | other properties in `enter`/`exit`, `Overlay` attached beyond `Overlay.modal` in styles |
 
 ### Models and views
 
@@ -851,11 +851,8 @@ Not implemented (summarised from `script/TODO.md` and the findings log):
 - Views: view transitions, Flickable
   `boundsBehavior`, PathView `highlightRangeMode`, `DelegateModel`,
   `ObjectModel`, `Instantiator`, `XmlListModel`, `WorkerScript`.
-- Controls: native file/colour/font/message dialogs, popup enter/exit
-  transitions, SpinBox wrap/validator, ComboBox editable
-  round-trip, TextField selection and `inputMask`, ButtonGroup exclusivity,
-  `Settings` persistence, `SystemPalette` colours, Page/ApplicationWindow
-  `header`/`footer`/`menuBar`, locale-aware calendars.
+- Controls: native file/colour/font/message dialogs (they are in-app
+  panels), locale-aware calendars.
 - States: `StateGroup`.
 - Graphics: animated PNG/WebP (`AnimatedImage` plays GIFs only), remote
   images, `layer.effect` beyond blur/shadow/colorize, the Qt5Compat

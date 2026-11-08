@@ -16,6 +16,7 @@ type statesHarness struct {
 	env  *Env
 	u    *ui.UI
 	tree ui.Element
+	doc  *docState
 }
 
 func newStates(t *testing.T, src string) *statesHarness {
@@ -25,6 +26,7 @@ func newStates(t *testing.T, src string) *statesHarness {
 	if err != nil {
 		t.Fatalf("LoadString: %v", err)
 	}
+	h.doc = d.doc
 	h.u = ui.New(nil, nil, func() ui.Element { h.tree = d.View()(); return h.tree })
 	h.frame()
 	return h
