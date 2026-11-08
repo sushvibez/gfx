@@ -179,11 +179,19 @@ func (doc *docState) linkSub(e *subtreeEntry) {
 }
 
 // replayRegs re-registers a reused subtree's elements: its own, then its
-// subtrees' recursively.
+// subtrees' recursively. The elements are the ones stampFocus already
+// fitted with their focus id and report when they were built, and every
+// change to that (a new activeFocus ref, a focus request) invalidates the
+// cache, so a replay need only pass on a pending request; re-stamping
+// every element was three quarters of the replay (13 % of a settled
+// indicators frame).
 func (doc *docState) replayRegs(e *subtreeEntry) {
+	focus := len(doc.focusReq) > 0
 	for _, r := range e.regs {
 		doc.elems.set(r.key, r.el)
-		doc.stampFocus(r.key, r.el) // a reused element still takes focus requests and reports
+		if focus {
+			doc.stampFocus(r.key, r.el)
+		}
 	}
 	for _, sub := range e.subs {
 		doc.replayRegs(sub)

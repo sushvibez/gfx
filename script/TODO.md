@@ -300,6 +300,24 @@ of delegate rows moved much further — navdisplay 1087 → 92 µs, chatui
   a row keeps a stale default forever. Eighteen `enterRow` call sites,
   one change in `enterRow` itself; verify with the 65-page before/after
   render and `GFX_PATCH_VERIFY=all`.
+- ✓ **A cache hit replays every registration below it** (2026-11-08).
+  `replayRegs` was 17 % of a settled indicators frame, three quarters
+  of it `stampFocus` re-fitting focus ids and reports the reused
+  elements already carried; every change to those (a new activeFocus
+  ref, a focus request) invalidates the cache, so a replay now stamps
+  only while a request is pending. indicators 484 → 357 µs, chatui
+  168 → 139, buttons 102 → 94, navdisplay 41 → 40.
+  ▢ The walk itself (5.6 % now, one `elems.set` per element under a
+  hit) goes away with a persistent registry: keep `elems` across frames
+  with a per-key frame stamp, stamp only the entries built or patched
+  this frame, and let a hit mark its entry live (O(1)); a lookup accepts
+  a key whose own stamp is current or whose owning entry (each
+  registration remembers it) is reachable from a live entry through
+  `subs` that were not replaced — which needs `subs` to drop a replaced
+  child when a patch rebuilds it, so a stale element under a patched
+  parent is not found. Verify with the 65-page before/after render and
+  `GFX_PATCH_VERIFY=all`; the risk is a geometry read finding an element
+  no longer in the tree.
 - ▢ **buttons is spread thin** (2026-10-10): 141 µs against the Go
   port's 31. The profile has no single owner — patch machinery 59 %
   (`withCtx` re-binding every ancestor's names into the flat
