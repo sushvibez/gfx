@@ -353,6 +353,7 @@ func registerEnums(vars map[string]any) {
 	vars["Dialog"] = dialogNS
 	vars["DialogButtonBox"] = dialogNS
 	registerThemeEnums(vars) // Material.Dark, Material.Teal, Universal.* (theme.go)
+	registerAccessible(vars) // Accessible.Button and the other roles (access.go)
 }
 
 // graphs3DCameraPresets are Graphs3D.CameraPreset's members, in Qt's order.

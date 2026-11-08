@@ -952,7 +952,15 @@ func hasAttr(n *node, name string) bool {
 	return false
 }
 
-func buildFresh(n *node, env *Env, doc *docState) (ui.Element, error) {
+func buildFresh(n *node, env *Env, doc *docState) (built ui.Element, buildErr error) {
+	// Accessible.role/name/description tag what the item built (access.go).
+	// (The node as declared: n is stripped of its attached attributes below.)
+	declared := n
+	defer func() {
+		if buildErr == nil {
+			applyAccessible(declared, env, built)
+		}
+	}()
 	doc.freshBuilds++ // dirty-tracking effectiveness counter (tests, profiling)
 	// An item that states a theme (Material.theme, a palette role) draws the
 	// controls inside it in that theme (theme.go).
