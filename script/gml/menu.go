@@ -77,7 +77,7 @@ func wireShortcuts(el *ui.DivEl, items []ui.MenuItem) {
 			wireShortcuts(el, it.Sub)
 			continue
 		}
-		if it.Shortcut == "" || it.Disabled || (it.OnTrigger == nil && it.Checked == nil) {
+		if it.Shortcut == "" || !it.Global || it.Disabled || (it.OnTrigger == nil && it.Checked == nil) {
 			continue
 		}
 		el.Shortcut(it.Activate, it.Shortcut)
@@ -108,6 +108,27 @@ func (doc *docState) menuItems(n *node, env *Env) []ui.MenuItem {
 			out = append(out, ui.MenuItem{Text: menuTitle(c, env), Sub: doc.menuItems(c, env)})
 		case "Action", "MenuItem":
 			out = append(out, doc.menuEntry(c, env))
+		case "Repeater", "Instantiator":
+			// Entries from a model (QML's Instantiator in a Menu): each built
+			// in its row's scope, so its handler sees modelData when it runs.
+			pages, err := repeaterPages(c, env, doc)
+			if err != nil {
+				logf("gml: menu entries: %v", err)
+				continue
+			}
+			for i := range pages {
+				p := &pages[i]
+				restore := enterRow(p.key, p.n, env, doc, p.row, p.idx)
+				switch p.n.typeName {
+				case "Action", "MenuItem":
+					out = append(out, doc.menuEntry(p.n, env))
+				case "MenuSeparator":
+					out = append(out, ui.MenuItem{Separator: true})
+				case "Menu":
+					out = append(out, ui.MenuItem{Text: menuTitle(p.n, env), Sub: doc.menuItems(p.n, env)})
+				}
+				restore()
+			}
 		default:
 			if isNonVisual(c) {
 				doc.refreshNonVisual(c, env)
@@ -121,6 +142,9 @@ func (doc *docState) menuItems(n *node, env *Env) []ui.MenuItem {
 // checkable state (its own, toggled by the menu) and trigger handler.
 func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 	var it ui.MenuItem
+	// Only an Action's shortcut works, as in QML (a MenuItem has none of its
+	// own): a MenuItem's is shown, and backed by the page's own keys.
+	it.Global = n.typeName == "Action"
 	var stmts []stmt
 	checked := false
 	group := ""
@@ -251,12 +275,16 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	})
 	doc.exposeIDProp(n, "opened", openRef.get() == true)
 	doc.exposeIDProp(n, "visible", openRef.get() == true)
-	// A declared `visible:`/`open:` binding still wins.
+	// A declared `visible:`/`open:` binding wins, both ways: the page opens
+	// and closes the menu through it.
 	for _, a := range n.attrs {
 		switch a.name {
 		case "visible", "open", "opened":
-			if b, err := attrBool(a, env); err == nil && b {
-				_ = openRef.set(true)
+			if b, err := attrBool(a, env); err == nil {
+				if b && openRef.get() != true {
+					st.Open() // a fresh highlight, as popup() gives
+				}
+				_ = openRef.set(b)
 			}
 		}
 	}
@@ -267,7 +295,22 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if openRef.get() != true {
 		return host, nil
 	}
-	closeMenu := func() { _ = openRef.set(false) }
+	// Closing from the menu itself (an entry picked, Escape, a click outside)
+	// runs onClosed, which is how a page whose `visible:` is its own
+	// expression learns to put that expression back.
+	var onClosed []stmt
+	for _, a := range n.attrs {
+		if a.name == "onClosed" {
+			onClosed = a.stmt
+		}
+	}
+	runner := doc.handlerRunner(env)
+	closeMenu := func() {
+		_ = openRef.set(false)
+		if onClosed != nil {
+			runner(onClosed, "onClosed")
+		}
+	}
 	list := ui.MenuPanel(st, items, closeMenu)
 	x, y := menuPos(n, env)
 	return host.Children(ui.Overlay(list, x, y).OnClickOutside(closeMenu)), nil

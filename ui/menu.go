@@ -23,6 +23,10 @@ type MenuItem struct {
 	Separator bool       // a dividing line; the other fields are unused
 	Sub       []MenuItem // a submenu, opened to the right
 	Shortcut  string     // shown on the right ("Ctrl+S"); see DivEl.Shortcut to make it work
+	// Global marks a Shortcut meant to work from anywhere in the window (an
+	// Action's, in QML): a host wires such entries with DivEl.Shortcut, and
+	// leaves the rest as text, which their own key handling backs.
+	Global bool
 	// Group makes checkable entries exclusive (QML's ActionGroup): picking
 	// one checks it and unchecks the others, and a checked one stays
 	// checked. The entry joins the group as the menu is built.
