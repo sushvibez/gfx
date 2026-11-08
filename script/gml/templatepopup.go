@@ -230,7 +230,17 @@ func popupFooter(kind string, n *node, env *Env, doc *docState,
 	if st.buttons == 0 {
 		return nil // `visible: count > 0`
 	}
-	return dialogButtonBox(st.buttons, st.open, st.fire)
+	o := st.dialogOpts(false)
+	close := st.closeFn()
+	return ui.DialogButtonBox(o.Buttons, func(b ui.StandardButton) {
+		close()
+		if b.Accepts() {
+			o.OnAccepted()
+		} else {
+			o.OnRejected()
+		}
+		o.OnClosed()
+	})
 }
 
 // overlayScrimAlpha reads the alpha of an `Overlay.modal:` rectangle's

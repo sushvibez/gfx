@@ -4622,7 +4622,7 @@ func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 	// A Dialog is a titled panel with a button box under it, and those
 	// buttons are the only way its accepted()/rejected() ever fire.
 	if n.typeName == "Dialog" && (st.title != "" || st.buttons != 0) {
-		panel = dialogFrame(panel, st.title, st.buttons, st.open, st.fire, doc.groundDark)
+		panel = ui.DialogFrame(panel, st.closeFn(), st.dialogOpts(doc.groundDark))
 	}
 	if n.typeName == "ToolTip" { // tooltips never dim / aren't modal
 		return ui.PositionedModal(panel, st.px, st.py, ui.RGBA{}, nil), nil
@@ -4677,100 +4677,23 @@ func popupText(n *node, env *Env) string {
 	return ""
 }
 
-// dialogStandardButtons are QDialogButtonBox's standard buttons in the order
-// a button box lays them out, with the role each one plays: an accepting
-// button runs onAccepted, a rejecting one onRejected.
-var dialogStandardButtons = []struct {
-	flag   float64
-	label  string
-	accept bool
-}{
-	{0x00000400, "OK", true},
-	{0x00000800, "Save", true},
-	{0x00001000, "Save All", true},
-	{0x00002000, "Open", true},
-	{0x00004000, "Yes", true},
-	{0x00008000, "Yes to All", true},
-	{0x02000000, "Apply", true},
-	{0x00010000, "No", false},
-	{0x00020000, "No to All", false},
-	{0x00800000, "Discard", false},
-	{0x00400000, "Cancel", false},
-	{0x00200000, "Close", false},
-	{0x00040000, "Abort", false},
-	{0x00080000, "Retry", false},
-	{0x00100000, "Ignore", false},
-	{0x04000000, "Reset", false},
-	{0x08000000, "Restore Defaults", false},
-	{0x01000000, "Help", false},
+// dialogOpts reads a popup's dialog side into ui.DialogOpts: the signals a
+// button emits run the Dialog's own handlers.
+func (st *popupState) dialogOpts(dark bool) ui.DialogOpts {
+	fire := st.fire
+	return ui.DialogOpts{
+		Title: st.title, Buttons: ui.StandardButton(int64(st.buttons)), Dark: dark,
+		OnAccepted: func() { fire("onAccepted") },
+		OnRejected: func() { fire("onRejected") },
+		OnClosed:   func() { fire("onClosed") },
+	}
 }
 
-// A DialogButtonBox's own metrics, measured from Qt.
-const (
-	dialogFooterH   = 64
-	dialogFooterPad = 12
-	dialogButtonW   = 188
-	dialogButtonH   = 40
-)
-
-// dialogButtonBox draws a DialogButtonBox: Qt's Basic style, since neither
-// the corpus nor most apps restyle it — a light strip along the bottom
-// whose buttons share its width. Clicking one closes the dialog and emits
-// its role's signal, which is how a page learns what the user chose.
-func dialogButtonBox(buttons float64, ref Ref, fire func(string)) ui.Element {
-	// Measured from Qt (a Dialog in the corpus' own style): the box is 64
-	// tall with 12px padding, its buttons are 188x40 and TRAILING
-	// (alignment: Qt.AlignRight), one pixel apart.
-	box := ui.Div().Row().Gap(1).H(dialogFooterH).ItemsCenter().Justify(ui.AlignEnd).
-		Padding(dialogFooterPad, dialogFooterPad, dialogFooterPad, dialogFooterPad).
-		Bg(ui.RGB(0xefefef))
-	for _, b := range dialogStandardButtons {
-		if int64(buttons)&int64(b.flag) == 0 {
-			continue
-		}
-		accept, label := b.accept, b.label
-		btn := ui.Div().Row().Size(dialogButtonW, dialogButtonH).ItemsCenter().JustifyCenter().
-			Children(ui.Text(label, ui.RGB(0x111111)).SizePx(14))
-		btn.OnClick(func() {
-			_ = ref.set(false)
-			if accept {
-				fire("onAccepted")
-			} else {
-				fire("onRejected")
-			}
-			fire("onClosed")
-		})
-		box.Children(btn)
-	}
-	return box
-}
-
-// dialogFrame wraps a Dialog's content in its title header and button box.
-// Clicking a button closes the dialog and emits its role's signal, which is
-// how the corpus' pages learn what the user chose.
-func dialogFrame(content ui.Element, title string, buttons float64, ref Ref, fire func(string), dark bool) ui.Element {
-	frame := ui.Div().Col().MinW(320)
-	if title != "" {
-		titleCol := ui.RGB(0x111111)
-		if dark {
-			titleCol = ui.RGB(0xe8e8f0)
-		}
-		// Qt's dialog header: the title leads, vertically centred in a
-		// 48px band (a Row, so ItemsCenter centres it across the band
-		// rather than centring the text in the panel).
-		frame.Children(ui.Div().Row().H(48).ItemsCenter().Padding(0, 20, 0, 20).
-			Children(ui.Text(title, titleCol).SizePx(18).Bold()))
-	}
-	frame.Children(content)
-	if buttons != 0 {
-		frame.Children(dialogButtonBox(buttons, ref, fire))
-	}
-	if dark {
-		frame.DarkPopupSkin()
-	} else {
-		frame.PopupSkin()
-	}
-	return frame
+// closeFn closes the popup without a signal (the dialog's buttons emit
+// their own).
+func (st *popupState) closeFn() func() {
+	ref := st.open
+	return func() { _ = ref.set(false) }
 }
 
 // stripPopupAttrs returns a copy of n without the overlay-control attributes
