@@ -284,6 +284,12 @@ func (u *UI) hitTest(x, y float32) Element {
 		if el := u.ctx.overlays[i].hit(x, y); el != nil {
 			return el
 		}
+		// A floating panel takes the press over its empty parts too: a
+		// click between a dialog's widgets must not reach the scrim under
+		// it (and dismiss it) or the page below.
+		if d, ok := u.ctx.overlays[i].(*DivEl); ok && d.rect.contains(x, y) {
+			return d
+		}
 	}
 	if u.root != nil {
 		return u.root.hit(x, y)

@@ -1832,6 +1832,7 @@ type docState struct {
 	buttonGroups  map[string]*buttonGroup           // exclusive button groups, named or automatic (buttongroup.go)
 	menuBars      map[string]*ui.MenuBarState       // each MenuBar's open menu and menu states (menu.go)
 	menus         map[string]*ui.MenuState          // each standalone Menu's highlight and submenus
+	drawers       map[string]*ui.DrawerState        // each Drawer's slide position (drawer.go)
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)
 	groupOfButton map[string]string                 // button id -> the ButtonGroup that lists it
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
@@ -4588,6 +4589,9 @@ func (st *popupState) float(panel ui.Element, dimA float32) ui.Element {
 
 func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 	st := popupStateOf(n, env, doc)
+	if n.typeName == "Drawer" {
+		return buildDrawer(n, env, doc, st) // slides from its edge (drawer.go)
+	}
 	// enter/exit transitions (popuptransitions.go): a closing popup with an
 	// exit transition stays drawn until it is done.
 	pst, draw := doc.popupTransition(n, env, st.shown)

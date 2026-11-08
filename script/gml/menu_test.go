@@ -2,8 +2,10 @@ package gml
 
 import (
 	"testing"
+	"time"
 
 	"github.com/sushvibez/gfx/app"
+	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/ui"
 )
 
@@ -233,5 +235,61 @@ Item {
 	}
 	if got := get("root.did"); got != "png" {
 		t.Errorf("File > Export > PNG by keyboard did %q, want png", got)
+	}
+}
+
+// A Drawer slides in from its edge on open(), and a click on the scrim
+// closes it and runs onClosed.
+func TestDrawerOpenClose(t *testing.T) {
+	src := `
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+Item {
+    id: root
+    width: 600; height: 400
+    property int closedCount: 0
+    Drawer { id: nav; width: 240; edge: Qt.RightEdge
+        onClosed: root.closedCount++
+        Text { text: "Nav" } }
+}`
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatalf("LoadString: %v", err)
+	}
+	u := ui.New(nil, nil, d.View())
+	frame := func() { u.Layout(600, 400); u.Layout(600, 400) }
+	settle := func() {
+		for i := 0; i < 30; i++ {
+			core.TickAnimations(20 * time.Millisecond)
+			frame()
+		}
+	}
+	get := func(expr string) string {
+		v, err := evalString(expr, env)
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		return str(v)
+	}
+	frame()
+	if _, err := evalString("nav.open()", env); err != nil {
+		t.Fatal(err)
+	}
+	settle()
+	if got := get("nav.position"); got != "1" {
+		t.Errorf("position after open() = %s, want 1", got)
+	}
+	// A click on the panel itself (x 360..600) leaves it open.
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseDown, X: 500, Y: 300, Button: 1}, {Kind: app.MouseUp, X: 500, Y: 300, Button: 1}})
+	settle()
+	if get("nav.opened") != "true" {
+		t.Error("a click inside the drawer closed it")
+	}
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseDown, X: 100, Y: 200, Button: 1}, {Kind: app.MouseUp, X: 100, Y: 200, Button: 1}})
+	settle()
+	if get("nav.opened") != "false" || get("root.closedCount") != "1" {
+		t.Errorf("after a scrim click: opened %s, onClosed ran %s times; want false, 1",
+			get("nav.opened"), get("root.closedCount"))
 	}
 }

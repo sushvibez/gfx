@@ -390,27 +390,12 @@ func buildTabBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 	doc.exposeIDProp(n, "currentIndex", idxRef)
 	cur := refInt(idxRef)
 
-	// Qt's Basic style, which is what a page gets when the app's style
-	// module ships no TabButton.qml: a light bar, the current tab near-white
-	// with black text, the others mid-grey with white text, each separated
-	// by a hairline. No accent underline — that is a Material/Fusion idea.
-	// Basic's own metrics, measured from Qt: the bar is 40 tall, its tabs
-	// are 1px apart (the bar showing through, so two inactive tabs have no
-	// visible divider at all), their labels are 12px in the default family
-	// and they carry 6px of padding.
-	// The BAR itself is light: where no tab covers it (a bar of three
-	// narrow tabs in a wide card) Qt shows #efefef, not the inactive-tab
-	// grey. An inactive tab paints its own grey over it.
-	bar := ui.Div().Row().Gap(basicTabGap).Bg(ui.RGB(basicTabCurrent))
-	// Tabs, in document order — a Repeater declares one per model row (the
-	// dynamic-tabs idiom), so its delegate's label is read in that row's
-	// scope like any other repeated element.
-	type tabItem struct {
-		label  string
-		fixed  bool    // the tab sets its own width: it does not share the bar
-		sizePx float64 // the type size the tab states, 0 for the default
-	}
-	var tabs []tabItem
+	// Qt's Basic style (ui.TabBar), which is what a page gets when the
+	// app's style module ships no TabButton.qml. Tabs, in document order —
+	// a Repeater declares one per model row (the dynamic-tabs idiom), so its
+	// delegate's label is read in that row's scope like any other repeated
+	// element.
+	var tabs []ui.Tab
 	for _, c := range n.children {
 		if isNonVisual(c) {
 			continue
@@ -428,8 +413,8 @@ func buildTabBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 				if err != nil {
 					return nil, err
 				}
-				tabs = append(tabs, tabItem{label: label, fixed: hasAttr(p.n, "width"),
-					sizePx: tabButtonFont(p.n, env)})
+				tabs = append(tabs, ui.Tab{Label: label, Fixed: hasAttr(p.n, "width"),
+					SizePx: tabButtonFont(p.n, env)})
 			}
 			continue
 		}
@@ -437,55 +422,18 @@ func buildTabBar(n *node, env *Env, doc *docState) (ui.Element, error) {
 		if err != nil {
 			return nil, err
 		}
-		tabs = append(tabs, tabItem{label: label, fixed: hasAttr(c, "width"),
-			sizePx: tabButtonFont(c, env)})
+		tabs = append(tabs, ui.Tab{Label: label, Fixed: hasAttr(c, "width"),
+			SizePx: tabButtonFont(c, env)})
 	}
-	for index, t := range tabs {
-		label := t.label
-		active := index == cur
-		textCol, bg := ui.RGB(0xffffff), ui.RGB(basicTabInactive)
-		if active {
-			textCol, bg = ui.RGB(0x000000), ui.RGB(basicTabCurrent)
-		}
-		txt := ui.Text(label, textCol).Truncate()
-		size := t.sizePx
-		if size <= 0 {
-			size = basicTabFontPx // Basic does not take the application font
-		}
-		txt.SizePx(size)
-		tab := ui.Div().Row().ItemsCenter().JustifyCenter().
-			H(basicTabHeight).P(basicTabPad).
-			Bg(bg).Children(txt)
-		if !active {
-			// Basic lightens an inactive tab under the pointer; the current
-			// one already IS the light colour and does not react.
-			tab.HoverBg(ui.RGB(basicTabHover))
-		}
-		if !t.fixed {
-			// Qt's TabBar shares its width between the tabs; only a tab that
-			// sets its own width keeps a natural one.
-			tab.Grow().Shrink().Clip()
-		}
-		idx := index
-		tab.OnClick(func() { _ = idxRef.set(idx) })
-		bar.Children(tab)
-	}
-	return bar, nil
+	return ui.TabBar(cur, tabs, func(i int) { _ = idxRef.set(i) }), nil
 }
 
-// Qt Basic's tab palette, sampled from the reference renders.
+// Qt Basic's tab palette and metrics, which ui.TabBar draws.
 const (
-	basicTabCurrent  = 0xefefef // the current tab (and the hairline dividers)
-	basicTabInactive = 0x9f9f9f // the others, and the bar behind them
-	basicTabHover    = 0xb4b4b4 // Basic lightens an inactive tab under the pointer
-)
-
-// Qt Basic's tab metrics, measured from Qt (see buildTabBar).
-const (
-	basicTabHeight = 40
-	basicTabPad    = 6
-	basicTabGap    = 1
-	basicTabFontPx = 12
+	basicTabCurrent  = ui.TabCurrentColor
+	basicTabInactive = ui.TabInactiveColor
+	basicTabHeight   = ui.TabBarHeight
+	basicTabGap      = ui.TabGap
 )
 
 // tabButtonLabel reads a TabButton's text. Non-TabButton children fall back to
