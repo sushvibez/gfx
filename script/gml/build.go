@@ -231,6 +231,7 @@ func (doc *docState) registerElem(key keyID, el ui.Element) {
 // that we accept and ignore: hover tooltips, accessibility metadata, and
 // container hints handled elsewhere or not modeled.
 var attachedNoOpPrefixes = [...]string{
+	"Material.", "Universal.", // the controls' theme: read by themeOf
 	"ToolTip.", "Accessible.", "Drag.", "StackView.", "SwipeView.",
 	"ScrollBar.", "ScrollIndicator.", "ListView.", "GridView.",
 	"Keys.forwardTo", "EnterKey.",
@@ -953,6 +954,13 @@ func hasAttr(n *node, name string) bool {
 
 func buildFresh(n *node, env *Env, doc *docState) (ui.Element, error) {
 	doc.freshBuilds++ // dirty-tracking effectiveness counter (tests, profiling)
+	// An item that states a theme (Material.theme, a palette role) draws the
+	// controls inside it in that theme (theme.go).
+	if hasThemeAttrs(n) {
+		sc := doc.themeScope(n)
+		sc.Push(themeOf(n, env))
+		defer sc.Pop()
+	}
 	if n.instTok != nil {
 		n.instTok.Get() // the use-site values this instance was built from
 	}
@@ -1835,6 +1843,7 @@ type docState struct {
 	tumblers      map[string]*ui.TumblerState       // each Tumbler's wheel position (tumbler.go)
 	delays        map[string]*ui.DelayState         // each DelayButton's hold progress
 	splits        map[string]*ui.SplitState         // each SplitView's dragged handles
+	themeScopes   map[string]*ui.ThemeScope         // each item's own controls theme (theme.go)
 	activities    map[string]*ui.Activity           // each indeterminate ProgressBar's / BusyIndicator's loop
 	activitySeen  map[string]bool                   // ... built this frame (the rest are stopped)
 	popupStates   map[string]*ui.PopupState         // popup open/closing state and enter/exit values (popuptransitions.go)

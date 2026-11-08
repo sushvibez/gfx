@@ -117,8 +117,12 @@ func SetTheme(t Theme) {
 	theme.Set(t)
 }
 
-// CurrentTheme is the theme controls are built in now.
+// CurrentTheme is the theme controls are built in now: the innermost
+// ThemeScope being built, else the program's.
 func CurrentTheme() Theme {
+	if n := len(themeScopes); n > 0 {
+		return themeScopes[n-1].p.Get()
+	}
 	if !themeInited {
 		themeInited = true
 		theme.Set(DefaultTheme())
@@ -132,4 +136,58 @@ func themeOr(t *Theme) Theme {
 		return *t
 	}
 	return CurrentTheme()
+}
+
+// ThemeScope gives part of a tree a theme of its own (QML's attached
+// Material.theme on an item, which its children inherit): the controls
+// built between Push and Pop are drawn in it. Keep one per scoped subtree;
+// the theme is a property, so a cache holding the subtree rebuilds it when
+// the scope's theme changes.
+//
+//	s.sidebarTheme.Push(ui.DarkTheme())
+//	side := sidebar()
+//	s.sidebarTheme.Pop()
+type ThemeScope struct {
+	p core.Property[Theme]
+}
+
+// themeScopes are the scopes being built, innermost last (single-owner, like
+// all UI state).
+var themeScopes []*ThemeScope
+
+// Push makes t the theme until the matching Pop.
+func (s *ThemeScope) Push(t Theme) {
+	s.p.Set(t)
+	themeScopes = append(themeScopes, s)
+}
+
+// Pop ends the scope Push began.
+func (s *ThemeScope) Pop() {
+	if n := len(themeScopes); n > 0 && themeScopes[n-1] == s {
+		themeScopes = themeScopes[:n-1]
+	}
+}
+
+// WithAccent is t with accent as its accent, the hover and press shades
+// derived from it (lighter and darker).
+func (t Theme) WithAccent(accent RGBA) Theme {
+	t.Accent, t.AccentHover, t.AccentPress = accent, tint(accent, 1, 0.15), tint(accent, 0, 0.2)
+	return t
+}
+
+// themeSnapshot is the scopes being built now, for something built later
+// (a list's rows) to build in.
+func themeSnapshot() []*ThemeScope {
+	if len(themeScopes) == 0 {
+		return nil
+	}
+	return append([]*ThemeScope(nil), themeScopes...)
+}
+
+// withThemeScopes runs fn inside the scopes snap captured.
+func withThemeScopes(snap []*ThemeScope, fn func()) {
+	saved := themeScopes
+	themeScopes = snap
+	defer func() { themeScopes = saved }()
+	fn()
 }

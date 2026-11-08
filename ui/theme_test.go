@@ -45,3 +45,26 @@ func TestTheme(t *testing.T) {
 		t.Error("Dark flags")
 	}
 }
+
+func TestThemeScope(t *testing.T) {
+	var sc ThemeScope
+	dark := DarkTheme()
+	sc.Push(dark)
+	inner := TabBar(0, []Tab{{Label: "A"}}, nil)
+	sc.Pop()
+	outer := TabBar(0, []Tab{{Label: "A"}}, nil)
+	if c, _ := FillColor(inner); c != dark.Band {
+		t.Errorf("a tab bar built in the scope is %v, want the dark band", c)
+	}
+	if c, _ := FillColor(outer); c != CurrentTheme().Band {
+		t.Errorf("a tab bar built after Pop is %v, want the program's band", c)
+	}
+	// A slider keeps the scope's theme when it paints, outside the scope.
+	var v core.Property[float32]
+	sc.Push(dark)
+	s := Slider(&v, 100)
+	sc.Pop()
+	if s.tm.Track != dark.Track {
+		t.Error("a slider built in a scope does not keep the scope's theme")
+	}
+}

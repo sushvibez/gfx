@@ -34,11 +34,12 @@ func Checkbox(checked *core.Property[bool], label string, onToggle ...func(bool)
 // Range remaps it to any [from,to]. Press or drag anywhere on it to set
 // the value.
 func Slider(value *core.Property[float32], w float32) *SliderEl {
-	return &SliderEl{value: value, w: w, from: 0, to: 1}
+	return &SliderEl{value: value, w: w, from: 0, to: 1, tm: CurrentTheme()}
 }
 
 // SliderEl is the per-frame element of a slider property.
 type SliderEl struct {
+	tm       Theme // the theme it was built in (it paints later, outside any scope)
 	value    *core.Property[float32]
 	step     float32 // quantum the value moves in (QML stepSize); 0 = continuous
 	snap     bool    // ... and whether a drag snaps to it (QML SnapAlways)
@@ -187,6 +188,10 @@ func (e *SliderEl) paintSig() uint64 {
 	h.col(e.trackC)
 	h.col(e.fillC)
 	h.col(e.knobC)
+	h.col(e.tm.Track) // the theme it paints in, when it has no colours of its own
+	h.col(e.tm.Accent)
+	h.col(e.tm.Knob)
+	h.col(e.tm.KnobDisabled)
 	h.f32(e.trackPx)
 	h.f32(e.knobPx)
 	h.b(e.disabled)
@@ -200,7 +205,7 @@ func (e *SliderEl) paint(ctx *Context) {
 	if e.bare {
 		return
 	}
-	tm := CurrentTheme()
+	tm := e.tm
 	track, fill, knob := tm.Track, tm.Accent, tm.Knob
 	if e.hasColors {
 		track, fill, knob = e.trackC, e.fillC, e.knobC
@@ -261,11 +266,12 @@ func (e *SliderEl) fixedWH() (float32, float32) { return e.w, e.h }
 // RangeSlider, whose `first` and `second` each carry their own value. The
 // handles cannot cross: each clamps against the other.
 func RangeSlider(first, second *core.Property[float32], w float32) *RangeSliderEl {
-	return &RangeSliderEl{first: first, second: second, w: w, from: 0, to: 1}
+	return &RangeSliderEl{first: first, second: second, w: w, from: 0, to: 1, tm: CurrentTheme()}
 }
 
 // RangeSliderEl is the per-frame element of a two-handled slider.
 type RangeSliderEl struct {
+	tm            Theme // the theme it was built in
 	first, second *core.Property[float32]
 	w             float32
 	from, to      float32
@@ -331,7 +337,7 @@ func (e *RangeSliderEl) paint(ctx *Context) {
 	if b < a {
 		a, b = b, a
 	}
-	tm := CurrentTheme()
+	tm := e.tm
 	track, fill := tm.Track, tm.Accent
 	knob := tm.Knob
 	if e.vertical {

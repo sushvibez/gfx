@@ -481,6 +481,18 @@ on Button, `Spacer { }`.
 
 ### Controls
 
+Unstyled controls are drawn in the controls kit's theme (`ui.Theme`, see
+`docs/ui.md`). `Material.theme` (`Material.Light`, `Material.Dark`,
+`Material.System` as light), `Material.accent` (a `Material.Teal`-style
+swatch or any colour; `Material.primary` too), `Material.background` and
+`Material.foreground` on any item theme the controls inside it, and
+Universal's attached properties do the same; `Material.color(c)` gives a
+swatch's colour. The palette roles `palette.window`, `windowText`, `base`,
+`text`, `highlight`/`accent` and `toolTipBase`/`toolTipText` on an item set
+the same theme roles, while a control's own `palette.button`-style colours
+still colour just that control. It is the kit's look recoloured, not a
+Material Design rendition.
+
 | element | honoured | accepted / not modelled |
 | --- | --- | --- |
 | `Button`, `ToolButton`, `DelayButton`, `RoundButton`, `TabButton`, `MenuItem`, `MenuBarItem` | `text`, `icon.source/name/color/width/height`, `width`, `height`, `color`, `radius`, `flat`, `highlighted`, `checkable`, `checked`, `down`, `onClicked`, `onToggled`, `palette.button/buttonText`, `background`/`contentItem` via a style module; DelayButton `delay`, `onActivated`, `progress` (`ui.DelayButton`); built on `ui.Button` | `autoRepeat`, `display`, `action` beyond text |

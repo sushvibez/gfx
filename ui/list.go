@@ -31,6 +31,15 @@ func (s *ListState) ViewH() float32 { return s.scroll.viewH }
 // — so a million-row list costs the same as a ten-row one. This is the
 // QML ListView / GPUI uniform_list equivalent.
 func List(state *ListState, rowHeight float32, count int, build func(i int) Element) *ListEl {
+	// Rows are built during layout, after the tree around the list: they
+	// keep the theme scopes the list itself was built in.
+	if snap := themeSnapshot(); len(snap) > 0 {
+		inner := build
+		build = func(i int) (el Element) {
+			withThemeScopes(snap, func() { el = inner(i) })
+			return el
+		}
+	}
 	return &ListEl{st: state, rowH: rowHeight, count: count, build: build}
 }
 

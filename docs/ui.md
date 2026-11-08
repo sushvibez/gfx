@@ -558,7 +558,10 @@ tracks, popup surfaces, bands (a menu bar, a dialog's button box, the
 current tab), menus and tool tips. `ui.SetTheme(t)` sets it for the whole
 program and redraws whatever caches the tree; the option structs
 (`ButtonOpts`, `SwitchOpts`, `DialogOpts`, `DrawerOpts`, `ProgressOpts`)
-take a `Theme *Theme` of their own.
+take a `Theme *Theme` of their own. A `ui.ThemeScope` themes part of the
+tree: the controls built between its `Push(t)` and `Pop()` are drawn in
+`t` (rows a list builds later keep it), and a cache holding that part
+rebuilds when the scope's theme changes.
 
 | Theme | Look |
 |-------|------|
@@ -567,10 +570,16 @@ take a `Theme *Theme` of their own.
 | `ui.DarkTheme()` | dark throughout |
 
 ```go
-t := ui.DarkTheme()
-t.Accent, t.AccentHover, t.AccentPress = ui.RGB(0x12b886), ui.RGB(0x20c997), ui.RGB(0x099268)
-ui.SetTheme(t)
+ui.SetTheme(ui.DarkTheme().WithAccent(ui.RGB(0x12b886))) // hover and press shades follow
+
+var side ui.ThemeScope // kept across frames
+side.Push(ui.LightTheme())
+panel := sidebar()
+side.Pop()
 ```
+
+In gml, `Material.theme`, `Material.accent` (or `Universal`'s) and the
+palette roles on any item theme the controls inside it (`docs/gml.md`).
 
 Beyond the theme, colour, radius, padding and shadow are set per element.
 The pieces that carry defaults can also be restyled one by one:
