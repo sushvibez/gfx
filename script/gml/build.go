@@ -1826,6 +1826,8 @@ type docState struct {
 	stateSeen     map[string]string                 // each item's last active state, to notice a change (state.go)
 	stateAnims    map[string][]animSpec             // the transition running since that change
 	stateToks     map[string]*core.Property[uint64] // bumped on each change (stateCtx.tok)
+	stateCtxs     map[string]*stateCtx              // each item's state scope, updated in place (computeStateCtx)
+	stateShown    map[string]float32                // last value shown per id|prop under a state scope (stateTween)
 	focusReq      map[keyID]bool                    // forceActiveFocus requests, applied on the next build (focus.go)
 	focusRefs     map[keyID]Ref                     // tracked activeFocus, by element (focus.go)
 	readsFocus    map[*node]bool                    // items whose own attributes read activeFocus (focus.go)
@@ -3304,7 +3306,20 @@ func (doc *docState) refreshScopeGeometry(env *Env) {
 // state overrides take effect over the element's base values.
 func (n *node) merged(extra []attr) *node {
 	cp := *n
-	cp.attrs = append(append([]attr{}, n.attrs...), extra...)
+	// An override REPLACES the attribute it names: appended after it, both
+	// were applied in turn (the last winning), and a tweened property saw
+	// its target flip between the two on every build, restarting the tween.
+	names := make(map[string]bool, len(extra))
+	for i := range extra {
+		names[extra[i].name] = true
+	}
+	cp.attrs = make([]attr, 0, len(n.attrs)+len(extra))
+	for _, a := range n.attrs {
+		if !names[a.name] {
+			cp.attrs = append(cp.attrs, a)
+		}
+	}
+	cp.attrs = append(cp.attrs, extra...)
 	cp.ovNode, cp.stripped = nil, nil
 	if cp.noSelfReads {
 		for i := range extra {

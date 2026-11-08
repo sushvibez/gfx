@@ -224,3 +224,42 @@ Item {
 		t.Errorf("chip at %v,%v back in the base state, want 5,5", r.X, r.Y)
 	}
 }
+
+// A SequentialAnimation's parts run one after another: a later part holds
+// its property until the earlier parts (and any pause) are done.
+func TestSequentialTransition(t *testing.T) {
+	h := newStates(t, `
+import QtQuick 2.15
+Item {
+    id: root
+    width: 400; height: 300
+    property bool big: false
+    states: State { name: "big"; when: big; PropertyChanges { target: box; width: 300; height: 200 } }
+    transitions: Transition {
+        SequentialAnimation {
+            NumberAnimation { properties: "width"; duration: 200 }
+            PauseAnimation { duration: 100 }
+            NumberAnimation { properties: "height"; duration: 200 }
+        }
+    }
+    Rectangle { id: box; color: "#ff0000"; x: 0; y: 0; width: 100; height: 50 }
+}`)
+	h.set("root.big = true")
+	at := func(ms int) ui.Rect {
+		core.TickAnimations(time.Duration(ms) * time.Millisecond)
+		h.frame()
+		return h.rect(0xff0000)
+	}
+	if r := at(100); r.W <= 100 || r.W >= 300 || r.H != 50 {
+		t.Errorf("at 100 ms %vx%v: want the width moving and the height held at 50", r.W, r.H)
+	}
+	if r := at(150); r.W != 300 || r.H != 50 { // 250 ms: width done, in the pause
+		t.Errorf("at 250 ms %vx%v: want 300 wide, the height still 50 (pause)", r.W, r.H)
+	}
+	if r := at(150); r.H <= 50 || r.H >= 200 { // 400 ms: 100 ms into the height
+		t.Errorf("at 400 ms height %v: want it moving", r.H)
+	}
+	if r := at(200); r.W != 300 || r.H != 200 {
+		t.Errorf("at the end %vx%v, want 300x200", r.W, r.H)
+	}
+}

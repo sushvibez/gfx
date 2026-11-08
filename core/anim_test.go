@@ -185,3 +185,24 @@ func TestEasingCurvesAreDistinct(t *testing.T) {
 		}
 	}
 }
+
+// TweenAfter holds the value until its delay passes, then tweens from the
+// value it has at that moment.
+func TestTweenAfter(t *testing.T) {
+	var p Property[float32]
+	p.Set(10)
+	TweenAfter(&p, 110, 200*time.Millisecond, 100*time.Millisecond, EaseLinear)
+	TickAnimations(150 * time.Millisecond)
+	if p.Get() != 10 {
+		t.Errorf("value %v before the delay passed, want the held 10", p.Get())
+	}
+	p.Set(20)                              // something else moves it meanwhile: the tween starts from here
+	TickAnimations(100 * time.Millisecond) // 250 ms: 50 ms into the tween
+	if v := p.Get(); v < 60 || v > 70 {
+		t.Errorf("value %v half way (from 20 to 110), want 65", v)
+	}
+	TickAnimations(100 * time.Millisecond)
+	if p.Get() != 110 || AnimationsRunning() {
+		t.Errorf("value %v running %v at the end, want 110 and done", p.Get(), AnimationsRunning())
+	}
+}

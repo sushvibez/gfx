@@ -36,7 +36,8 @@ import (
 //
 // ParentChange moves its target under another item while the state is
 // active (both inside the item that declares the states). A
-// SequentialAnimation's parts run together rather than one after another.
+// SequentialAnimation's parts run one after another (PauseAnimation waits),
+// each later part holding its property until its turn.
 
 // stateCtx is the active state/transition scope for a subtree: which
 // properties to override per target id, and which of them tween, how.
@@ -61,11 +62,12 @@ func (c *stateCtx) overridesFor(id string) []attr {
 }
 
 // animSpec is one animation of a transition: the properties it tweens, on
-// which targets (nil: any), over how long, with what easing.
+// which targets (nil: any), when, over how long, with what easing.
 type animSpec struct {
 	props   map[string]bool
 	targets map[string]bool
 	dur     time.Duration
+	delay   time.Duration // when it starts after the change (a sequence's later parts)
 	easing  core.Easing
 }
 
@@ -141,12 +143,24 @@ func computeStateCtx(n *node, env *Env, doc *docState) (*stateCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := &stateCtx{overrides: map[string][]attr{}}
+	// One scope object per item, updated in place: the subtree cache keeps
+	// the pointer it saw when it recorded a child, and replays it when that
+	// child rebuilds, so a fresh object each build would hand a rebuilt
+	// child the state from before the change.
+	key := doc.key(n)
+	ctx := doc.stateCtxs[key]
+	if ctx == nil {
+		ctx = &stateCtx{}
+		if doc.stateCtxs == nil {
+			doc.stateCtxs = map[string]*stateCtx{}
+		}
+		doc.stateCtxs[key] = ctx
+	}
+	ctx.overrides, ctx.reparent = map[string][]attr{}, nil
 	var scripts []*node
 	if err := collectOverrides(decls, active, env, ctx, &scripts, 0); err != nil {
 		return nil, err
 	}
-	key := doc.key(n)
 	if doc.stateSeen == nil {
 		doc.stateSeen = map[string]string{}
 		doc.stateAnims = map[string][]animSpec{}
@@ -354,7 +368,7 @@ func pickTransition(trans []*node, from, to string, env *Env) ([]animSpec, error
 			continue
 		}
 		var out []animSpec
-		if err := collectAnims(tr.children, env, nil, &out); err != nil {
+		if _, err := collectAnims(tr.children, env, nil, 0, false, &out); err != nil {
 			return nil, err
 		}
 		return out, nil
@@ -374,24 +388,50 @@ func stateMatch(spec, state string) bool {
 }
 
 // collectAnims reads a transition's animations, walking into Parallel and
-// Sequential groups (whose targets their parts inherit).
-func collectAnims(nodes []*node, env *Env, targets map[string]bool, out *[]animSpec) error {
+// Sequential groups (whose targets their parts inherit), and returns how
+// long the list takes. start is when the list begins; a sequential list's
+// parts begin one after another (a PauseAnimation takes its own duration,
+// a ScriptAction or PropertyAction none), a parallel one's all at start.
+func collectAnims(nodes []*node, env *Env, targets map[string]bool, start time.Duration, sequential bool, out *[]animSpec) (time.Duration, error) {
+	at, total := start, time.Duration(0)
+	step := func(d time.Duration) {
+		if sequential {
+			at += d
+			total = at - start
+		} else {
+			total = max(total, d)
+		}
+	}
 	for _, na := range nodes {
 		switch na.typeName {
 		case "ParallelAnimation", "SequentialAnimation":
-			if err := collectAnims(na.children, env, animTargets(na, targets), out); err != nil {
-				return err
+			d, err := collectAnims(na.children, env, animTargets(na, targets), at,
+				na.typeName == "SequentialAnimation", out)
+			if err != nil {
+				return 0, err
 			}
+			step(d)
 			continue
-		case "PauseAnimation", "ScriptAction", "PropertyAction":
-			continue // side effects and gaps: the tweens are what is modelled
+		case "PauseAnimation":
+			d := 250 * time.Millisecond
+			for _, a := range na.attrs {
+				if a.name == "duration" {
+					if f, err := attrFloat(a, env); err == nil {
+						d = time.Duration(f) * time.Millisecond
+					}
+				}
+			}
+			step(d)
+			continue
+		case "ScriptAction", "PropertyAction":
+			continue // instant side effects: the tweens are what is modelled
 		case "NumberAnimation", "ColorAnimation", "PropertyAnimation", "RotationAnimation",
 			"SmoothedAnimation", "SpringAnimation", "AnchorAnimation":
 		default:
-			return fmt.Errorf("gml:%d: Transition animation %q is not modeled", na.line, na.typeName)
+			return 0, fmt.Errorf("gml:%d: Transition animation %q is not modeled", na.line, na.typeName)
 		}
 		spec := animSpec{props: map[string]bool{}, targets: animTargets(na, targets),
-			dur: 250 * time.Millisecond, easing: core.EaseLinear}
+			dur: 250 * time.Millisecond, easing: core.EaseLinear, delay: at}
 		if na.typeName == "AnchorAnimation" {
 			// Animates whatever an AnchorChanges moved.
 			for _, p := range []string{"x", "y", "width", "height"} {
@@ -403,7 +443,7 @@ func collectAnims(nodes []*node, env *Env, targets map[string]bool, out *[]animS
 			case "properties", "property":
 				v, err := a.expr.eval(env)
 				if err != nil {
-					return err
+					return 0, err
 				}
 				for _, p := range strings.Split(str(v), ",") {
 					if p = strings.TrimSpace(p); p != "" {
@@ -413,13 +453,13 @@ func collectAnims(nodes []*node, env *Env, targets map[string]bool, out *[]animS
 			case "duration":
 				f, err := attrFloat(a, env)
 				if err != nil {
-					return err
+					return 0, err
 				}
 				spec.dur = time.Duration(f) * time.Millisecond
 			case "easing.type", "easing":
 				v, err := a.expr.eval(env)
 				if err != nil {
-					return err
+					return 0, err
 				}
 				spec.easing = easingByName(str(v))
 			case "target", "targets", "from", "to", "loops", "alwaysRunToEnd",
@@ -427,12 +467,13 @@ func collectAnims(nodes []*node, env *Env, targets map[string]bool, out *[]animS
 				"direction", "easing.amplitude", "easing.overshoot", "easing.period":
 				// targets are read by animTargets; the rest are accepted
 			default:
-				return fmt.Errorf("gml:%d: %s has no attribute %q", a.line, na.typeName, a.name)
+				return 0, fmt.Errorf("gml:%d: %s has no attribute %q", a.line, na.typeName, a.name)
 			}
 		}
 		*out = append(*out, spec)
+		step(spec.dur)
 	}
-	return nil
+	return total, nil
 }
 
 // animTargets is an animation's target/targets as a set of ids, or the
@@ -519,6 +560,12 @@ func (doc *docState) numAttr(id, prop string, target float32) float32 {
 // tweenTo retains a per-key tween: the first call snaps to target; later calls
 // start a tween whenever target changes, returning the in-flight value.
 func (doc *docState) tweenTo(key string, target float32, dur time.Duration, easing core.Easing) float32 {
+	return doc.tweenAfter(key, target, 0, dur, easing)
+}
+
+// tweenAfter is tweenTo with the tween starting delay after the change (a
+// later step of a SequentialAnimation): the value holds until then.
+func (doc *docState) tweenAfter(key string, target float32, delay, dur time.Duration, easing core.Easing) float32 {
 	p := doc.anims[key]
 	if p == nil {
 		p = &core.Property[float32]{}
@@ -528,7 +575,7 @@ func (doc *docState) tweenTo(key string, target float32, dur time.Duration, easi
 		return target
 	}
 	if doc.animTarget[key] != target {
-		core.Tween(p, target, dur, easing)
+		core.TweenAfter(p, target, delay, dur, easing)
 		doc.animTarget[key] = target
 	}
 	return p.Get()
@@ -685,11 +732,33 @@ func (doc *docState) stateTween(id, prop string, target float32) (float32, bool)
 	if doc.state.tok != nil {
 		doc.state.tok.Get() // a change starts a tween here: be rebuilt for it
 	}
+	key := id + "|" + prop
+	if doc.stateShown == nil {
+		doc.stateShown = map[string]float32{}
+	}
 	a := doc.state.animFor(id, prop)
 	if a == nil {
+		// Not animated now, but remember what is shown: the tween a later
+		// change starts has to begin from it, not jump to the new value.
+		doc.stateShown[key] = target
+		if p := doc.anims[key]; p != nil {
+			core.StopTween(p)
+			p.Set(target)
+			doc.animTarget[key] = target
+		}
 		return target, false
 	}
-	return doc.tweenTo(id+"|"+prop, target, a.dur, a.easing), true
+	if doc.anims[key] == nil {
+		if shown, ok := doc.stateShown[key]; ok && shown != target {
+			p := &core.Property[float32]{}
+			p.Set(shown)
+			doc.anims[key] = p
+			doc.animTarget[key] = shown
+		}
+	}
+	v := doc.tweenAfter(key, target, a.delay, a.dur, a.easing)
+	doc.stateShown[key] = v
+	return v, true
 }
 
 // splitQualifiedProp splits `morphRect.width` into its target id and

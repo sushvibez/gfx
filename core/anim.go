@@ -235,6 +235,7 @@ const (
 type tween struct {
 	key     any // the property pointer; one active tween per property
 	elapsed time.Duration
+	delay   time.Duration // held before it starts (TweenAfter); elapsed counts it too
 	dur     time.Duration
 	mode    LoopMode
 	rev     bool            // current ping-pong direction
@@ -259,6 +260,32 @@ func Tween[T Animatable](p *Property[T], target T, d time.Duration, e Easing) {
 	from := p.Get()
 	tw := &tween{key: p, dur: d}
 	tw.step = func(t float32) { p.Set(between(from, target, e(t))) }
+	tweens = append(tweens, tw)
+}
+
+// TweenAfter is Tween starting after delay: until then p keeps whatever
+// value it has (another tween may still be moving it), and the tween runs
+// from the value p has when it starts — a step of a sequence (QML's
+// SequentialAnimation). It replaces any tween or spring already driving p.
+func TweenAfter[T Animatable](p *Property[T], target T, delay, d time.Duration, e Easing) {
+	if delay <= 0 {
+		Tween(p, target, d, e)
+		return
+	}
+	if e == nil {
+		e = EaseInOutQuad
+	}
+	stopTween(p)
+	stopSpring(p)
+	var from T
+	started := false
+	tw := &tween{key: p, dur: max(d, 1), delay: delay}
+	tw.step = func(t float32) {
+		if !started {
+			from, started = p.Get(), true
+		}
+		p.Set(between(from, target, e(t)))
+	}
 	tweens = append(tweens, tw)
 }
 
@@ -342,7 +369,11 @@ func TickAnimations(dt time.Duration) bool {
 	live := tweens[:0]
 	for _, tw := range tweens {
 		tw.elapsed += dt
-		if tw.elapsed < tw.dur {
+		if tw.elapsed < tw.delay {
+			live = append(live, tw) // not started yet (TweenAfter)
+			continue
+		}
+		if tw.elapsed-tw.delay < tw.dur {
 			tw.step(tw.progress())
 			live = append(live, tw)
 			continue
@@ -367,7 +398,7 @@ func TickAnimations(dt time.Duration) bool {
 }
 
 func (tw *tween) progress() float32 {
-	t := float32(tw.elapsed) / float32(tw.dur)
+	t := float32(tw.elapsed-tw.delay) / float32(tw.dur)
 	if tw.rev {
 		return 1 - t
 	}
