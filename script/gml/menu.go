@@ -304,6 +304,10 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	// and closes the menu through it.
 	for _, a := range n.attrs {
 		switch a.name {
+		case "font.pixelSize":
+			if f, err := attrFloat(a, env); err == nil && f > 0 {
+				st.TextPx = float64(f)
+			}
 		case "visible", "open", "opened":
 			if b, err := attrBool(a, env); err == nil {
 				if b && openRef.get() != true {
@@ -347,7 +351,7 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 		}
 		x, y = fx, fy
 	}
-	return host.Children(ui.Overlay(list, x, y).OnClickOutside(closeMenu)), nil
+	return host.Children(ui.Overlay(list, x, y).SnapToWindow(4).OnClickOutside(closeMenu)), nil
 }
 
 // menuPos reads a Menu's x/y (where popup() placed it) — in its parent
