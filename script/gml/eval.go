@@ -406,9 +406,18 @@ func (e *Env) Str(name string, p *core.Property[string]) {
 	e.vars[name] = propRef[string]{p, func(v any) (string, error) { return str(v), nil }, nil}
 }
 
-// Func exposes a Go function callable from handlers; fn may take zero args
-// or a single float64/string and return nothing.
-func (e *Env) Func(name string, fn any) { e.vars[name] = fn }
+// Func exposes a Go function callable from handlers: func(), func(float64),
+// func(float64, float64), func(string), func(bool), or func([]any) (any,
+// error) for anything else. Any other shape panics here, at registration —
+// a call from markup could only fail later, quietly, as "not callable".
+func (e *Env) Func(name string, fn any) {
+	switch fn.(type) {
+	case func(), func(float64), func(float64, float64), func(string), func(bool), func([]any) (any, error), jsFunc:
+	default:
+		panic(fmt.Sprintf("gml: Env.Func(%q): unsupported signature %T", name, fn))
+	}
+	e.vars[name] = fn
+}
 
 // Set exposes an arbitrary host value to markup under name — e.g. a
 // *render.View3D for a Viewport3D's source. Env values are reactive
@@ -2023,6 +2032,20 @@ func callValue(fnv any, argExprs []expr, env *Env, line int, name string) (any, 
 			return nil, err
 		}
 		fn(f0, f1)
+		return nil, nil
+	case func(bool):
+		if len(argExprs) != 1 {
+			return nil, fmt.Errorf("gml:%d: %s takes one boolean", line, name)
+		}
+		v, err := argExprs[0].eval(env)
+		if err != nil {
+			return nil, err
+		}
+		b, err := toBool(v)
+		if err != nil {
+			return nil, err
+		}
+		fn(b)
 		return nil, nil
 	case func(string):
 		if len(argExprs) != 1 {
