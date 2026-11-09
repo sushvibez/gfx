@@ -335,6 +335,15 @@ of delegate rows moved much further — navdisplay 1087 → 92 µs, chatui
   another 23 %), ui layout 21 %, GC 7 %. The structural fix is a
   layered scope (a chain of frames) instead of binding into one flat
   map and undoing, which is a refactor of `Env`, not a tuning.
+  2026-11-09: half of it done the safe way. Half the names a slot's
+  ancestors bind are repeats an inner layer overrides (buttons: 628 a
+  frame, 294 distinct), so `withCtx` binds each name once from a plan
+  kept on the slot's context (`buildCtx.bindPlan`, remade when a layer
+  changes size; values still read from the layers): the binding share of
+  a buttons frame 13.4 % → 7.5 %. The layered scope itself was weighed
+  and set aside: 43 places read `env.vars[...]` directly (`parent`, ids,
+  the row-scope shadow check) and would stop seeing ancestor names that
+  live in chained layers — each one a silent semantic change.
 - ▢ **`width` / `height` read where the item is not registered** stay
   untracked on purpose (`derivedGeom` in shadowSelfGeometry): a size
   evaluated at declare time, or off an element that has never been laid

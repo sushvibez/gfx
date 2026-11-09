@@ -2212,6 +2212,48 @@ type buildCtx struct {
 	overrides map[string]any
 	parent    any
 	hasParent bool
+	// plan is withCtx's binding plan for binds: each distinct name once,
+	// with the innermost layer that supplies it (half the names a slot's
+	// ancestors bind are repeats an inner layer overrides). planLens are
+	// the layers' sizes it was made for; a layer that grew or shrank
+	// remakes it. Values are always read from the layers themselves.
+	plan     []ctxName
+	planLens []int
+}
+
+// ctxName is one name of a binding plan and the layer it comes from.
+type ctxName struct {
+	name  string
+	layer int
+}
+
+// bindPlan returns ctx's binding plan, made or remade as needed.
+func (ctx *buildCtx) bindPlan() []ctxName {
+	ok := len(ctx.planLens) == len(ctx.binds)
+	for i := 0; ok && i < len(ctx.binds); i++ {
+		ok = ctx.planLens[i] == len(ctx.binds[i].vars)
+	}
+	if ok && ctx.plan != nil {
+		return ctx.plan
+	}
+	ctx.planLens = ctx.planLens[:0]
+	ctx.plan = ctx.plan[:0]
+	at := map[string]int{}
+	for li, l := range ctx.binds {
+		ctx.planLens = append(ctx.planLens, len(l.vars))
+		for name := range l.vars {
+			if i, seen := at[name]; seen {
+				ctx.plan[i].layer = li // the inner layer wins, as binding in order did
+				continue
+			}
+			at[name] = len(ctx.plan)
+			ctx.plan = append(ctx.plan, ctxName{name, li})
+		}
+	}
+	if ctx.plan == nil {
+		ctx.plan = []ctxName{}
+	}
+	return ctx.plan
 }
 
 // captureCtx snapshots the build context for a slot.
@@ -2288,7 +2330,7 @@ func (doc *docState) refreshObj(v any) {
 // withCtx runs fn with ctx in force: the document fields, the ancestors'
 // bindings (bound into env outermost first, so inner ones win, exactly
 // as they were), and `parent`. Everything is restored after.
-func (doc *docState) withCtx(ctx buildCtx, env *Env, fn func()) {
+func (doc *docState) withCtx(ctx *buildCtx, env *Env, fn func()) {
 	saved := doc.captureCtx(env)
 	apply := func(c *buildCtx) {
 		doc.rowPrefix, doc.useSite, doc.outerID, doc.curFile = c.rowPrefix, c.useSite, c.outerID, c.curFile
@@ -2296,7 +2338,7 @@ func (doc *docState) withCtx(ctx buildCtx, env *Env, fn func()) {
 		doc.layoutGrid, doc.state, doc.curBehaviors, doc.curKey = c.layoutGrid, c.state, c.curBehaviors, c.curKey
 		doc.declParent, doc.declParentKey = c.declParent, c.declParentKey
 	}
-	apply(&ctx)
+	apply(ctx)
 	// The names are bound straight into env and undone from one pooled
 	// list, outermost layer first so inner ones win, exactly as they were.
 	undo := takeUndo(64)
@@ -2311,10 +2353,10 @@ func (doc *docState) withCtx(ctx buildCtx, env *Env, fn func()) {
 		undo = append(undo, scopeSaved{name: name, v: prev, ok: ok})
 		env.vars[name] = v
 	}
-	for _, l := range ctx.binds {
-		for name, v := range l.vars {
-			bind(name, v)
-		}
+	// Each name once, from the innermost layer that binds it: what binding
+	// every layer in order left in env, for half the work.
+	for _, p := range ctx.bindPlan() {
+		bind(p.name, ctx.binds[p.layer].vars[p.name])
 	}
 	for name, v := range ctx.overrides {
 		doc.refreshObj(v)
@@ -2467,7 +2509,7 @@ func (doc *docState) patch(e *subtreeEntry, env *Env) bool {
 		var err error
 		var prs *core.ReadSet
 		doc.lastEntry = nil
-		doc.withCtx(sl.ctx, env, func() {
+		doc.withCtx(&sl.ctx, env, func() {
 			prs = core.TrackReads(func() { placed, err = sl.rebuild() })
 		})
 		repl := doc.lastEntry
