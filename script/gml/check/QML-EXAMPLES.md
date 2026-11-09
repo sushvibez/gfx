@@ -68,8 +68,13 @@ MonthGrid started on the 1st when the month began on a Sunday, where Qt
 always shows some of the previous month. On drawers, a button whose
 `contentItem: Text` sets no size drew its label at the host's UI size;
 a plain Text with no size anywhere is now Qt's 13 px application font
-(`qtAppFontPx`; drawers 1.5 → 1.4). Still different there: the family
-(Qt's default face, not the page's).
+(`qtAppFontPx`; drawers 1.5 → 1.4). Still different there: the family,
+and on purpose. A Text naming no family draws in the application
+default, which for the reference is fontconfig's default sans on the
+WSL box that renders it (DejaVu Sans; Segoe UI on Windows) and for us
+the framework's default face (Inter) — neither the page's FontLoader
+font, which is the rule that matters. Matching DejaVu would tie our
+output to one reference machine's configuration.
 
 pfd scores 2.0 or 3.5 from run to run, and the difference is the
 REFERENCE: some of Qt's offscreen renders grab before the Speed &
