@@ -311,6 +311,7 @@ type Window struct {
 	// it does not manage an unmapped window, so a _NET_WM_STATE request
 	// sent about one is simply dropped.
 	mapped  bool
+	maxed   bool // last ToggleMaximize state (Maximized)
 	mouse   []MouseEvent
 	keys    []KeyEvent
 	cursor  Cursor
@@ -1039,7 +1040,11 @@ func (w *Window) Minimize() {
 // all. The EWMH way to open already-maximised is to set the state as a
 // PROPERTY before mapping, which is what the Fullscreen option in
 // NewWindow already does.
+// Maximized reports whether the window was last maximised from here.
+func (w *Window) Maximized() bool { return w.maxed }
+
 func (w *Window) ToggleMaximize() {
+	w.maxed = !w.maxed
 	state := xInternAtom(w.display, "_NET_WM_STATE", 0)
 	maxH := xInternAtom(w.display, "_NET_WM_STATE_MAXIMIZED_HORZ", 0)
 	maxV := xInternAtom(w.display, "_NET_WM_STATE_MAXIMIZED_VERT", 0)

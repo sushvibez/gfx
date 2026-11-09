@@ -91,6 +91,7 @@ var (
 	createWindowExW           func(exStyle uint32, className, windowName *uint16, style uint32, x, y, w, h int32, parent, menu, instance uintptr, param uintptr) uintptr
 	setWindowTextW            func(hwnd uintptr, text *uint16) int32
 	showWindow                func(hwnd uintptr, cmd int32) int32
+	isZoomed                  func(hwnd uintptr) int32
 	releaseCapture            func() int32
 	sendMessageW              func(hwnd uintptr, msg uint32, wparam, lparam uintptr) uintptr
 	getCursorPos              func(pt *winPoint) int32
@@ -292,6 +293,7 @@ var loadWin32 = sync.OnceValue(func() error {
 	user32.Bind(&createWindowExW, "CreateWindowExW")
 	user32.Bind(&setWindowTextW, "SetWindowTextW")
 	user32.Bind(&showWindow, "ShowWindow")
+	user32.Bind(&isZoomed, "IsZoomed")
 	user32.Bind(&releaseCapture, "ReleaseCapture")
 	user32.Bind(&sendMessageW, "SendMessageW")
 	user32.Bind(&getCursorPos, "GetCursorPos")
@@ -1162,6 +1164,10 @@ func (w *Window) ToggleMaximize() {
 	}
 	w.maximized = !w.maximized
 }
+
+// Maximized reports whether the window is maximised (asked of the system:
+// a title-bar double-click or an Aero snap counts too).
+func (w *Window) Maximized() bool { return isZoomed(w.hwnd) != 0 }
 
 // hit-test codes for WM_NCLBUTTONDOWN-driven move/resize.
 var edgeHT = map[ResizeEdge]uintptr{

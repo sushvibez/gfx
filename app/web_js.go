@@ -422,6 +422,9 @@ func (w *Window) Close()          {}
 func (w *Window) Minimize()       {}
 func (w *Window) ToggleMaximize() {}
 
+// Maximized is false: this platform has no window to maximise.
+func (w *Window) Maximized() bool { return false }
+
 // BeginMove and BeginResize exist for API parity; not applicable here.
 func (w *Window) BeginMove()             {}
 func (w *Window) BeginResize(ResizeEdge) {}
