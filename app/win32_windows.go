@@ -678,6 +678,11 @@ var wndProc = sync.OnceValue(func() uintptr {
 					// Ctrl/Alt+letter shortcut (WM_CHAR is suppressed for
 					// these chords).
 					w.keys = append(w.keys, KeyEvent{Down: true, Rune: rune(wparam + 32), Ctrl: ctrl, Shift: shift, Alt: alt})
+				} else if down && wparam >= '0' && wparam <= '9' && ctrl && !alt {
+					// Ctrl+digit (Ctrl+1 …): no WM_CHAR comes for these either.
+					// Not with Alt: Ctrl+Alt is AltGr, which types characters
+					// (AltGr+2 is '@' on a German layout) through WM_CHAR.
+					w.keys = append(w.keys, KeyEvent{Down: true, Rune: rune(wparam), Ctrl: ctrl, Shift: shift, Alt: alt})
 				} else if !down {
 					// Printable keys arrive as WM_CHAR (Down only) — the
 					// release must come from WM_KEYUP, or a game's held-key

@@ -125,6 +125,11 @@ type Hooks struct {
 	// UI layout and before the 2D pass. When set, the 2D pass loads the
 	// target instead of clearing it, and a depth view is maintained.
 	Encode3D func(a *App, enc *gpu.CommandEncoder, target, depth *gpu.TextureView) error
+	// Offscreen3D declares that Encode3D only renders offscreen targets
+	// (View3Ds the 2D pass then draws as images) and never touches target
+	// or depth: the window keeps the pure-2D path, 4x MSAA, so SVG icons
+	// and paths are anti-aliased as in a 2D-only window.
+	Offscreen3D bool
 	// DragRegion reports whether a point is in the app's titlebar move
 	// region (undecorated windows).
 	DragRegion func(a *App, x, y float32) bool
@@ -222,7 +227,7 @@ func Run(o Options, hooks Hooks) error {
 	// chain, matching the headless screenshot path: SDF quads and atlas text
 	// are already analytically smooth, but raw path/SVG triangles need it.
 	msaa := 0
-	if hooks.Encode3D == nil {
+	if hooks.Encode3D == nil || hooks.Offscreen3D {
 		msaa = 4
 	}
 	var r *render.Renderer2D

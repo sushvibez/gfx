@@ -83,8 +83,8 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 	texView := target.CreateView()
 
 	msaa := 0
-	if hooks.Encode3D == nil {
-		msaa = 4 // pure 2D: anti-alias path/SVG edges via resolve
+	if hooks.Encode3D == nil || hooks.Offscreen3D {
+		msaa = 4 // 2D over nothing drawn directly: anti-alias path/SVG edges via resolve
 	}
 	var r *render.Renderer2D
 	var msaaView *gpu.TextureView
