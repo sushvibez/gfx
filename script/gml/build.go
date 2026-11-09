@@ -5344,13 +5344,20 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 		run := doc.handlerRunner(env)
 		// With acceptedButtons given, the handler gets QML's `mouse` with
 		// the button that clicked (Qt.LeftButton / Qt.RightButton).
+		// Where in the area it was clicked: the pointer's last position
+		// over it (mouseX/mouseY). The keys are taken now — inside a
+		// Repeater row they name the row, which the click no longer can.
+		ks := doc.keyStr(doc.keyID(n))
+		mxRef, myRef := doc.floatProp(ks+".mouseX", 0), doc.floatProp(ks+".mouseY", 0)
 		click := func(button int) func() {
 			return func() {
 				doc.noteTrigger(d)
 				if onClicked != nil {
 					if buttonsGiven {
+						mx, _ := toFloat64(mxRef.get())
+						my, _ := toFloat64(myRef.get())
 						runEvent(run, env, onClicked, "onClicked", "mouse", map[string]any{
-							"x": float64(0), "y": float64(0), "button": float64(button), "buttons": float64(0),
+							"x": mx, "y": my, "button": float64(button), "buttons": float64(0),
 							"modifiers": float64(0), "wasHeld": false, "accepted": true})
 					} else {
 						run(onClicked, "onClicked")

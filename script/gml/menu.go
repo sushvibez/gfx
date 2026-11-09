@@ -268,8 +268,33 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 		return nil, openRef.set(true)
 	}
 	// popup()/open()/close() on the menu's id, so a button can show it.
+	// popup(x, y) opens it there, in the parent's coordinates (a context
+	// menu at the pointer); popup() opens it under the trigger. The place
+	// is kept across frames (the menu is rebuilt every one).
+	// at: 0 none, 1 relative to the parent (popup(x, y)), 2 in the window
+	// (under the trigger). popup is bound once, so the parent's origin is
+	// added when drawing, not when popup() runs.
+	atRef := doc.floatProp(key+"|at", 0)
+	pxRef := doc.floatProp(key+"|px", 0)
+	pyRef := doc.floatProp(key+"|py", 0)
 	doc.exposeIDMethods(n, map[string]any{
-		"popup": jsFunc(func([]any) (any, error) { return open() }),
+		"popup": jsFunc(func(args []any) (any, error) {
+			switch {
+			case len(args) >= 2:
+				x, errX := toFloat32(args[0])
+				y, errY := toFloat32(args[1])
+				if errX == nil && errY == nil {
+					_ = atRef.set(1)
+					_ = pxRef.set(float64(x))
+					_ = pyRef.set(float64(y))
+				}
+			case doc.trigger.H > 0:
+				_ = atRef.set(2)
+				_ = pxRef.set(float64(doc.trigger.X))
+				_ = pyRef.set(float64(doc.trigger.Y + doc.trigger.H))
+			}
+			return open()
+		}),
 		"open":  jsFunc(func([]any) (any, error) { return open() }),
 		"close": jsFunc(func([]any) (any, error) { return nil, openRef.set(false) }),
 	})
@@ -313,6 +338,15 @@ func buildMenu(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	list := ui.MenuPanel(st, items, closeMenu)
 	x, y := menuPos(n, env)
+	if at, _ := toFloat32(atRef.get()); at > 0 && !hasAttr(n, "x") && !hasAttr(n, "y") {
+		fx, _ := toFloat32(pxRef.get())
+		fy, _ := toFloat32(pyRef.get())
+		if at == 1 {
+			ox, oy := popupOrigin(n, env)
+			fx, fy = fx+ox, fy+oy
+		}
+		x, y = fx, fy
+	}
 	return host.Children(ui.Overlay(list, x, y).OnClickOutside(closeMenu)), nil
 }
 
