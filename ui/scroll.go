@@ -175,6 +175,10 @@ type ScrollEl struct {
 	// contentSized: the content keeps its own width instead of being
 	// stretched to the viewport (QML's contentWidth: -1). See ContentSized.
 	contentSized bool
+	// fitWin >= 0: as tall as the content, but no taller than the
+	// window less fitWin above and below (FitWindow); -1 = off.
+	fitWin float32
+	fitOn  bool
 }
 
 // AutoHideBar shows the scrollbar only while the view is moving OR the
@@ -192,6 +196,11 @@ func (e *ScrollEl) AutoHideBar() *ScrollEl { e.autoHide = true; return e }
 // max(content, ownWidth), settled at the full viewport instead of its
 // content).
 func (e *ScrollEl) ContentSized() *ScrollEl { e.contentSized = true; return e }
+
+// FitWindow sizes the area to its content, capped at the window height less
+// margin above and below: a list that fits shows whole, a longer one
+// (a tall menu) scrolls.
+func (e *ScrollEl) FitWindow(margin float32) *ScrollEl { e.fitWin, e.fitOn = margin, true; return e }
 
 // Grow makes the scroll region flex into its parent's leftover space
 // (flex_1), instead of a fixed W/H.
@@ -224,10 +233,16 @@ func (e *ScrollEl) Children(els ...Element) *ScrollEl {
 }
 
 func (e *ScrollEl) measure(ctx *Context) (float32, float32) {
-	cw, _ := e.content.measure(ctx)
+	cw, ch := e.content.measure(ctx)
 	w, h := e.w, e.h
 	if w == 0 {
 		w = cw
+	}
+	if e.fitOn {
+		h = ch
+		if lim := ctx.winH - 2*e.fitWin; lim > 0 && h > lim {
+			h = lim
+		}
 	}
 	if h == 0 {
 		h = 120

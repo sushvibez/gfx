@@ -60,6 +60,11 @@ type MenuState struct {
 	hl   core.Property[int] // highlighted entry + 1 (0: none)
 	sub  core.Property[int] // open submenu entry + 1 (0: none)
 	subs map[int]*MenuState
+	// TextPx is the entries' text size (0: the UI's); submenus take it.
+	TextPx float64
+	// scroll keeps a tall menu's scroll position (the rows scroll when
+	// the menu is taller than the window).
+	scroll ScrollState
 }
 
 // Open, Close and IsOpen drive a standalone menu (a context menu, a menu a
@@ -77,6 +82,9 @@ func (m *MenuState) child(i int) *MenuState {
 		s = &MenuState{}
 		m.subs[i] = s
 	}
+	if s.TextPx == 0 {
+		s.TextPx = m.TextPx
+	}
 	return s
 }
 
@@ -90,6 +98,17 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 		FocusBorder(1, tm.MenuBorder)
 	list.Role(RoleMenu, "")
 	hl, sub := st.hl.Get()-1, st.sub.Get()-1
+	// Entry text at the menu's size, if it has one.
+	text := func(s string, c RGBA) *TextEl {
+		t := Text(s, c)
+		if st.TextPx > 0 {
+			t.SizePx(st.TextPx)
+		}
+		return t
+	}
+	// The rows go in a scroll area as tall as they are, or as the window
+	// allows: a long menu scrolls instead of running off the screen.
+	body := Div().Col()
 	trigger := func(i int) {
 		it := items[i]
 		if it.Disabled || it.Separator {
@@ -108,7 +127,7 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 	rows := make([]*DivEl, len(items))
 	for i, it := range items {
 		if it.Separator {
-			list.Children(Div().H(1).Bg(tm.MenuBorder))
+			body.Children(Div().H(1).Bg(tm.MenuBorder))
 			continue
 		}
 		c := tm.MenuText
@@ -130,12 +149,12 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 			label = mark + label
 		}
 		row := Div().Row().ItemsCenter().PadXY(10, 6).Rounded(4).Gap(16).
-			Children(Text(label, c))
+			Children(text(label, c))
 		switch {
 		case len(it.Sub) > 0:
-			row.Children(Div().Grow(), Text(">", c))
+			row.Children(Div().Grow(), text(">", c))
 		case it.Shortcut != "":
-			row.Children(Div().Grow(), Text(it.Shortcut, tm.MenuDim))
+			row.Children(Div().Grow(), text(it.Shortcut, tm.MenuDim))
 		}
 		if i == hl || i == sub {
 			row.Bg(tm.MenuHover)
@@ -159,8 +178,9 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 		}
 		row.Access(Access{Role: RoleMenuItem, Name: it.Text, Checked: chk, Expanded: exp, Disabled: it.Disabled})
 		rows[i] = row
-		list.Children(row)
+		body.Children(row)
 	}
+	list.Children(Scroll(&st.scroll).FitWindow(8).Children(body))
 	// The open submenu floats to the right of its entry.
 	if sub >= 0 && sub < len(items) && rows[sub] != nil {
 		child := st.child(sub)
