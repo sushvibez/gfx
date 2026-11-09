@@ -191,6 +191,11 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 				}
 				switch {
 				case len(items[i].Sub) > 0 && st.sub.Get() != i+1:
+					// Opened fresh: nothing highlighted, no sub-submenu
+					// left open from an earlier visit.
+					c := st.child(i)
+					c.sub.Set(0)
+					c.hl.Set(0)
 					st.sub.Set(i + 1)
 				case len(items[i].Sub) == 0 && st.sub.Get() != 0:
 					st.sub.Set(0)
