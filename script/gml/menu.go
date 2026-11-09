@@ -10,7 +10,10 @@ package gml
 // or a right-click handler. An Action's `shortcut` shows beside it, and
 // inside a MenuBar it triggers the entry from anywhere in the window.
 
-import "github.com/sushvibez/gfx/ui"
+import (
+	"github.com/sushvibez/gfx/render"
+	"github.com/sushvibez/gfx/ui"
+)
 
 // buildMenuBar renders a MenuBar: the titles, plus the open menu's popup.
 func buildMenuBar(n *node, env *Env, doc *docState) (ui.Element, error) {
@@ -105,7 +108,7 @@ func (doc *docState) menuItems(n *node, env *Env) []ui.MenuItem {
 		case "MenuSeparator":
 			out = append(out, ui.MenuItem{Separator: true})
 		case "Menu":
-			out = append(out, ui.MenuItem{Text: menuTitle(c, env), Sub: doc.menuItems(c, env)})
+			out = append(out, ui.MenuItem{Text: menuTitle(c, env), Sub: doc.menuItems(c, env), Icon: doc.menuIcon(c, env)})
 		case "Action", "MenuItem":
 			out = append(out, doc.menuEntry(c, env))
 		case "Repeater", "Instantiator":
@@ -125,7 +128,7 @@ func (doc *docState) menuItems(n *node, env *Env) []ui.MenuItem {
 				case "MenuSeparator":
 					out = append(out, ui.MenuItem{Separator: true})
 				case "Menu":
-					out = append(out, ui.MenuItem{Text: menuTitle(p.n, env), Sub: doc.menuItems(p.n, env)})
+					out = append(out, ui.MenuItem{Text: menuTitle(p.n, env), Sub: doc.menuItems(p.n, env), Icon: doc.menuIcon(p.n, env)})
 				}
 				restore()
 			}
@@ -161,6 +164,10 @@ func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 				} else if cs := keyCombosOf(v); len(cs) > 0 {
 					it.Shortcut = shortcutText(cs[0])
 				}
+			}
+		case "icon.source":
+			if v, err := a.expr.eval(env); err == nil {
+				it.Icon = doc.svgFor(str(v))
 			}
 		case "checkable":
 			if b, err := attrBool(a, env); err == nil {
@@ -375,3 +382,15 @@ func menuPos(n *node, env *Env) (float32, float32) {
 
 // basicMenuBarHeight is Qt's Basic MenuBar height, which ui.MenuBar draws.
 const basicMenuBarHeight = 40
+
+// menuIcon is a Menu's (or an entry's) icon.source, or nil.
+func (doc *docState) menuIcon(n *node, env *Env) *render.SVG {
+	for _, a := range n.attrs {
+		if a.name == "icon.source" && a.expr != nil {
+			if v, err := a.expr.eval(env); err == nil {
+				return doc.svgFor(str(v))
+			}
+		}
+	}
+	return nil
+}

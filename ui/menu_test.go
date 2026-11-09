@@ -110,3 +110,44 @@ func TestMenuActionGroup(t *testing.T) {
 		t.Error("a non-exclusive group's entry did not toggle")
 	}
 }
+
+// Hovering an entry highlights it and opens its submenu; hovering another
+// moves the highlight and closes the submenu.
+func TestMenuHoverOpensSubmenu(t *testing.T) {
+	var st MenuState
+	st.Open()
+	items := []MenuItem{
+		{Text: "Shapes", Sub: []MenuItem{{Text: "Box"}}},
+		{Text: "Undo"},
+	}
+	var panel *DivEl
+	u := New(nil, nil, func() Element { panel = MenuPanel(&st, items, nil); return Div().Children(panel) })
+	u.Layout(400, 300)
+	var rows []Rect
+	var walk func(Element)
+	walk = func(e Element) {
+		for _, c := range Children(e) {
+			if txt, ok := TextOf(c); ok && (txt == "Shapes" || txt == "Undo") {
+				rows = append(rows, Bounds(e))
+			}
+			walk(c)
+		}
+	}
+	walk(panel)
+	if len(rows) != 2 {
+		t.Fatalf("rows %v", rows)
+	}
+	hover := func(r Rect) {
+		u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: r.X + 3, Y: r.Y + r.H/2}})
+		u.Layout(400, 300)
+		u.Layout(400, 300)
+	}
+	hover(rows[0])
+	if st.sub.Get() != 1 || st.hl.Get() != 1 {
+		t.Fatalf("hover on Shapes: sub %d hl %d", st.sub.Get(), st.hl.Get())
+	}
+	hover(rows[1])
+	if st.sub.Get() != 0 || st.hl.Get() != 2 {
+		t.Fatalf("hover on Undo: sub %d hl %d", st.sub.Get(), st.hl.Get())
+	}
+}

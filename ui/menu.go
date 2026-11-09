@@ -1,8 +1,12 @@
 package ui
 
 import (
+	"fmt"
+
 	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/core"
+	"github.com/sushvibez/gfx/render"
+	"github.com/sushvibez/gfx/ui/icons"
 )
 
 // Menus (QML's Menu, MenuItem, MenuSeparator, MenuBar): a MenuPanel is the
@@ -23,6 +27,8 @@ type MenuItem struct {
 	Separator bool       // a dividing line; the other fields are unused
 	Sub       []MenuItem // a submenu, opened to the right
 	Shortcut  string     // shown on the right ("Ctrl+S"); see DivEl.Shortcut to make it work
+	// Icon is drawn before the text (QML's icon.source), tinted with it.
+	Icon *render.SVG
 	// Global marks a Shortcut meant to work from anywhere in the window (an
 	// Action's, in QML): a host wires such entries with DivEl.Shortcut, and
 	// leaves the rest as text, which their own key handling backs.
@@ -98,6 +104,10 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 		FocusBorder(1, tm.MenuBorder)
 	list.Role(RoleMenu, "")
 	hl, sub := st.hl.Get()-1, st.sub.Get()-1
+	iconPx := float32(16)
+	if st.TextPx > 0 {
+		iconPx = float32(st.TextPx) + 2
+	}
 	// Entry text at the menu's size, if it has one.
 	text := func(s string, c RGBA) *TextEl {
 		t := Text(s, c)
@@ -148,11 +158,20 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 			}
 			label = mark + label
 		}
-		row := Div().Row().ItemsCenter().PadXY(10, 6).Rounded(4).Gap(16).
-			Children(text(label, c))
+		// The entry: its icon (if any) and text, then a submenu's chevron
+		// or the shortcut.
+		var lead Element = text(label, c)
+		if it.Icon != nil {
+			lead = Div().Row().ItemsCenter().Gap(8).Children(SVG(it.Icon, iconPx, iconPx).Tint(c), lead)
+		}
+		row := Div().Row().ItemsCenter().PadXY(10, 6).Rounded(4).Gap(16).Children(lead)
 		switch {
 		case len(it.Sub) > 0:
-			row.Children(Div().Grow(), text(">", c))
+			if chev, err := icons.Parse("chevR", hexOf(c)); err == nil {
+				row.Children(Div().Grow(), SVG(chev, iconPx*0.8, iconPx*0.8))
+			} else {
+				row.Children(Div().Grow(), text("›", c))
+			}
 		case it.Shortcut != "":
 			row.Children(Div().Grow(), text(it.Shortcut, tm.MenuDim))
 		}
@@ -161,6 +180,22 @@ func MenuPanel(st *MenuState, items []MenuItem, onClose func()) *DivEl {
 		}
 		if !it.Disabled {
 			i := i
+			// Hovering moves the highlight here, and opens this row's
+			// submenu or closes another's, as a desktop menu does.
+			row.OnHoverChanged(func(on bool) {
+				if !on {
+					return
+				}
+				if st.hl.Get() != i+1 {
+					st.hl.Set(i + 1)
+				}
+				switch {
+				case len(items[i].Sub) > 0 && st.sub.Get() != i+1:
+					st.sub.Set(i + 1)
+				case len(items[i].Sub) == 0 && st.sub.Get() != 0:
+					st.sub.Set(0)
+				}
+			})
 			row.HoverBg(tm.MenuHover).OnClick(func() {
 				if len(items[i].Sub) > 0 && st.sub.Get() == i+1 {
 					st.sub.Set(0) // a second click folds the submenu
@@ -311,4 +346,10 @@ func MenuBar(st *MenuBarState, menus []MenuBarMenu) *DivEl {
 		bar.Children(Overlay(panel, 0, 0).AnchorBelow(titles[open], 0).OnClickOutside(closeAll))
 	}
 	return bar
+}
+
+// hexOf is a colour as "#rrggbb" (for an icon's tint).
+func hexOf(c RGBA) string {
+	b := func(v float32) int { return int(min(max(v, 0), 1)*255 + 0.5) }
+	return fmt.Sprintf("#%02x%02x%02x", b(c.R), b(c.G), b(c.B))
 }
