@@ -98,9 +98,11 @@ type DivEl struct {
 	// Pointer gestures (pointer.go): double-click, press-and-hold, wheel,
 	// hover position.
 	dblFn, holdFn func()
-	wheelFn       func(dx, dy float32) bool
-	hoverMoveFn   func(x, y float32)
-	children      []Element
+	// secFn runs on a secondary (right) button click (OnSecondaryClick).
+	secFn       func()
+	wheelFn     func(dx, dy float32) bool
+	hoverMoveFn func(x, y float32)
+	children    []Element
 
 	rect Rect // assigned by layout
 	// measure memo (see measure)

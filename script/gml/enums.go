@@ -164,6 +164,12 @@ func registerEnums(vars map[string]any) {
 		"PointingHandCursor": qtCursorPointingHand,
 		"SplitHCursor":       qtCursorSplitH,
 		"SplitVCursor":       qtCursorSplitV,
+		// Qt::MouseButton (MouseArea.acceptedButtons, mouse.button)
+		"NoButton":     float64(0),
+		"LeftButton":   float64(qtLeftButton),
+		"RightButton":  float64(qtRightButton),
+		"MiddleButton": float64(4),
+		"AllButtons":   float64(0x07ffffff),
 	}
 	mergeEnum(qtNS, align)
 	registerQtFuncs(qtNS)
@@ -764,3 +770,9 @@ func localeFor(name string) localeData {
 	}
 	return locales["en_US"]
 }
+
+// Qt::MouseButton bits.
+const (
+	qtLeftButton  = 1
+	qtRightButton = 2
+)

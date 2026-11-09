@@ -123,3 +123,38 @@ func (g *gestureState) clicked(el Element) {
 func (g *gestureState) holding(u *UI) bool {
 	return g.holdEl != nil && !g.holdFired && u.ctx.MousePressed
 }
+
+// OnSecondaryClick runs fn when a secondary (right) button press and
+// release both land on the element — MouseArea's onClicked with
+// acceptedButtons including Qt.RightButton, or a context menu. The
+// element becomes a hit target, as for OnClick.
+func (d *DivEl) OnSecondaryClick(fn func()) *DivEl {
+	d.secFn = fn
+	if d.click == nil {
+		d.click = func() {}
+	}
+	return d
+}
+
+// secondaryTarget is the element under (x, y) that takes secondary
+// clicks, or nil.
+func (u *UI) secondaryTarget(x, y float32) *DivEl {
+	if d, ok := u.hitTest(x, y).(*DivEl); ok && d.secFn != nil {
+		return d
+	}
+	return nil
+}
+
+// SecondaryClick delivers a secondary-button press and release at (x, y)
+// to the element there, reporting whether one took it. (Synthetic input;
+// real streams go through Mouse.)
+func (u *UI) SecondaryClick(x, y float32) bool {
+	if u.root == nil {
+		return false
+	}
+	if d := u.secondaryTarget(x, y); d != nil {
+		d.secFn()
+		return true
+	}
+	return false
+}

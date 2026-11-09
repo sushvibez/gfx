@@ -99,16 +99,13 @@ func (doc *docState) wireMouseGestures(n *node, d *ui.DivEl, env *Env, g *mouseG
 // { … }`, `function(ev) { … }` — is called with the object instead, under
 // whatever name it declares.
 func runEvent(run func([]stmt, string), env *Env, stmts []stmt, what, name string, obj any) {
+	// A function handler (`(mouse) => { … }`) is called with the event —
+	// through run, like any handler, so it closes over the scope run
+	// binds (a Repeater delegate's modelData and ids, the captured parent).
 	if len(stmts) == 1 {
 		if es, ok := stmts[0].(*exprStmt); ok {
 			if fe, ok := es.e.(*funcExpr); ok {
-				fn, err := fe.eval(env)
-				if err == nil {
-					if _, err := callAny(fn, []any{obj}); err != nil {
-						logf("gml: %s: %v", what, err)
-					}
-					return
-				}
+				stmts = []stmt{&exprStmt{e: &callExpr{callee: fe, args: []expr{&identExpr{name: name}}}}}
 			}
 		}
 	}

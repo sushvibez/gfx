@@ -22,6 +22,7 @@ type UI struct {
 	view        func() Element
 	root        Element
 	pressTarget Rect
+	secPress    Rect // where a secondary-button press landed on a taker (empty: none)
 	// laidOut: the current root was built and laid out for the current
 	// window size and not yet painted — Frame can paint it as is.
 	laidOut bool
@@ -484,6 +485,13 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 				u.dragX, u.dragY = m.X, m.Y
 			}
 		case app.MouseDown:
+			if m.Button == 3 {
+				u.secPress = Rect{}
+				if d := u.secondaryTarget(m.X, m.Y); d != nil {
+					u.secPress = d.rect
+				}
+				continue
+			}
 			if m.Button != 1 {
 				continue
 			}
@@ -589,6 +597,14 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 				}
 			}
 		case app.MouseUp:
+			if m.Button == 3 {
+				// A secondary click: press and release on the same element.
+				if d := u.secondaryTarget(m.X, m.Y); d != nil && u.secPress != (Rect{}) && d.rect == u.secPress {
+					d.secFn()
+				}
+				u.secPress = Rect{}
+				continue
+			}
 			if m.Button != 1 {
 				continue
 			}

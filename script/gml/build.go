@@ -4557,8 +4557,17 @@ func popupStateOf(n *node, env *Env, doc *docState) *popupState {
 			// with a property keeps that property as its state.
 			if r, err := resolveRef(a.expr, env); err == nil {
 				st.open = r
-			} else if b, err := attrBool(a, env); err == nil && b {
-				_ = st.open.set(true)
+			} else if b, err := attrBool(a, env); err == nil {
+				// Any other expression (`visible: page == "units"`) drives
+				// the state on its edges: the popup opens when it turns
+				// true and closes when it turns false. Between edges the
+				// popup's own close (a click outside, Esc) stands, so a
+				// constant `visible: true` opens once and can be dismissed.
+				bound := doc.boolProp(doc.key(n)+"|bound", false)
+				if prev, _ := toBool(bound.get()); b != prev {
+					_ = bound.set(b)
+					_ = st.open.set(b)
+				}
 			}
 		case "modal", "dim":
 			if b, err := attrBool(a, env); err == nil {
@@ -4584,7 +4593,17 @@ func popupStateOf(n *node, env *Env, doc *docState) *popupState {
 			}
 		}
 	}
-	if st.positioned {
+	// Where popup() opened it last (no x/y of its own to say otherwise).
+	atRef := doc.boolProp(doc.key(n)+"|at", false)
+	pxRef := doc.floatProp(doc.key(n)+"|px", 0)
+	pyRef := doc.floatProp(doc.key(n)+"|py", 0)
+	fromPopup := false
+	if at, _ := toBool(atRef.get()); at && !st.positioned {
+		x, _ := toFloat32(pxRef.get())
+		y, _ := toFloat32(pyRef.get())
+		st.px, st.py, st.positioned, fromPopup = x, y, true, true
+	}
+	if st.positioned && !fromPopup {
 		// One coordinate stated, the other defaulted: the default is 0 in
 		// the parent's frame too.
 		if !hasAttr(n, "x") {
@@ -4627,6 +4646,12 @@ func popupStateOf(n *node, env *Env, doc *docState) *popupState {
 				// No point given: at the trigger, as QML opens it at the
 				// pointer — which is over the trigger.
 				st.px, st.py, st.positioned = doc.trigger.X, doc.trigger.Y+doc.trigger.H, true
+			}
+			if st.positioned {
+				// The state is rebuilt every frame: keep where popup() put it.
+				_ = atRef.set(true)
+				_ = pxRef.set(float64(st.px))
+				_ = pyRef.set(float64(st.py))
 			}
 			return openFn(nil)
 		}),
@@ -4974,6 +4999,9 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	var borderDashed bool
 	var borderC ui.RGBA
 	var onClicked, keysPressed, keysReleased []stmt
+	// acceptedButtons: Qt's button mask (Qt.LeftButton when not given).
+	acceptedButtons := qtLeftButton
+	buttonsGiven := false
 	var keysSpecific map[float64][]stmt // Keys.onLeftPressed and friends, by Qt key code
 	var onEntered, onExited, onPressed, onReleased []stmt
 	var gestures mouseGestures // MouseArea's double-click, hold, wheel, position (mousearea.go)
@@ -5159,6 +5187,12 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			d.Gradient(c0, c1, ang*3.14159265/180)
 		case "onClicked":
 			onClicked = a.stmt
+		case "acceptedButtons":
+			if v, err := a.expr.eval(env); err == nil {
+				if f, err := toFloat64(v); err == nil {
+					acceptedButtons, buttonsGiven = int(f), true
+				}
+			}
 		case "Keys.onPressed":
 			keysPressed = a.stmt
 		case "Keys.onReleased":
@@ -5267,7 +5301,7 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 			// MouseArea extras not modeled (drag.* is dragtarget.go):
 			"preventStealing", "onActiveChanged", "onGrabChanged", "onCanceled",
 			"drag.filterChildren", "drag.smoothed",
-			"acceptedButtons", "propagateComposedEvents",
+			"propagateComposedEvents",
 			// Axis limits of the handlers not rewritten to drag.* (a
 			// DragHandler's are: pointerHandlerAsMouseArea):
 			"xAxis.minimum", "xAxis.maximum", "xAxis.enabled",
@@ -5308,15 +5342,31 @@ func boxAttrs(n *node, d *ui.DivEl, env *Env, doc *docState) error {
 	connected := doc.connectedHandler(id, "onClicked", env)
 	if onClicked != nil || connected != nil {
 		run := doc.handlerRunner(env)
-		d.OnClick(func() {
-			doc.noteTrigger(d)
-			if onClicked != nil {
-				run(onClicked, "onClicked")
+		// With acceptedButtons given, the handler gets QML's `mouse` with
+		// the button that clicked (Qt.LeftButton / Qt.RightButton).
+		click := func(button int) func() {
+			return func() {
+				doc.noteTrigger(d)
+				if onClicked != nil {
+					if buttonsGiven {
+						runEvent(run, env, onClicked, "onClicked", "mouse", map[string]any{
+							"x": float64(0), "y": float64(0), "button": float64(button), "buttons": float64(0),
+							"modifiers": float64(0), "wasHeld": false, "accepted": true})
+					} else {
+						run(onClicked, "onClicked")
+					}
+				}
+				if connected != nil {
+					connected()
+				}
 			}
-			if connected != nil {
-				connected()
-			}
-		})
+		}
+		if acceptedButtons&qtLeftButton != 0 {
+			d.OnClick(click(qtLeftButton))
+		}
+		if acceptedButtons&qtRightButton != 0 {
+			d.OnSecondaryClick(click(qtRightButton))
+		}
 	}
 	for _, kn := range navs {
 		d.KeyNav(kn.dir, kn.id)
@@ -7966,6 +8016,10 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 					}
 				}
 			}
+		case "font.pixelSize":
+			if f, err := attrFloat(a, env); err == nil && f > 0 {
+				sizePx = float64(f)
+			}
 		case "echoMode":
 			// TextInput.Password / NoEcho / PasswordEchoOnEdit: what the
 			// field DRAWS. Its value is untouched.
@@ -7991,7 +8045,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			// invalid, so this becomes a predicate on the candidate value.
 			accept = validatorFunc(a, env)
 		case "readOnly", "enabled", "selectByMouse", "wrapMode",
-			"inputMethodHints", "font.pixelSize",
+			"inputMethodHints",
 			"font.pointSize", "font.family", "font.bold", "font.italic",
 			"font.underline", "font.letterSpacing", "horizontalAlignment",
 			"verticalAlignment", "padding", "leftPadding", "rightPadding",
