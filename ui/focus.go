@@ -236,3 +236,8 @@ func (u *UI) keyNav(ev app.KeyEvent) bool {
 // (QML forceActiveFocus() on a TextField) — for code that holds the state
 // rather than the element.
 func (s *InputState) RequestFocus() { s.focusReq = true }
+
+// TextFocused reports whether a text field holds the keyboard: a host's
+// own single-key shortcuts (Delete, F, letters) should leave the keys to
+// it.
+func (u *UI) TextFocused() bool { return u.ctx.focus != nil }
