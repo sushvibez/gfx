@@ -39,7 +39,7 @@ func enterRow(viewKey string, delegate *node, env *Env, doc *docState, row map[s
 	// delegate (onClicked reading modelData) re-bind this row when they fire,
 	// possibly frames later (handlerRunner snapshots the stack).
 	doc.rowScope = append(doc.rowScope, rowBind{row: row, idx: i})
-	restoreScope := declareRowScope(delegate, env, doc, row, viewKey, i)
+	restoreScope := doc.declareRowScopeCached(delegate, env, row, viewKey, i, tracked)
 	return func() {
 		restoreScope()
 		doc.rowScope = doc.rowScope[:len(doc.rowScope)-1]
@@ -96,10 +96,14 @@ func declareRowScope(delegate *node, env *Env, doc *docState, row map[string]any
 		bound = map[string]any{}
 	}
 	popBinds := doc.pushBinds(bound, true)
+	record := doc.declRecord // the cached replay's copy (rowdecl.go)
 	bind := func(name string, v any) {
 		prev, ok := env.vars[name]
 		undo = append(undo, saved{name, prev, ok})
 		env.vars[name] = v
+		if record != nil {
+			*record = append(*record, rowKV{name, v})
+		}
 		if bound != nil {
 			bound[name] = v
 		}

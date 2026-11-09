@@ -283,8 +283,14 @@ of delegate rows moved much further — navdisplay 1087 → 92 µs, chatui
   `sameValue` compares scalars by value, objects by identity then
   `reflect.DeepEqual`. navdisplay 88 → 65 µs, 553 → 385 allocs; the
   other pages are unchanged (it was navdisplay's map-valued property).
-- ▢ **A row that will hit the cache still declares its whole scope**
-  (2026-10-10, measured, not done). On indicators (520 µs, 5 ownStale
+- ✓ **A row that will hit the cache still declares its whole scope**
+  (done 2026-11-09, `rowdecl.go`: as designed below — the declaration's
+  reads tracked per row, its bindings recorded and replayed while they
+  are fresh; `GFX_NO_ROW_DECL_CACHE=1` declares in full. indicators 339
+  → 322 µs and 1451 → 1088 allocs a frame, chatui 126 → 106 µs and 1081
+  → 718, navdisplay 38 → 33 µs and 385 → 253; the corpus renders the
+  same with it off and on, the patch verifier's 335 reports likewise.)
+  (2026-10-10, measured.) On indicators (520 µs, 5 ownStale
   rebuilds a frame) `enterRow` → `declareRowScope` is 15 % of the frame
   and `walkRowNodesParent` another 9 %: every row of a Repeater whose
   container is rebuilding walks its delegate, seeds its elemObjects,

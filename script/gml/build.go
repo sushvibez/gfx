@@ -1925,9 +1925,15 @@ type docState struct {
 	// `index`/`modelData`/role identifiers still resolve when the handler
 	// runs — bindRow's build-time scope is long gone by then.
 	rowScope []rowBind
-	hpRefs   ccol[hoverPress]             // per element key (see hoverPressRefs)
-	instToks ccol[*core.Property[uint64]] // component instances' use-site tokens (see instToken)
-	rowToks  ccol[*core.Property[uint64]] // delegate rows' tokens (see rowToken)
+	// rowDecls are the rows' cached scope declarations by row prefix,
+	// declRecord the bindings list a declaration in progress records into,
+	// rowDeclHits the declarations served from cache (rowdecl.go).
+	rowDecls    map[string]*rowDecl
+	declRecord  *[]rowKV
+	rowDeclHits int
+	hpRefs      ccol[hoverPress]             // per element key (see hoverPressRefs)
+	instToks    ccol[*core.Property[uint64]] // component instances' use-site tokens (see instToken)
+	rowToks     ccol[*core.Property[uint64]] // delegate rows' tokens (see rowToken)
 	// Subtree patching (see noteSlot, patch): the entry build() last
 	// produced, the ancestors' scope bindings in force, and a count.
 	lastEntry *subtreeEntry
@@ -3052,6 +3058,7 @@ func (doc *docState) invalidateCache() {
 	doc.cachedEl = nil
 	doc.subtrees.clear()
 	doc.reg.sweepAll = true // the dropped entries' elements: see nextRegistryFrame
+	clear(doc.rowDecls)     // the rows declare in full again (rowdecl.go)
 	clear(doc.propReads)
 	clear(doc.tplObjs) // the markup may have changed what a control exposes
 }
