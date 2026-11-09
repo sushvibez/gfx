@@ -7908,7 +7908,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var placeholder, initialText string
 	var hasInitial, wantFocus bool
 	var navs []keyNav // KeyNavigation.* (focus.go)
-	var onAccepted []stmt
+	var onAccepted, onChanged, onFinished []stmt
 	var mask string // inputMask
 	// What the field draws instead of its value (echoMode), how long it may
 	// get, and what it will accept at all.
@@ -7935,6 +7935,10 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			// Enter on a field is its accept, however it is spelled.
 			"Keys.onReturnPressed", "Keys.onEnterPressed":
 			onAccepted = append(onAccepted, a.stmt...)
+		case "onTextChanged", "onTextEdited":
+			onChanged = append(onChanged, a.stmt...)
+		case "onEditingFinished":
+			onFinished = append(onFinished, a.stmt...)
 		case "visible":
 			if b, err := attrBool(a, env); err == nil && !b {
 				return ui.Div(), nil // hidden: no space, no hits
@@ -8058,7 +8062,6 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			"verticalAlignment", "padding", "leftPadding", "rightPadding",
 			"topPadding", "bottomPadding", "activeFocusOnTab",
 			"clip", "textFormat", "selectedTextColor", "selectionColor",
-			"onTextEdited", "onEditingFinished", "onTextChanged",
 			// sizing/appearance the input element owns itself:
 			"height", "implicitHeight", "implicitWidth", "opacity",
 			"z", "scale", "cursorVisible", "persistentSelection",
@@ -8104,6 +8107,32 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	// onAccepted fires on Enter with `text` bound to the field's content
 	// (QML exposes the field's text property; a plain scope binding keeps
 	// delegate row scope working too via handlerRunner).
+	// onTextChanged runs after each edit and onEditingFinished when focus
+	// leaves the field, with `text` bound; Enter also finishes editing, as
+	// in QML.
+	withText := func(stmts []stmt, what string) func(string) {
+		if stmts == nil {
+			return nil
+		}
+		run := doc.handlerRunner(env)
+		return func(txt string) {
+			prev, had := env.vars["text"]
+			env.vars["text"] = txt
+			run(stmts, what)
+			if had {
+				env.vars["text"] = prev
+			} else {
+				delete(env.vars, "text")
+			}
+		}
+	}
+	state.OnEdit(withText(onChanged, "onTextChanged"))
+	state.OnBlur(withText(onFinished, "onEditingFinished"))
+	if onFinished != nil && onAccepted == nil {
+		onAccepted = onFinished
+	} else if onFinished != nil {
+		onAccepted = append(append([]stmt(nil), onAccepted...), onFinished...)
+	}
 	if onAccepted != nil {
 		run := doc.handlerRunner(env)
 		state.OnSubmit(func(txt string) {

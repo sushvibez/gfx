@@ -67,6 +67,8 @@ type InputState struct {
 	caret    int          // active end, rune index
 	anchor   int          // selection anchor; anchor == caret means no selection
 	submit   func(string) // Enter handler (QML TextField.onAccepted)
+	onEdit   func(string) // each committed change (QML onTextChanged / onTextEdited)
+	onBlur   func(string) // focus left the field (QML onEditingFinished)
 	focused  bool         // holds keyboard focus (QML activeFocus)
 	focusReq bool         // RequestFocus: take focus at the next layout
 	// accept vets a candidate value BEFORE it is committed (QML's
@@ -130,6 +132,9 @@ func (s *InputState) commit(text string, caretTo int) bool {
 	s.Text.Set(text)
 	s.caret = caretTo
 	s.anchor = caretTo
+	if s.onEdit != nil {
+		s.onEdit(text)
+	}
 	return true
 }
 
@@ -141,6 +146,14 @@ func (s *InputState) HasFocus() bool { return s.focused }
 // hosts and tests that drive an input directly (QML forceActiveFocus on
 // a detached item). Inside a UI, focus moves through the Context.
 func (s *InputState) SetFocused(on bool) { s.focused = on }
+
+// OnEdit registers fn to run with the new text after each edit the user
+// makes (QML TextField.onTextEdited).
+func (s *InputState) OnEdit(fn func(string)) { s.onEdit = fn }
+
+// OnBlur registers fn to run with the text when the field loses focus
+// (with Enter, QML's TextField.onEditingFinished).
+func (s *InputState) OnBlur(fn func(string)) { s.onBlur = fn }
 
 // OnSubmit registers fn to run with the field's text when Enter is
 // pressed (QML TextField.onAccepted).

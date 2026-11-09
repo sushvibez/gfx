@@ -299,6 +299,9 @@ func (c *Context) setFocus(s *InputState) {
 	}
 	if c.focus != nil {
 		c.focus.focused = false
+		if c.focus.onBlur != nil {
+			c.focus.onBlur(c.focus.Text.Get())
+		}
 	}
 	c.focus = s
 	if s != nil {

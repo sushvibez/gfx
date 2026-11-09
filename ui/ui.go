@@ -203,12 +203,15 @@ func (u *UI) build(width, height float32) {
 		}
 	}
 	u.resolveFocusRequests() // RequestFocus, OnFocusChange (focus.go)
-	u.ctx.setFocus(nil)
+	// One change, straight to the field that has focus: clearing first
+	// would read as the field losing focus (OnBlur) every layout.
+	var focusIn *InputState
 	if el := u.focusedEl(); el != nil {
 		if in, ok := el.(*InputEl); ok {
-			u.ctx.setFocus(in.state)
+			focusIn = in.state
 		}
 	}
+	u.ctx.setFocus(focusIn)
 	// Mirror focus state into the paint context so elements with custom
 	// focus styling (FocusBorder/FocusVisibleBorder) can paint it.
 	u.ctx.curFocus = u.focusIdx
