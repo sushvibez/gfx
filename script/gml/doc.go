@@ -219,7 +219,7 @@ func (d *Document) View() func() ui.Element {
 		d.doc.pageTheme.Push(pageTheme(pageDark))
 		d.doc.beginBuild()
 		el, err := build(rootForBuild(d.root), d.env, d.doc)
-		d.doc.settleRegistry()
+		d.doc.endBuild()
 		d.doc.verifyRegistry()
 		d.doc.pageTheme.Pop()
 		if err != nil {
@@ -281,7 +281,7 @@ func (d *Document) View() func() ui.Element {
 				d.doc.keySeen.clear()
 				d.doc.beginBuild()
 				el2, err := build(rootForBuild(d.root), d.env, d.doc)
-				d.doc.settleRegistry()
+				d.doc.endBuild()
 				if err == nil && el2 != nil {
 					el = el2
 				}

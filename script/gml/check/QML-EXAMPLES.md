@@ -71,6 +71,19 @@ a plain Text with no size anywhere is now Qt's 13 px application font
 (`qtAppFontPx`; drawers 1.5 → 1.4). Still different there: the family
 (Qt's default face, not the page's).
 
+pfd scores 2.0 or 3.5 from run to run, and the difference is the
+REFERENCE: some of Qt's offscreen renders grab before the Speed &
+Altitude card's Canvas tapes have painted, leaving the card empty. Ours
+draws the tapes either way; read pfd from the pair image, not the score.
+
+Key collisions (2026-11-09, `GFX_REG_COLLIDE=1` reports them): items
+written on one line (`Row { Rectangle {…} Label {…} }`, graphs' legends)
+shared their line's key, and a SplitView's handles shared the delegate's;
+both now key apart (`node.ord`, a prefix per handle). What the detector
+still sees on cards2d5, diorama, multiplane and spritestack is a patch
+rebuilding an item and a fuller rebuild redoing it in the same build — a
+replacement, not two items (and wasted work worth a look).
+
 ## Status (2026-07)
 
 **65 / 65 pages render.** No banners, crashes or timeouts. Pages using

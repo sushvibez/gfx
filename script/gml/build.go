@@ -1456,6 +1456,7 @@ func buildFresh(n *node, env *Env, doc *docState) (built ui.Element, buildErr er
 	// texture and is composited blurred (see layer.go).
 	el = wrapLayer(n, el, env, doc)
 	// Record for next frame's geometry refs (parent / id.width).
+	doc.noteCollision(n, el)
 	doc.registerElem(doc.keyID(n), el)
 	doc.noteIDKey(n, doc.keyID(n))
 	return el, nil
@@ -2969,6 +2970,9 @@ func elemKey(n *node) string {
 		n.ekey = id
 	} else {
 		n.ekey = "__el" + strconv.Itoa(n.line)
+		if n.ord > 0 { // not the first item on its line
+			n.ekey += "_" + strconv.Itoa(n.ord)
+		}
 	}
 	return n.ekey
 }

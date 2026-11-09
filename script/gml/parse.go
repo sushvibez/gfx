@@ -12,6 +12,10 @@ import (
 type node struct {
 	typeName string
 	line     int
+	// ord numbers the elements that start on the same source line (0 for
+	// the first), so `Row { Rectangle {} Label {} }` written on one line
+	// gives its three items three keys (elemKey).
+	ord      int
 	attrs    []attr
 	children []*node
 	props    []propDecl   // `property int count: 0` declarations
@@ -204,6 +208,7 @@ type elemExpr struct{ n *node }
 
 type parser struct {
 	toks      []token
+	lineSeen  map[int]int       // elements started per source line (node.ord)
 	imports   []string          // module names from file-header import lines
 	nsAliases map[string]string // `import M as A` -> A: M
 	pos       int
@@ -288,6 +293,11 @@ func (p *parser) element() (*node, error) {
 		return nil, fmt.Errorf("gml:%d: expected element name, got %q", p.cur().line, p.cur().text)
 	}
 	n := &node{typeName: p.cur().text, line: p.cur().line}
+	if p.lineSeen == nil {
+		p.lineSeen = map[int]int{}
+	}
+	n.ord = p.lineSeen[n.line]
+	p.lineSeen[n.line]++
 	p.pos++
 	// Namespaced type: `T.Button { ... }` (import ... as T).
 	for p.cur().kind == tokPunct && p.cur().text == "." && p.toks[p.pos+1].kind == tokIdent {

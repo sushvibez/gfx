@@ -10,6 +10,7 @@ package gml
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/sushvibez/gfx/ui"
 )
@@ -88,7 +89,13 @@ func buildSplitView(n *node, env *Env, doc *docState) (ui.Element, error) {
 	}
 	o := ui.SplitOpts{Vertical: vertical}
 	if handle != nil {
-		o.Handle = func(_ int, hovered, pressed bool) ui.Element {
+		o.Handle = func(i int, hovered, pressed bool) ui.Element {
+			// One delegate, a handle per pair of panes: each builds under
+			// its own prefix, as a delegate row does, or every handle
+			// would share one key (and one registry slot and cache entry).
+			prev := doc.rowPrefix
+			doc.rowPrefix = key + "#handle" + strconv.Itoa(i) + "/"
+			defer func() { doc.rowPrefix = prev }()
 			return buildSplitHandle(handle, env, doc, hovered, pressed)
 		}
 	}

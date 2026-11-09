@@ -57,6 +57,12 @@ type regState struct {
 	// sweepAll: invalidateCache dropped every entry; replayAll: this frame
 	// rebuilds the registry from nothing (every hit replays).
 	sweepAll, replayAll bool
+	// inBuild: a top-level build is running (not a layout pass).
+	inBuild bool
+	// patchRegs: keys a patch registered in build patchBuild (the
+	// collision report, GFX_REG_COLLIDE).
+	patchRegs  map[keyID]bool
+	patchBuild uint32
 }
 
 // prevReg reads the registry as it was when the frame began.
@@ -145,9 +151,16 @@ func (doc *docState) retire(e *subtreeEntry) {
 // is live for this build's eviction pass.
 func (doc *docState) beginBuild() {
 	doc.reg.build++
+	doc.reg.inBuild = true
 	if regTraceEnt != "" {
 		fmt.Fprintln(os.Stderr, "gml: reg build", doc.reg.build, "frame", doc.reg.frame)
 	}
+}
+
+// endBuild closes a top-level build: its evictions run now.
+func (doc *docState) endBuild() {
+	doc.reg.inBuild = false
+	doc.settleRegistry()
 }
 
 // settleRegistry evicts the registrations of the entries retired so far.
@@ -345,7 +358,7 @@ func (doc *docState) traceReg(op string, k keyID, el ui.Element) {
 	if regTrace == "" || !strings.Contains(doc.keyStr(k), regTrace) {
 		return
 	}
-	pc := make([]uintptr, 6)
+	pc := make([]uintptr, 16)
 	n := runtime.Callers(3, pc)
 	frames := runtime.CallersFrames(pc[:n])
 	var who []string
@@ -356,5 +369,36 @@ func (doc *docState) traceReg(op string, k keyID, el ui.Element) {
 			break
 		}
 	}
-	fmt.Fprintf(os.Stderr, "gml: reg %s %s %T@%p frame=%d build=%d via %s\n", op, doc.keyStr(k), el, el, doc.reg.frame, doc.reg.build, strings.Join(who, "<"))
+	fmt.Fprintf(os.Stderr, "gml: reg %s %s %T@%p frame=%d build=%d patching=%d inBuild=%v via %s\n", op, doc.keyStr(k), el, el, doc.reg.frame, doc.reg.build, doc.patching, doc.reg.inBuild, strings.Join(who, "<"))
+}
+
+// regCollide (GFX_REG_COLLIDE=1) reports a build registering a second,
+// different element under a key it registered already: two items sharing
+// one key, whose geometry reads are then ambiguous.
+var regCollide = os.Getenv("GFX_REG_COLLIDE") != ""
+
+func (doc *docState) noteCollision(n *node, el ui.Element) {
+	if !regCollide || !doc.reg.inBuild || len(doc.capturing) > 0 || noSubtreeCache {
+		return
+	}
+	k := doc.keyID(n)
+	r := &doc.reg
+	// A patch rebuilding an item, and then a fuller rebuild of it in the
+	// same build (a patch that gave up, an outer patch redoing an inner
+	// one's slot), REPLACE it: not two items.
+	if r.patchRegs == nil || r.patchBuild != r.build {
+		r.patchRegs, r.patchBuild = map[keyID]bool{}, r.build
+	}
+	if doc.patching > 0 {
+		r.patchRegs[k] = true
+		return
+	}
+	if r.patchRegs[k] {
+		return
+	}
+	if int(k) < len(r.atBuild) && r.atBuild[k] == r.build && r.atFrame[k] == r.frame {
+		if cur := doc.elems.get(k); cur != nil && cur != el {
+			fmt.Fprintf(os.Stderr, "gml: collide %s %s line %d rows=%d patching=%d\n", doc.keyStr(k), n.typeName, n.line, doc.rowDepth, doc.patching)
+		}
+	}
 }
