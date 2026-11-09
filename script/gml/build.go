@@ -6067,6 +6067,7 @@ func buildTextItem(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if err != nil {
 				return nil, err
 			}
+			v = shown(v)
 			s = str(v)
 		case "color":
 			c, err := attrColor(a, env)
@@ -6472,6 +6473,7 @@ func buildButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if err != nil {
 				return nil, err
 			}
+			v = shown(v)
 			label = str(v)
 		case "icon.source":
 			if v, err := a.expr.eval(env); err == nil {
@@ -6644,6 +6646,7 @@ func buildCheckbox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if err != nil {
 				return nil, err
 			}
+			v = shown(v)
 			label = str(v)
 		case "checked":
 			ref, _ = boolBinding(doc, n, a, env)
@@ -7073,6 +7076,7 @@ func buildSwitch(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if err != nil {
 				return nil, err
 			}
+			v = shown(v)
 			label = str(v)
 		case "checked":
 			ref, on = boolBinding(doc, n, a, env)
@@ -7125,6 +7129,7 @@ func buildRadioButton(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if err != nil {
 				return nil, err
 			}
+			v = shown(v)
 			label = str(v)
 		case "checked":
 			ref, _ = boolBinding(doc, n, a, env)
@@ -8009,7 +8014,7 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			radius = f
 		case "placeholderText":
 			if v, err := a.expr.eval(env); err == nil {
-				placeholder = str(v)
+				placeholder = str(shown(v))
 			}
 		case "text":
 			if v, err := a.expr.eval(env); err == nil {

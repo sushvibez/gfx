@@ -47,3 +47,35 @@ func TestTextFieldChangedAndFinished(t *testing.T) {
 		t.Fatalf("onEditingFinished saw %q, want ab", got)
 	}
 }
+
+// The catalogue translates shown text by convention (a Text's whole
+// string); qsTr stays a no-op returning its text, as in plain QML.
+func TestTranslations(t *testing.T) {
+	src := `Item { property string a: qsTr("Items"); property string b: qsTr("History")
+    Text { id: label; text: "Items" } }`
+	SetTranslations(map[string]string{"Items": "Elemente"})
+	defer SetTranslations(nil)
+	env := NewEnv()
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.View()
+	if a, b := str(env.vars["a"].(Ref).get()), str(env.vars["b"].(Ref).get()); a != "Items" || b != "History" {
+		t.Fatalf("qsTr gave %q, %q", a, b)
+	}
+	var texts []string
+	var walk func(ui.Element)
+	walk = func(e ui.Element) {
+		if s, ok := ui.TextOf(e); ok {
+			texts = append(texts, s)
+		}
+		for _, c := range ui.Children(e) {
+			walk(c)
+		}
+	}
+	walk(d.View()())
+	if len(texts) != 1 || texts[0] != "Elemente" {
+		t.Fatalf("shown text %v, want [Elemente]", texts)
+	}
+}

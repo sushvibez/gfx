@@ -2,6 +2,7 @@ package gml
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/sushvibez/gfx/core"
@@ -2681,4 +2683,41 @@ func sameObject(a, b any) bool {
 		return va.Equal(vb)
 	}
 	return false
+}
+
+// translations is the catalogue shown text is looked up in (shown):
+// source text → the text to show.
+var translations atomic.Pointer[map[string]string]
+
+// SetTranslations installs the catalogue: any text an element shows (a
+// Text's, a button's, a menu entry or title, a placeholder) that matches a
+// key of m exactly shows as its value — translation by convention, with no
+// markup change. qsTr and its family stay no-ops returning their text, so
+// existing QML runs as is. nil removes it. Safe to call while documents run; a rebuild shows the new
+// text.
+func SetTranslations(m map[string]string) {
+	if m == nil {
+		translations.Store(nil)
+	} else {
+		c := maps.Clone(m)
+		translations.Store(&c)
+	}
+	core.BumpRevision()
+}
+
+// shown is a displayed string as the catalogue has it (SetTranslations):
+// the whole text, matched exactly — so a page's own literals translate
+// with no qsTr, while text built from pieces, and literals compared in
+// logic, stay as they are. Non-strings pass through.
+func shown(v any) any {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return v
+	}
+	if tr := translations.Load(); tr != nil {
+		if t, ok := (*tr)[s]; ok && t != "" {
+			return t
+		}
+	}
+	return v
 }

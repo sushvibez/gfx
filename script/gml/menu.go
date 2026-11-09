@@ -92,7 +92,7 @@ func menuTitle(n *node, env *Env) string {
 	for _, a := range n.attrs {
 		if a.name == "title" {
 			if v, err := a.expr.eval(env); err == nil {
-				return str(v)
+				return str(shown(v))
 			}
 		}
 	}
@@ -155,7 +155,7 @@ func (doc *docState) menuEntry(n *node, env *Env) ui.MenuItem {
 		switch a.name {
 		case "text":
 			if v, err := a.expr.eval(env); err == nil {
-				it.Text = str(v)
+				it.Text = str(shown(v))
 			}
 		case "shortcut":
 			if v, err := a.expr.eval(env); err == nil {
