@@ -22,14 +22,31 @@ var patchVerify = os.Getenv("GFX_PATCH_VERIFY") != ""
 var patchVerifyAll = os.Getenv("GFX_PATCH_VERIFY") == "all"
 
 func (doc *docState) verifyPatched(patched ui.Element, root *node, env *Env) {
+	// The fresh build writes the registry (and its overlay and loose
+	// lists, registry.go); all of it goes back as it was.
 	savedElems := append([]ui.Element(nil), doc.elems.v...)
+	savedOvEl := append([]ui.Element(nil), doc.reg.ovEl...)
+	savedOvFrame := append([]uint32(nil), doc.reg.ovFrame...)
+	savedAtBuild := append([]uint32(nil), doc.reg.atBuild...)
+	savedAtFrame := append([]uint32(nil), doc.reg.atFrame...)
+	savedLoose, savedLooseEnts := len(doc.reg.loose), len(doc.reg.looseEnts)
 	savedSeen := append([]int(nil), doc.keySeen.v...)
 	savedLast := doc.lastEntry
 	noSubtreeCache = true
 	doc.keySeen.clear()
 	fresh, err := build(root, env, doc)
 	noSubtreeCache = false
+	clear(doc.elems.v[min(len(savedElems), len(doc.elems.v)):])
 	copy(doc.elems.v, savedElems)
+	clear(doc.reg.ovFrame[min(len(savedOvFrame), len(doc.reg.ovFrame)):])
+	copy(doc.reg.ovEl, savedOvEl)
+	copy(doc.reg.ovFrame, savedOvFrame)
+	clear(doc.reg.atBuild[min(len(savedAtBuild), len(doc.reg.atBuild)):])
+	clear(doc.reg.atFrame[min(len(savedAtFrame), len(doc.reg.atFrame)):])
+	copy(doc.reg.atBuild, savedAtBuild)
+	copy(doc.reg.atFrame, savedAtFrame)
+	doc.reg.loose = doc.reg.loose[:savedLoose]
+	doc.reg.looseEnts = doc.reg.looseEnts[:savedLooseEnts]
 	copy(doc.keySeen.v, savedSeen)
 	doc.lastEntry = savedLast
 	if err != nil {

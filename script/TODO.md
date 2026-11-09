@@ -307,17 +307,21 @@ of delegate rows moved much further — navdisplay 1087 → 92 µs, chatui
   ref, a focus request) invalidates the cache, so a replay now stamps
   only while a request is pending. indicators 484 → 357 µs, chatui
   168 → 139, buttons 102 → 94, navdisplay 41 → 40.
-  ▢ The walk itself (5.6 % now, one `elems.set` per element under a
-  hit) goes away with a persistent registry: keep `elems` across frames
-  with a per-key frame stamp, stamp only the entries built or patched
-  this frame, and let a hit mark its entry live (O(1)); a lookup accepts
-  a key whose own stamp is current or whose owning entry (each
-  registration remembers it) is reachable from a live entry through
-  `subs` that were not replaced — which needs `subs` to drop a replaced
-  child when a patch rebuilds it, so a stale element under a patched
-  parent is not found. Verify with the 65-page before/after render and
-  `GFX_PATCH_VERIFY=all`; the risk is a geometry read finding an element
-  no longer in the tree.
+  ✓ The walk itself (2026-11-09): the registry persists across frames
+  (`registry.go`). A hit leaves its elements in place; a replaced or
+  dropped entry is retired and its registrations evicted after the build
+  (stopping at entries live this frame, sparing keys registered again);
+  loose registrations and top-level entries a frame did not redo leave at
+  the next; `prevElems` reads through a per-frame overlay of replaced
+  values; invalidateCache makes the next frame a full refill. buttons
+  94 → 79 µs, chatui 139 → 126, indicators 357 → 339. On the way: the
+  completion rebuild did not reset the repeat counter, so it missed the
+  cache under "#1" keys and left a parallel copy of every entry behind.
+  Checked with `GFX_REG_VERIFY=1` over the 65 pages (the registry holds
+  every element the old refill would; what differs is the few keys two
+  elements register in one build) and `GFX_PATCH_VERIFY=1` (335 reports,
+  page for page the same as before). `GFX_REG_TRACE=key` logs a key's
+  writes and evictions.
 - ▢ **buttons is spread thin** (2026-10-10): 141 µs against the Go
   port's 31. The profile has no single owner — patch machinery 59 %
   (`withCtx` re-binding every ancestor's names into the flat

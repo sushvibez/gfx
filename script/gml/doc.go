@@ -217,7 +217,10 @@ func (d *Document) View() func() ui.Element {
 		// The page's controls are drawn in a theme that suits its ground (theme.go).
 		pageDark := d.doc.groundDark
 		d.doc.pageTheme.Push(pageTheme(pageDark))
+		d.doc.beginBuild()
 		el, err := build(rootForBuild(d.root), d.env, d.doc)
+		d.doc.settleRegistry()
+		d.doc.verifyRegistry()
 		d.doc.pageTheme.Pop()
 		if err != nil {
 			d.doc.invalidateCache()
@@ -270,7 +273,16 @@ func (d *Document) View() func() ui.Element {
 			// the very frame that completed the document, as in Qt.
 			if completionChanged {
 				d.doc.pageTheme.Push(pageTheme(pageDark))
-				if el2, err := build(rootForBuild(d.root), d.env, d.doc); err == nil && el2 != nil {
+				// The same cache keys as the first build: without the reset
+				// every subtree took a "#1" key, missed the cache and left a
+				// parallel copy of the whole tree's entries behind, sharing
+				// the deeper ones with the first (registry.go evicted those
+				// through the copy).
+				d.doc.keySeen.clear()
+				d.doc.beginBuild()
+				el2, err := build(rootForBuild(d.root), d.env, d.doc)
+				d.doc.settleRegistry()
+				if err == nil && el2 != nil {
 					el = el2
 				}
 				d.doc.pageTheme.Pop()

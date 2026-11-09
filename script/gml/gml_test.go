@@ -2992,7 +2992,7 @@ Rectangle {
 	// Every delegate is registered with its laid-out rect: the cells on the
 	// first row share a y, and there should be four of them.
 	first, rows := 0, map[float32]int{}
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
@@ -3036,7 +3036,7 @@ Rectangle {
 	ui.New(nil, nil, d.View()).Layout(400, 200)
 	ui.New(nil, nil, d.View()).Layout(400, 200)
 	rows := map[float32]int{}
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
@@ -3088,7 +3088,7 @@ Rectangle {
 	ui.New(nil, nil, d.View()).Layout(400, 200)
 	// Every loaded rect made it into the tree at its own size.
 	sizes := map[[2]float32]bool{}
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
@@ -3194,7 +3194,7 @@ func TestTableViewDelegateFillsTheColumn(t *testing.T) {
 	ui.New(nil, nil, d.View()).Layout(600, 200)
 	ui.New(nil, nil, d.View()).Layout(600, 200)
 	widths := map[float32]int{}
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}

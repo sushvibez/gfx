@@ -140,10 +140,14 @@ func build(n *node, env *Env, doc *docState) (ui.Element, error) {
 		if hit {
 			doc.cacheHits++
 			core.ReplayReads(e.rs) // the parent depends on what this subtree read
-			// Replay the subtree's element registrations (geometry refs read
-			// them) into this frame's registry, and hand the entry to the
-			// enclosing capture as one of its subtrees.
-			doc.replayRegs(e)
+			// Its elements are still registered from when it was built (the
+			// registry persists, registry.go) unless an eviction took them
+			// while it sat in the cache; then they go back. Hand the entry to
+			// the enclosing capture as one of its subtrees.
+			doc.markLive(e)
+			if e.gone || doc.reg.replayAll {
+				doc.replayRegs(e)
+			}
 			doc.linkSub(e)
 			doc.lastEntry = e
 			return e.el, nil
@@ -156,11 +160,16 @@ func build(n *node, env *Env, doc *docState) (ui.Element, error) {
 	ent.rs = core.TrackReads(func() { el, err = buildFresh(n, env, doc) })
 	doc.capStack = doc.capStack[:len(doc.capStack)-1]
 	if err != nil || el == nil {
+		doc.retire(doc.subtrees.get(key))
 		doc.subtrees.del(key)
 		doc.lastEntry = nil
 		return el, err
 	}
 	ent.el = el
+	doc.markLive(ent)
+	if old := doc.subtrees.get(key); old != nil && old != ent {
+		doc.retire(old) // its elements leave the registry unless rebuilt or reused
+	}
 	doc.subtrees.set(key, ent)
 	doc.linkSub(ent)
 	doc.lastEntry = ent
@@ -179,7 +188,9 @@ func (doc *docState) linkSub(e *subtreeEntry) {
 }
 
 // replayRegs re-registers a reused subtree's elements: its own, then its
-// subtrees' recursively. The elements are the ones stampFocus already
+// subtrees' recursively. Only for an entry whose registrations were
+// evicted while it stayed cached, or on the frame after invalidateCache
+// (registry.go); a hit otherwise leaves its elements where they are. The elements are the ones stampFocus already
 // fitted with their focus id and report when they were built, and every
 // change to that (a new activeFocus ref, a focus request) invalidates the
 // cache, so a replay need only pass on a pending request; re-stamping
@@ -187,8 +198,9 @@ func (doc *docState) linkSub(e *subtreeEntry) {
 // indicators frame).
 func (doc *docState) replayRegs(e *subtreeEntry) {
 	focus := len(doc.focusReq) > 0
+	e.gone = false
 	for _, r := range e.regs {
-		doc.elems.set(r.key, r.el)
+		doc.regSet(r.key, r.el)
 		if focus {
 			doc.stampFocus(r.key, r.el)
 		}
@@ -226,12 +238,16 @@ func (doc *docState) registerElem(key keyID, el ui.Element) {
 		// and the source would read the copy's geometry from then on.
 		return
 	}
-	doc.elems.set(key, el)
+	doc.regSet(key, el)
 	doc.stampFocus(key, el)
 	// Into the innermost build only; outer ones reach it through subs.
+	// Outside every cached build it is redone each frame, and last
+	// frame's that is not leaves the registry (registry.go).
 	if n := len(doc.capStack); n > 0 {
 		top := doc.capStack[n-1]
 		top.regs = append(top.regs, elemReg{key, el})
+	} else {
+		doc.reg.loose = append(doc.reg.loose, elemReg{key, el})
 	}
 }
 
@@ -1881,9 +1897,15 @@ type docState struct {
 	// elements by key; prevElems is last frame's (already laid out, so its
 	// bounds are valid); elemObjs are the id-keyed live views whose geometry
 	// reads prevElems.
+	//
+	// There is one registry, kept across frames (registry.go): a cache hit
+	// leaves its elements where they are, a rebuilt subtree swaps its own,
+	// and prevElems reads it through the frame's overlay of the values it
+	// had when the frame began.
 	elems     ccol[ui.Element]
-	prevElems ccol[ui.Element]
+	prevElems prevReg
 	elemObjs  ccol[*elemObject]
+	reg       regState
 
 	// state holds the active states/transitions scope for the subtree
 	// currently being built (nil outside any stateful Item). anims and
@@ -2133,6 +2155,12 @@ type subtreeEntry struct {
 	rs   *core.ReadSet
 	regs []elemReg       // registrations made directly by this build
 	subs []*subtreeEntry // nested subtrees (built or reused under it)
+	// Registry bookkeeping (registry.go): the build and frame that last
+	// built or reused this entry, the eviction pass that last walked it,
+	// the frame it was last noted as a top-level (unlinked) entry, and
+	// whether its registrations were evicted while it stayed cached.
+	liveBuild, liveFrame, walked, looseFrame uint32
+	gone                                     bool
 	// slots are the children this build placed through a path that can
 	// be re-run on its own (see noteSlot / patch): the entry each one
 	// produced, the element it ended up as inside el, and how to redo it.
@@ -2784,7 +2812,7 @@ func rebindProps(n *node, env *Env, doc *docState) {
 }
 
 func newDocState() *docState {
-	return &docState{
+	doc := &docState{
 		inputs:      map[string]*ui.InputState{},
 		inputSeed:   map[string]string{},
 		scrolls:     map[string]*ui.ScrollState{},
@@ -2812,6 +2840,8 @@ func newDocState() *docState {
 		tableNodes:  map[string]*node{},
 		propReads:   map[string]*core.ReadSet{},
 	}
+	doc.prevElems.doc = doc
+	return doc
 }
 
 // wireOnce reports whether key's one-shot wiring should happen now (first
@@ -3017,6 +3047,7 @@ func (doc *docState) invalidateCache() {
 	doc.haveSigs = false
 	doc.cachedEl = nil
 	doc.subtrees.clear()
+	doc.reg.sweepAll = true // the dropped entries' elements: see nextRegistryFrame
 	clear(doc.propReads)
 	clear(doc.tplObjs) // the markup may have changed what a control exposes
 }
@@ -3199,12 +3230,9 @@ func (doc *docState) beginFrame() {
 	doc.timed = 0 // recounted by this build
 	doc.sweepActivities()
 	doc.keySeen.clear()
-	// Rotate the two registries and clear the older one: it keeps its
-	// slots, so the frame neither allocates a registry nor regrows it.
-	older := doc.prevElems
-	doc.prevElems = doc.elems
-	older.clear()
-	doc.elems = older
+	// Close last frame's registry (evictions still owed to it) and open
+	// this frame's overlay: prevElems now reads what it holds.
+	doc.nextRegistryFrame()
 	// The registry is keyed the same way elements are — the instance/row
 	// prefix included — so a delegate inside a styled control or a delegate
 	// row finds ITS element, not the document-global one of the same id.
@@ -3232,7 +3260,7 @@ func (doc *docState) beginFrame() {
 
 // stampTokens writes every geometry token from the given element registry
 // and every scroll token from its state (see geoToken, scrollTok).
-func (doc *docState) stampTokens(elems *ccol[ui.Element]) {
+func (doc *docState) stampTokens(elems interface{ get(keyID) ui.Element }) {
 	// Once per frame: View stamps early (ahead of the property bindings)
 	// and beginFrame would stamp the same registry again a moment later.
 	if doc.stampedAt == doc.frameNo && doc.frameNo != 0 {

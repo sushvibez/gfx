@@ -140,7 +140,7 @@ Rectangle { width: 300; height: 200
 	ui.New(nil, nil, d.View()).Layout(300, 200)
 	ui.New(nil, nil, d.View()).Layout(300, 200)
 	sizes := map[[2]float32]bool{}
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el != nil {
 			b := ui.Bounds(el)
 			sizes[[2]float32{b.W, b.H}] = true
@@ -332,7 +332,7 @@ func TestListViewHorizontal(t *testing.T) {
 	ui.New(nil, nil, d.View()).Layout(300, 100)
 	ui.New(nil, nil, d.View()).Layout(300, 100)
 	var xs []float32
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
@@ -376,7 +376,7 @@ Item { width: 400; height: 300
 	ui.New(nil, nil, d.View()).Layout(400, 300)
 	ui.New(nil, nil, d.View()).Layout(400, 300)
 	var card, dot ui.Rect
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
@@ -420,7 +420,7 @@ Item { width: 400; height: 300
 	ui.New(nil, nil, d.View()).Layout(400, 300)
 	ui.New(nil, nil, d.View()).Layout(400, 300)
 	var inner, dot ui.Rect
-	for _, el := range d.doc.prevElems.v {
+	for _, el := range d.doc.prevElems.vals() {
 		if el == nil {
 			continue
 		}
