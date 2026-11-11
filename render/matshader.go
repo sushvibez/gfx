@@ -360,6 +360,12 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
 
     if ((flags & F_UNLIT) != 0u) {
+        if (u32(frame.misc.x) == 3u) {
+            // HDR: an unlit surface is a light source — its colour as linear
+            // radiance, times Emission (so lamps and signs can bloom).
+            let e = select(1.0, d.p1.y, d.p1.y > 0.0);
+            return vec4f(pow(max(d.color.rgb * texel.rgb, vec3f(0.0)), vec3f(2.2)) * e, alpha);
+        }
         return vec4f(d.color.rgb * texel.rgb, alpha);
     }
 
@@ -418,6 +424,10 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         c = c + albedo * d.p1.y;
     }
     c = apply_fog(c, in.world);
+    if (u32(frame.misc.x) == 3u) {
+        // HDR: linear radiance out, for render.Post to expose, tone map and encode.
+        return vec4f(max(c * frame.ambient.w, vec3f(0.0)), alpha);
+    }
     c = tonemap(c * frame.ambient.w);
     c = pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2));
     return vec4f(c, alpha);

@@ -22,6 +22,13 @@ import "github.com/sushvibez/gfx/gpu"
 type View3D struct {
 	// Clear is the viewport background (defaults to opaque dark).
 	Clear gpu.Color
+	// Post, when set, displays the scene through the post-processing
+	// stack: the Renderer3D (built for FormatRGBA16Float, FrameSettings
+	// Tonemap = TonemapHDR) renders into Post's HDR target at this view's
+	// pixel size, and Post writes the displayed image into the view. The
+	// view does not own it: release it yourself. Clear is then linear
+	// radiance.
+	Post *Post
 
 	device *gpu.Device
 	r2     *Renderer2D
@@ -104,6 +111,14 @@ func (v *View3D) PixelSize() (int, int) { return v.pw, v.ph }
 func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 	if v.colorView == nil {
 		return nil // not yet sized
+	}
+	if v.Post != nil {
+		v.Post.Resize(v.pw, v.ph)
+		if err := r3.Render(enc, v.Post.SceneView(), v.Post.DepthView(), v.Clear); err != nil {
+			return err
+		}
+		v.Post.Render(enc, v.colorView)
+		return nil
 	}
 	return r3.Render(enc, v.colorView, v.depthView, v.Clear)
 }

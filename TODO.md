@@ -104,6 +104,12 @@ real browser. Win32 `WM_TOUCH` is not handled.
   no change detection beyond the GPU-shared pools.
 - **`scene`** (§4.1, §6.3): no typed nodes, no lifecycle (`Ready`,
   `Process`), no Blueprint-style task API, no `.tscn`-like scene file.
+- **`render` post stack** (§9, 2026-11-11): `render.Post` displays an HDR
+  scene (bloom, auto exposure, ACES/AgX, grade, vignette, FXAA, grain).
+  Still to come, in order: PCSS sun shadows, ambient occlusion, volumetric
+  light and a physical sky, environment lighting (IBL), lens flare, motion
+  blur, GPU particles, quality tiers. The legacy `Draw*` calls do not
+  write HDR (material draws only). `games/harbor` drives this list.
 - **`app`** (§8): Wayland; multi-window beyond X11 (`NewChild`, `Hide`,
   `Show` are X11-only); the null-GPU headless backend (§8.1 — today
   headless still needs wgpu-native); macOS/iOS `app` glue (rendering

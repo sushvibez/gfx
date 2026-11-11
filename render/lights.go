@@ -51,7 +51,9 @@ type FrameSettings struct {
 	Ambient RGBA
 	// Exposure scales linear radiance before the tone map (zero = 1).
 	Exposure float32
-	// Tonemap: 0 = none (clamp), 1 = filmic, 2 = ACES.
+	// Tonemap: 0 = none (clamp), 1 = filmic, 2 = ACES, TonemapHDR (3) =
+	// linear radiance for a Post to display (material draws only: the
+	// legacy Draw* calls always write display colour).
 	Tonemap int
 
 	Fog struct {
@@ -94,7 +96,7 @@ func (r *Renderer3D) SetFrameSettings(fs FrameSettings) {
 	if fs.Exposure <= 0 {
 		fs.Exposure = 1
 	}
-	if fs.Tonemap < 0 || fs.Tonemap > 2 {
+	if fs.Tonemap < 0 || fs.Tonemap > TonemapHDR {
 		fs.Tonemap = 0
 	}
 	r.settings = fs

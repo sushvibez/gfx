@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `render.Post`: an opt-in post-processing stack. A `Renderer3D` built for
+  `FormatRGBA16Float` with `FrameSettings.Tonemap = TonemapHDR` writes
+  linear radiance (unlit materials times `Emission`), and Post displays
+  it: bloom, auto exposure, an ACES/AgX tone curve, a grade (split tone,
+  S-curve, lift, saturation), vignette, chromatic aberration, FXAA,
+  sharpening and film grain. `View3D.Post` runs it for a viewport.
 - A release more than `ui.TapSlop` (4 px) from its press over a `Viewport3D`
   is a drag (an orbit, say), not a tap: `OnTap` no longer runs for it.
 - `Viewport3DEl.View` returns the View3D an element shows.

@@ -522,6 +522,15 @@ readback is native-only (no js), and **the null-GPU level doesn't exist yet**
   tree; binary-packed variant for release. UUID-stable resource references with
   an import pipeline (source asset → imported artifact cache), Godot-style.
 
+*Status (2026-11-11):* the post stack has started: `render.Post` takes an
+HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with
+`FrameSettings.Tonemap = TonemapHDR`; `View3D.Post` wires it into a
+viewport) through a 13-tap bloom chain, eye adaptation, an ACES/AgX tone
+curve, a grade, vignette, chromatic aberration, FXAA, sharpening and grain,
+as fullscreen WGSL passes that run the same on wgpu-native and the web. It
+owns its targets rather than using the render graph (whose transients are
+RGBA8 only). TODO.md lists what follows (soft shadows, AO, volumetrics, IBL).
+
 *Status (2026-07-03):* render graph v0 exists (pass read/write declarations,
 dead-pass culling, transient-texture pooling; RGBA8 transients and render
 passes only so far). The 2D batcher is past its phase-1 scope: instanced SDF
