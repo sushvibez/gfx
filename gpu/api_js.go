@@ -487,6 +487,29 @@ func (e *CommandEncoder) BeginRenderPassDepth(view, depth *TextureView, clear Co
 	return &RenderPass{pass}
 }
 
+// BeginRenderPassDepthStore is BeginRenderPassDepth keeping the depth
+// buffer after the pass, for passes that read it (ambient occlusion,
+// volumetric light): the depth texture needs TextureBinding.
+func (e *CommandEncoder) BeginRenderPassDepthStore(view, depth *TextureView, clear Color) *RenderPass {
+	pass := e.v.Call("beginRenderPass", map[string]any{
+		"colorAttachments": []any{map[string]any{
+			"view":    view.v,
+			"loadOp":  "clear",
+			"storeOp": "store",
+			"clearValue": map[string]any{
+				"r": clear.R, "g": clear.G, "b": clear.B, "a": clear.A,
+			},
+		}},
+		"depthStencilAttachment": map[string]any{
+			"view":            depth.v,
+			"depthLoadOp":     "clear",
+			"depthStoreOp":    "store",
+			"depthClearValue": 1,
+		},
+	})
+	return &RenderPass{pass}
+}
+
 // BeginRenderPassDepthKeep starts a pass that keeps whatever colour is
 // already in the target and still clears the depth buffer — what a split
 // screen needs, since each pane has its own camera and so its own depth,

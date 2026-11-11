@@ -117,6 +117,21 @@ func (e *CommandEncoder) BeginRenderPassDepthKeep(view, depth *TextureView) *Ren
 }
 
 func beginDepthPass(e *CommandEncoder, view, depth *TextureView, clear Color, clearColor bool) *RenderPass {
+	return beginDepthPassStore(e, view, depth, clear, clearColor, false)
+}
+
+// BeginRenderPassDepthStore is BeginRenderPassDepth keeping the depth
+// buffer after the pass, for passes that read it (ambient occlusion,
+// volumetric light): the depth texture needs TextureBinding.
+func (e *CommandEncoder) BeginRenderPassDepthStore(view, depth *TextureView, clear Color) *RenderPass {
+	return beginDepthPassStore(e, view, depth, clear, true, true)
+}
+
+func beginDepthPassStore(e *CommandEncoder, view, depth *TextureView, clear Color, clearColor, storeDepth bool) *RenderPass {
+	depthStore := uint32(storeOpDiscard) // nothing reads depth after the pass
+	if storeDepth {
+		depthStore = storeOpStore
+	}
 	load := uint32(loadOpLoad)
 	if clearColor {
 		load = loadOpClear
@@ -131,7 +146,7 @@ func beginDepthPass(e *CommandEncoder, view, depth *TextureView, clear Color, cl
 	depthAtt := renderPassDepthStencilAttachment{
 		view:            depth.h,
 		depthLoadOp:     loadOpClear,
-		depthStoreOp:    storeOpDiscard, // nothing reads depth after the pass yet
+		depthStoreOp:    depthStore,
 		depthClearValue: 1,
 	}
 	desc := renderPassDescriptor{

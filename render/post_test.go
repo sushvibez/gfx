@@ -140,3 +140,105 @@ func TestPostDump(t *testing.T) {
 		f.Close()
 	}
 }
+
+// aoScene renders a box standing on a floor under flat ambient light (no
+// sun to speak of), through Post with the given AO strength.
+func aoScene(t *testing.T, w, h int, ao float32) []byte {
+	t.Helper()
+	dev, q := headlessDevice(t)
+	r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r3.Release()
+	fs := DefaultFrameSettings()
+	fs.Tonemap = TonemapHDR
+	fs.Sun = RGBA{R: 0.001, G: 0.001, B: 0.001, A: 1}
+	fs.Ambient = RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}
+	r3.SetFrameSettings(fs)
+	post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer post.Release()
+	s := &post.Settings
+	*s = DefaultPostSettings()
+	s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen = 0, 0, 0, 0, 0, 0
+	s.FXAA = false
+	s.AO, s.AORadius = ao, 1.5
+	post.Resize(w, h)
+	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+	view := target.CreateView()
+	defer func() { view.Release(); target.Release() }()
+
+	eye := core.V3(0, 5, 9)
+	proj := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.1, 100)
+	vp := proj.Mul(core.Mat4LookAt(eye, core.V3(0, 0.5, 0), core.V3(0, 1, 0)))
+	post.Projection = proj
+	grey := &Material{Color: RGBA{R: 0.7, G: 0.7, B: 0.7, A: 1}, Roughness: 1}
+	r3.KeepDepth = true // Post reads the depth buffer
+	r3.Begin(vp, core.V3(0, -1, 0), eye)
+	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(40, 1, 40))), grey)
+	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, 1.5, 0)).Mul(core.Mat4Scale(core.V3(3, 3, 3))), grey)
+	enc := dev.CreateCommandEncoder()
+	if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{R: 0.5, G: 0.5, B: 0.5, A: 1}); err != nil {
+		t.Fatal(err)
+	}
+	post.Render(enc, view)
+	q.Submit(enc.Finish())
+	pix, err := dev.ReadTexture(q, target, w, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir := os.Getenv("POST_DUMP"); dir != "" {
+		img := &image.RGBA{Pix: pix, Stride: w * 4, Rect: image.Rect(0, 0, w, h)}
+		name := "ao_off.png"
+		if ao > 0 {
+			name = "ao_on.png"
+		}
+		if f, err := os.Create(filepath.Join(dir, name)); err == nil {
+			png.Encode(f, img)
+			f.Close()
+		}
+	}
+	return pix
+}
+
+// Ambient occlusion darkens the crease where a box meets the floor and
+// leaves open floor alone.
+func TestPostAmbientOcclusion(t *testing.T) {
+	const w, h = 480, 320
+	off, on := aoScene(t, w, h, 0), aoScene(t, w, h, 1)
+	// The darkest AO change in the image should be on the floor by the
+	// box's foot; find the largest drop and where open floor stays put.
+	maxDrop, mx, my := 0.0, 0, 0
+	for y := 0; y < h; y += 2 {
+		for x := 0; x < w; x += 2 {
+			if d := lumAt(off, w, x, y) - lumAt(on, w, x, y); d > maxDrop {
+				maxDrop, mx, my = d, x, y
+			}
+		}
+	}
+	if maxDrop < 12 {
+		t.Fatalf("AO darkened nothing: the largest drop is %v", maxDrop)
+	}
+	// Open floor, near the bottom corners of the image (close to the
+	// camera, far from the box).
+	for _, p := range [][2]int{{30, h - 20}, {w - 30, h - 20}} {
+		if d := lumAt(off, w, p[0], p[1]) - lumAt(on, w, p[0], p[1]); d > 4 || d < -4 {
+			t.Fatalf("open floor at %v changed by %v with AO", p, d)
+		}
+	}
+	// Open floor seen at a grazing angle must stay even row to row: a depth
+	// lookup that lands on texel corners bands it.
+	for y := h * 7 / 10; y < h-4; y++ {
+		if d := lumAt(off, w, 40, y) - lumAt(on, w, 40, y); d > 4 || d < -4 {
+			t.Fatalf("open floor banded: row %d changed by %v with AO", y, d)
+		}
+	}
+	// The drop is around the box (the middle band of the image), not at
+	// the horizon or the frame's edge.
+	if mx < w/5 || mx > 4*w/5 || my < h/4 {
+		t.Fatalf("the darkest occlusion is at (%d, %d), not by the box", mx, my)
+	}
+}

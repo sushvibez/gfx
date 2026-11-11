@@ -108,14 +108,81 @@ fn vs_shadow(@location(0) pos : vec3f, @location(1) normal : vec3f, @location(2)
     return frame.light_vp * (draws[iid].model * vec4f(pos, 1.0));
 }
 
-fn shadow_factor(world : vec3f, n_dot_l : f32) -> f32 {
-    let sc = frame.light_vp * vec4f(world, 1.0);
+// Interleaved gradient noise (Jimenez): a per-pixel rotation for the
+// shadow kernels, so undersampling shows as fine noise, not bands.
+fn sh_ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
+// Vogel disc: n points spread evenly over the unit disc, rotated by phi.
+fn sh_vogel(i : i32, n : i32, phi : f32) -> vec2f {
+    let r = sqrt((f32(i) + 0.5) / f32(n));
+    let th = f32(i) * 2.39996323 + phi;
+    return r * vec2f(cos(th), sin(th));
+}
+
+// The sun's shadow. Hard (one hardware-filtered tap) by default; with
+// FrameSettings.SunSoftness it is PCSS (Fernando 2005): a blocker search
+// finds how far the occluders are, and the filter widens with that
+// distance, so a shadow is crisp where it touches and soft far from what
+// casts it. The receiver is pushed along its normal by a texel or two
+// instead of a slope bias from screen derivatives (which a branchy
+// fragment stage may not take).
+fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
+    let soft = frame.misc.z;
+    let texel_w = frame.misc.w;
+    let wp = world + n * texel_w * (1.2 + 2.0 * (1.0 - n_dot_l)) * select(0.0, 1.0, soft > 0.0);
+    let sc = frame.light_vp * vec4f(wp, 1.0);
     let uv = vec2f(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);
     if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
         return 1.0;
     }
     let bias = clamp(0.002 * (1.0 - n_dot_l) + 0.0006, 0.0005, 0.004);
-    return textureSampleCompare(shadow_tex, shadow_samp, uv, sc.z - bias);
+    if (soft <= 0.0) {
+        return textureSampleCompareLevel(shadow_tex, shadow_samp, uv, sc.z - bias);
+    }
+    let dims = vec2f(textureDimensions(shadow_tex));
+    let zr = sc.z - 0.0008;
+    // Receiver-plane bias: across a wide kernel the receiver's own depth
+    // changes, and comparing every tap against the centre's depth shadows
+    // a slanted surface with itself. The plane's depth gradient in shadow
+    // uv follows from the normal and the (affine) light matrix: a normal
+    // transforms by the inverse transpose, which for rotation times
+    // scale is the matrix itself over the squared row lengths.
+    let lm = mat3x3f(frame.light_vp[0].xyz, frame.light_vp[1].xyz, frame.light_vp[2].xyz);
+    let lt = transpose(lm);
+    let nc = (lm * n) / vec3f(dot(lt[0], lt[0]), dot(lt[1], lt[1]), dot(lt[2], lt[2]));
+    var dz = vec2f(0.0);
+    if (abs(nc.z) > 1e-6) { dz = vec2f(-2.0 * nc.x, 2.0 * nc.y) / nc.z; }
+    let max_slope = 0.004 * dims.x;      // never follow a plane steeper than this
+    dz = clamp(dz, vec2f(-max_slope), vec2f(max_slope));
+    // A texel of that slope as bias: the map stores one depth per texel,
+    // and a tap can sit anywhere inside it.
+    let zb = zr - (abs(dz.x) + abs(dz.y)) * 0.9 / dims.x;
+    let phi = sh_ign(frag) * 6.2831853;
+    // Blocker search: the average depth of what stands between here and the sun.
+    let search = clamp(soft * 0.08, 2.0 / dims.x, 0.02);
+    var blk = 0.0;
+    var nb = 0.0;
+    for (var i = 0; i < 8; i++) {
+        let o = sh_vogel(i, 8, phi) * search;
+        let t = vec2i(clamp((uv + o) * dims, vec2f(0.0), dims - 1.0));
+        let d = textureLoad(shadow_tex, t, 0);
+        // The plane at the centre of the texel read, not at the tap.
+        let oc = (vec2f(t) + 0.5) / dims - uv;
+        if (d < zb + dot(oc, dz)) { blk += d; nb += 1.0; }
+    }
+    if (nb < 0.5) {
+        return 1.0;
+    }
+    // Penumbra: wider the further the blockers are.
+    let pen = clamp((zr - blk / nb) * soft, 1.25 / dims.x, search);
+    var lit = 0.0;
+    for (var i = 0; i < 12; i++) {
+        let o = sh_vogel(i, 12, phi + 1.7) * pen;
+        lit += textureSampleCompareLevel(shadow_tex, shadow_samp, uv + o, zb + dot(o, dz));
+    }
+    lit /= 12.0;
+    // Fade to lit at the map's edge, so its border never shows.
+    let e = min(uv, 1.0 - uv);
+    return mix(1.0, lit, smoothstep(0.0, 0.03, min(e.x, e.y)));
 }
 
 // ---- stochastic hex tiling (Heitz & Neyret / Mikkelsen) --------------------
@@ -391,7 +458,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     let l = normalize(-frame.light_dir.xyz);
     let ndl = max(dot(shaded_n, l), 0.0);
     let sun = max(frame.sun.rgb, vec3f(0.0));
-    var lo = brdf(shaded_n, v, l, albedo, metallic, roughness) * sun * shadow_factor(in.world, ndl);
+    var lo = brdf(shaded_n, v, l, albedo, metallic, roughness) * sun * shadow_factor(in.world, shaded_n, ndl, in.pos.xy);
 
     let count = u32(frame.misc.y);
     for (var i = 0u; i < count; i = i + 1u) {

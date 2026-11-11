@@ -114,7 +114,11 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 	}
 	if v.Post != nil {
 		v.Post.Resize(v.pw, v.ph)
-		if err := r3.Render(enc, v.Post.SceneView(), v.Post.DepthView(), v.Clear); err != nil {
+		keep := r3.KeepDepth
+		r3.KeepDepth = true // Post reads the depth buffer
+		err := r3.Render(enc, v.Post.SceneView(), v.Post.DepthView(), v.Clear)
+		r3.KeepDepth = keep
+		if err != nil {
 			return err
 		}
 		v.Post.Render(enc, v.colorView)

@@ -53,6 +53,12 @@ type FrameSettings struct {
 	// white at 2.6, the renderer's original sun). A low golden sun is
 	// something like {3.4, 2.3, 1.2}. Material draws only.
 	Sun RGBA
+	// SunSoftness makes the sun's shadow soft the way a real one is (PCSS):
+	// crisp where it touches the ground, wider with distance from what
+	// casts it. It is the tangent of the light's apparent half-angle,
+	// scaled for look: 0 keeps the hard single-tap shadow, 0.02 is a
+	// pleasing sun, 0.06 an overcast-soft one. Material draws only.
+	SunSoftness float32
 	// Exposure scales linear radiance before the tone map (zero = 1).
 	Exposure float32
 	// Tonemap: 0 = none (clamp), 1 = filmic, 2 = ACES, TonemapHDR (3) =

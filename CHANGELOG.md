@@ -8,6 +8,13 @@
   it: bloom, auto exposure, an ACES/AgX tone curve, a grade (split tone,
   S-curve, lift, saturation), vignette, chromatic aberration, FXAA,
   sharpening and film grain. `View3D.Post` runs it for a viewport.
+- `Post` ambient occlusion (`PostSettings.AO`, `AORadius`; set
+  `Post.Projection`): half-resolution, normals from depth, a depth-aware
+  blur, applied to ambient light only. `Renderer3D.KeepDepth` and
+  `CommandEncoder.BeginRenderPassDepthStore` keep the depth buffer for it.
+- `FrameSettings.SunSoftness`: PCSS sun shadows for material draws, crisp
+  at contact and wider with distance from the caster, with an analytic
+  receiver-plane bias (no screen derivatives).
 - `FrameSettings.Sun`: the directional light's colour and energy (it was
   white at a fixed 2.6, still the default), for material draws.
 - A release more than `ui.TapSlop` (4 px) from its press over a `Viewport3D`

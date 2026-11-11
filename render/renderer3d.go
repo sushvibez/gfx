@@ -17,6 +17,11 @@ import (
 // Render records two passes: a depth-only shadow pass from the light's
 // view, then the main pass sampling it.
 type Renderer3D struct {
+	// KeepDepth stores the depth buffer after Render instead of discarding
+	// it, for what reads it afterwards (Post's ambient occlusion). The
+	// depth target then needs TextureBinding; View3D sets this for its Post.
+	KeepDepth bool
+
 	device    *gpu.Device
 	queue     *gpu.Queue
 	pipeline  *gpu.RenderPipeline
@@ -708,7 +713,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		FogParams:  core.V4(fs.Fog.Height, fs.Fog.HeightDensity, fs.Fog.AerialPerspective, fogOn),
 		SkyTop:     core.V4(fs.SkyTop.R, fs.SkyTop.G, fs.SkyTop.B, 1),
 		SkyHorizon: core.V4(fs.SkyHorizon.R, fs.SkyHorizon.G, fs.SkyHorizon.B, 1),
-		Misc:       core.V4(float32(fs.Tonemap), float32(n), 0, 0),
+		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/shadowMapSize),
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, 1),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
@@ -896,7 +901,12 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 	}
 	sp.End()
 
-	mp := enc.BeginRenderPassDepth(color, depth, clear)
+	var mp *gpu.RenderPass
+	if r.KeepDepth {
+		mp = enc.BeginRenderPassDepthStore(color, depth, clear)
+	} else {
+		mp = enc.BeginRenderPassDepth(color, depth, clear)
+	}
 	if len(r.items) > 0 {
 		r.drawItems(mp, true)
 	}

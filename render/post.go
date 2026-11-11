@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/gpu"
 )
 
@@ -59,6 +60,11 @@ type PostSettings struct {
 	Contrast                  float32
 	Lift                      [3]float32
 	Saturation                float32
+	// AO (0…1) is ambient occlusion's strength: corners, crevices and the
+	// ground under things darken (0 skips the passes). AORadius is how far,
+	// in world units, a surface looks for occluders. It needs the camera:
+	// set Post.Projection each frame.
+	AO, AORadius float32
 	// Vignette (0…1) darkens the corners; ChromaticAberration is the
 	// red/blue split at the corner, in UV units (0.002 is subtle).
 	Vignette, ChromaticAberration float32
@@ -78,6 +84,7 @@ func DefaultPostSettings() PostSettings {
 		AgX:        0.35,
 		ShadowTint: [3]float32{0.86, 1.0, 1.10}, HighlightTint: [3]float32{1.06, 1.0, 0.92},
 		Contrast: 0.2, Lift: [3]float32{0.004, 0.006, 0.008}, Saturation: 1.05,
+		AO: 0.75, AORadius: 1.4,
 		Vignette: 0.25, ChromaticAberration: 0.0012,
 		FXAA: true, Sharpen: 0.15, Grain: 0.018,
 	}
@@ -90,6 +97,10 @@ const postBloomMips = 6
 type Post struct {
 	// Settings is the look, read each Render.
 	Settings PostSettings
+	// Projection is the camera's projection matrix (perspective, depth 0…1)
+	// for the frame in the scene target: ambient occlusion rebuilds
+	// positions from depth with it. Zero disables the depth-based passes.
+	Projection core.Mat4
 
 	device *gpu.Device
 	queue  *gpu.Queue
@@ -102,19 +113,23 @@ type Post struct {
 	down, up             []postTex // down[i] is 1/2^(i+1) size; up[i] matches down[i]
 	adapt                [2]postTex
 	ldr                  postTex
-	frame                int // which adapt texture is current
+	ao                   [2]postTex // half resolution: the estimate, and blur scratch
+	frame                int        // which adapt texture is current
 
 	linear *gpu.Sampler
 	uni    *gpu.Buffer
 	time   float32
 
 	plDownFirst, plDown, plUp, plAdapt, plComposite, plFinal *gpu.RenderPipeline
+	plAO, plAOBlurH, plAOBlurV                               *gpu.RenderPipeline
 
 	bgDown      []*gpu.BindGroup // into down[i]
 	bgUp        []*gpu.BindGroup // into up[i]
 	bgAdapt     [2]*gpu.BindGroup
 	bgComposite [2]*gpu.BindGroup
 	bgFinal     *gpu.BindGroup
+	bgAO        *gpu.BindGroup
+	bgAOBlur    [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
 }
 
 type postTex struct {
@@ -165,6 +180,9 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.plAdapt = mk("post-adapt", postAdaptWGSL, "fs", hdr)
 	p.plComposite = mk("post-composite", postCompositeWGSL, "fs", gpu.FormatRGBA8Unorm)
 	p.plFinal = mk("post-final", postFinalWGSL, "fs", format)
+	p.plAO = mk("post-ao", postAOWGSL, "fs", gpu.FormatRGBA8Unorm)
+	p.plAOBlurH = mk("post-ao-blur-h", postAOBlurWGSL, "fs_h", gpu.FormatRGBA8Unorm)
+	p.plAOBlurV = mk("post-ao-blur-v", postAOBlurWGSL, "fs_v", gpu.FormatRGBA8Unorm)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -213,6 +231,8 @@ func (p *Post) Resize(w, h int) {
 	}
 	p.adapt[0], p.adapt[1] = tex(1, 1, hdr), tex(1, 1, hdr)
 	p.ldr = tex(w, h, gpu.FormatRGBA8Unorm)
+	hw, hh := max(w/2, 1), max(h/2, 1)
+	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
 
 	// Bind groups. Each pipeline's layout is taken, used and released (a
 	// kept layout keeps its pipeline alive).
@@ -248,9 +268,12 @@ func (p *Post) Resize(w, h int) {
 	for k := 0; k < 2; k++ {
 		// Frame k reads adapt[1-k] and writes adapt[k].
 		p.bgAdapt[k] = group(p.plAdapt, samp, texEntry(1, small), texEntry(2, p.adapt[1-k].view), uni(3))
-		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.sceneView), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4))
+		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.sceneView), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4), texEntry(5, p.ao[0].view))
 	}
 	p.bgFinal = group(p.plFinal, samp, texEntry(1, p.ldr.view), uni(2))
+	p.bgAO = group(p.plAO, texEntry(0, p.depthView), uni(1))
+	p.bgAOBlur[0] = group(p.plAOBlurH, texEntry(0, p.depthView), texEntry(1, p.ao[0].view), uni(2))
+	p.bgAOBlur[1] = group(p.plAOBlurV, texEntry(0, p.depthView), texEntry(1, p.ao[1].view), uni(2))
 }
 
 // Render displays the scene target into dst (the surface, or a view's
@@ -279,6 +302,19 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 	for i := len(p.up) - 1; i >= 0; i-- {
 		pass(p.up[i].view, p.plUp, p.bgUp[i])
 	}
+	if p.aoOn() {
+		white := gpu.Color{R: 1, G: 1, B: 1, A: 1}
+		aoPass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup) {
+			rp := enc.BeginRenderPass(view, white)
+			rp.SetPipeline(pl)
+			rp.SetBindGroup(0, bg)
+			rp.Draw(3, 1, 0, 0)
+			rp.End()
+		}
+		aoPass(p.ao[0].view, p.plAO, p.bgAO)
+		aoPass(p.ao[1].view, p.plAOBlurH, p.bgAOBlur[0])
+		aoPass(p.ao[0].view, p.plAOBlurV, p.bgAOBlur[1])
+	}
 	k := p.frame & 1
 	pass(p.adapt[k].view, p.plAdapt, p.bgAdapt[k])
 	pass(p.ldr.view, p.plComposite, p.bgComposite[k])
@@ -286,8 +322,12 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 	p.frame++
 }
 
-// postUniformSize is the uniform block: seven vec4f.
-const postUniformSize = 7 * 16
+// postUniformSize is the uniform block: nine vec4f.
+const postUniformSize = 9 * 16
+
+// aoOn reports whether ambient occlusion runs: asked for, and the camera
+// known.
+func (p *Post) aoOn() bool { return p.Settings.AO > 0 && p.Projection[0] != 0 }
 
 func (p *Post) uniforms() []float32 {
 	s := p.Settings
@@ -296,6 +336,10 @@ func (p *Post) uniforms() []float32 {
 			return 1
 		}
 		return 0
+	}
+	ao := s.AO
+	if !p.aoOn() {
+		ao = 0
 	}
 	rate := s.AdaptRate
 	if p.frame < 2 {
@@ -309,6 +353,10 @@ func (p *Post) uniforms() []float32 {
 		s.ShadowTint[0], s.ShadowTint[1], s.ShadowTint[2], s.Contrast,
 		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], 0,
 		s.Lift[0], s.Lift[1], s.Lift[2], 0,
+		ao, max(s.AORadius, 0.05), 0, 0,
+		// What rebuilds a view position from depth: the projection's x and y
+		// scales and its two depth terms (column-major: [0], [5], [10], [14]).
+		p.Projection[0], p.Projection[5], p.Projection[10], p.Projection[14],
 	}
 }
 
@@ -322,7 +370,8 @@ func (p *Post) releaseTargets() {
 	}
 	rel(p.bgDown...)
 	rel(p.bgUp...)
-	rel(p.bgAdapt[0], p.bgAdapt[1], p.bgComposite[0], p.bgComposite[1], p.bgFinal)
+	rel(p.bgAdapt[0], p.bgAdapt[1], p.bgComposite[0], p.bgComposite[1], p.bgFinal, p.bgAO, p.bgAOBlur[0], p.bgAOBlur[1])
+	p.bgAO, p.bgAOBlur = nil, [2]*gpu.BindGroup{}
 	p.bgDown, p.bgUp, p.bgFinal = nil, nil, nil
 	p.bgAdapt, p.bgComposite = [2]*gpu.BindGroup{}, [2]*gpu.BindGroup{}
 	for i := range p.down {
@@ -335,6 +384,8 @@ func (p *Post) releaseTargets() {
 	p.adapt[0].release()
 	p.adapt[1].release()
 	p.ldr.release()
+	p.ao[0].release()
+	p.ao[1].release()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -357,7 +408,7 @@ func (p *Post) releaseTargets() {
 // Release frees everything Post made.
 func (p *Post) Release() {
 	p.releaseTargets()
-	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal} {
+	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal, &p.plAO, &p.plAOBlurH, &p.plAOBlurV} {
 		if *pl != nil {
 			(*pl).Release()
 			*pl = nil
@@ -393,6 +444,8 @@ struct PostU {
     shadow : vec4f, // rgb shadow tint, w contrast
     high : vec4f,   // rgb highlight tint
     lift : vec4f,   // rgb lift
+    p4 : vec4f,     // ambient occlusion strength, radius (world)
+    proj : vec4f,   // projection: x scale, y scale, depth terms [10] and [14]
 };
 fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 `
@@ -482,6 +535,7 @@ const postCompositeWGSL = `
 @group(0) @binding(2) var bloom : texture_2d<f32>;
 @group(0) @binding(3) var adapt : texture_2d<f32>;
 @group(0) @binding(4) var<uniform> U : PostU;
+@group(0) @binding(5) var aotex : texture_2d<f32>;
 
 // ACES, Stephen Hill's fit (RRT and ODT).
 fn rrt_odt(v : vec3f) -> vec3f {
@@ -533,9 +587,16 @@ fn exposure() -> f32 {
                     textureSampleLevel(scene, samp, uv, 0.0).g,
                     textureSampleLevel(scene, samp, uv - off, 0.0).b);
     col = max(col, vec3f(0.0));
+    // Ambient occlusion belongs to ambient light: it fades on brightly lit
+    // pixels, so sunlit surfaces never get dirty halos; faintly cool.
+    let e = exposure();
+    let occ = textureSampleLevel(aotex, samp, uv, 0.0).r;
+    let lit = smoothstep(0.16, 0.85, luma(col) * e);
+    let a = mix(1.0, occ, U.p4.x * (1.0 - 0.8 * lit));
+    col *= mix(vec3f(a), vec3f(1.0), vec3f(0.0, 0.03, 0.07));
     // bloom: an energy-conserving mix
     col = mix(col, textureSampleLevel(bloom, samp, uv, 0.0).rgb, U.p0.w);
-    col *= exposure();
+    col *= e;
     // the film curve: ACES for punch, pulled toward AgX so highlights roll off to white
     col = mix(aces(col), agx(col), U.p1.w);
     // ---- grade (display-linear) ----
@@ -592,4 +653,106 @@ fn t(uv : vec2f) -> vec4f { return textureSampleLevel(src, samp, uv, 0.0); }
     col += n * U.p2.w * (1.0 - 0.6 * abs(lum * 2.0 - 1.0));
     return vec4f(clamp(col, vec3f(0.0), vec3f(1.0)), 1.0);
 }
+`
+
+// postDepthWGSL: view-space position from the depth buffer and the
+// projection (depth 0…1, right-handed: the camera looks down -z).
+const postDepthWGSL = `
+fn view_dist(d : f32) -> f32 { return U.proj.w / (d + U.proj.z); }
+fn view_pos(uv : vec2f, z : f32) -> vec3f {
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    return vec3f(ndc.x / U.proj.x * z, ndc.y / U.proj.y * z, -z);
+}
+fn ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
+`
+
+// postAOWGSL: ambient occlusion at half resolution (the Alchemy / Scalable
+// Ambient Obscurance estimator, McGuire et al.): the normal comes from the
+// depth buffer's nearer neighbours, the taps spiral out over the projected
+// radius with a per-pixel rotation, and each contributes by how far it
+// rises above the surface's tangent plane.
+const postAOWGSL = `
+@group(0) @binding(0) var depth : texture_depth_2d;
+@group(0) @binding(1) var<uniform> U : PostU;
+` + postDepthWGSL + `
+const AO_TAPS = 10;
+// The view position of the depth texel under uv: the position is rebuilt
+// at that texel's centre, not at uv, or a slanted surface read through
+// nearest texels would look stepped and occlude itself.
+fn pos_texel(c : vec2i, dims : vec2f) -> vec3f {
+    let t = clamp(c, vec2i(0), vec2i(dims) - 1);
+    return view_pos((vec2f(t) + 0.5) / dims, view_dist(textureLoad(depth, t, 0)));
+}
+fn pos_at(uv : vec2f, dims : vec2f) -> vec3f { return pos_texel(vec2i(floor(uv * dims)), dims); }
+@fragment fn fs(in : VOut) -> @location(0) vec4f {
+    let dims = vec2f(textureDimensions(depth));
+    // This half-resolution pixel's depth texel, by integer: its centre sits
+    // exactly on a corner between four depth texels, where a UV lookup
+    // would pick rows unpredictably and band the result.
+    let c0 = min(vec2i(in.pos.xy) * 2, vec2i(dims) - 1);
+    let uv = (vec2f(c0) + 0.5) / dims;
+    let d0 = textureLoad(depth, c0, 0);
+    if (d0 >= 0.99999) { return vec4f(1.0); }   // the sky
+    let z0 = view_dist(d0);
+    if (z0 > 140.0) { return vec4f(1.0); }
+    let P = pos_texel(c0, dims);
+    let pl = pos_texel(c0 - vec2i(1, 0), dims); let pr = pos_texel(c0 + vec2i(1, 0), dims);
+    let pu = pos_texel(c0 - vec2i(0, 1), dims); let pd = pos_texel(c0 + vec2i(0, 1), dims);
+    // The nearer neighbour on each axis: no normals bent across an edge.
+    var dx = pr - P;
+    if (abs(pl.z - P.z) < abs(pr.z - P.z)) { dx = P - pl; }
+    var dy = pd - P;
+    if (abs(pu.z - P.z) < abs(pd.z - P.z)) { dy = P - pu; }
+    var n = normalize(cross(dx, dy));
+    if (dot(n, P) > 0.0) { n = -n; }             // face the camera
+    let R = U.p4.y * (0.6 + 0.4 * clamp(z0 / 12.0, 0.0, 1.0));
+    let r_uv = clamp(R * U.proj.y / (2.0 * z0), 3.0 / dims.y, 0.14);
+    let R2 = R * R;
+    let aspect = dims.x / dims.y;
+    let rot = ign(in.pos.xy) * 6.2831853;
+    var sum = 0.0;
+    for (var i = 0; i < AO_TAPS; i++) {
+        let a = (f32(i) + 0.5) / f32(AO_TAPS);
+        let th = a * 6.2831853 * 3.0 + rot;
+        var o = vec2f(cos(th), sin(th)) * a * r_uv;
+        o.x /= aspect;
+        let uv2 = uv + o;
+        let v = pos_at(uv2, dims) - P;
+        let vv = dot(v, v);
+        let vn = dot(v, n);
+        let f = max(R2 - vv, 0.0);
+        sum += f * f * f * max((vn - (0.015 + 0.004 * z0)) / (vv + 0.004), 0.0);
+    }
+    var ao = max(0.0, 1.0 - sum * 5.0 / (R2 * R2 * R2 * f32(AO_TAPS)));
+    ao = mix(ao, 1.0, smoothstep(70.0, 140.0, z0));
+    return vec4f(ao, ao, ao, 1.0);
+}
+`
+
+// postAOBlurWGSL: a separable blur that does not cross depth edges.
+const postAOBlurWGSL = `
+@group(0) @binding(0) var depth : texture_depth_2d;
+@group(0) @binding(1) var src : texture_2d<f32>;
+@group(0) @binding(2) var<uniform> U : PostU;
+` + postDepthWGSL + `
+fn blur(frag : vec2f, dir : vec2i) -> vec4f {
+    // Integer texels throughout (see the AO pass): this pixel is p in the
+    // half-resolution source and 2p in the depth buffer.
+    let dmax = vec2i(textureDimensions(depth)) - 1;
+    let smax = vec2i(textureDimensions(src)) - 1;
+    let p = vec2i(frag);
+    let z0 = min(view_dist(textureLoad(depth, min(p * 2, dmax), 0)), 300.0);
+    var acc = 0.0; var ws = 0.0;
+    for (var i = -3; i <= 3; i++) {
+        let q = clamp(p + dir * i, vec2i(0), smax);
+        let z = min(view_dist(textureLoad(depth, min(q * 2, dmax), 0)), 300.0);
+        let w = (1.0 - abs(f32(i)) * 0.22) * max(0.0, 1.0 - abs(z - z0) / (0.04 * z0 + 0.02));
+        acc += textureLoad(src, q, 0).r * w; ws += w;
+    }
+    var v = textureLoad(src, min(p, smax), 0).r;
+    if (ws > 1e-4) { v = acc / ws; }
+    return vec4f(v, v, v, 1.0);
+}
+@fragment fn fs_h(in : VOut) -> @location(0) vec4f { return blur(in.pos.xy, vec2i(1, 0)); }
+@fragment fn fs_v(in : VOut) -> @location(0) vec4f { return blur(in.pos.xy, vec2i(0, 1)); }
 `
