@@ -49,6 +49,10 @@ type FrameSettings struct {
 	// Ambient is the constant environment term (colour premultiplied by
 	// energy); it is modulated by a material's AO channel.
 	Ambient RGBA
+	// Sun is the directional light's radiance: colour times energy (zero =
+	// white at 2.6, the renderer's original sun). A low golden sun is
+	// something like {3.4, 2.3, 1.2}. Material draws only.
+	Sun RGBA
 	// Exposure scales linear radiance before the tone map (zero = 1).
 	Exposure float32
 	// Tonemap: 0 = none (clamp), 1 = filmic, 2 = ACES, TonemapHDR (3) =
@@ -80,6 +84,7 @@ type FrameSettings struct {
 // exposure 1, ACES tone map, no fog.
 func DefaultFrameSettings() FrameSettings {
 	fs := FrameSettings{
+		Sun:        RGBA{R: sunIntensity, G: sunIntensity, B: sunIntensity, A: 1},
 		Ambient:    RGBA{R: 0.05, G: 0.055, B: 0.07, A: 1},
 		Exposure:   1,
 		Tonemap:    2,
@@ -95,6 +100,9 @@ func DefaultFrameSettings() FrameSettings {
 func (r *Renderer3D) SetFrameSettings(fs FrameSettings) {
 	if fs.Exposure <= 0 {
 		fs.Exposure = 1
+	}
+	if fs.Sun.R == 0 && fs.Sun.G == 0 && fs.Sun.B == 0 {
+		fs.Sun = RGBA{R: sunIntensity, G: sunIntensity, B: sunIntensity, A: 1}
 	}
 	if fs.Tonemap < 0 || fs.Tonemap > TonemapHDR {
 		fs.Tonemap = 0

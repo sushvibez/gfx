@@ -228,6 +228,7 @@ type frameUniforms struct {
 	SkyTop     core.Vec4
 	SkyHorizon core.Vec4
 	Misc       core.Vec4 // tonemap mode, light count
+	Sun        core.Vec4 // rgb the sun's radiance (colour times energy)
 }
 
 // sunIntensity is the directional light's radiance, matching the constant
@@ -708,6 +709,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		SkyTop:     core.V4(fs.SkyTop.R, fs.SkyTop.G, fs.SkyTop.B, 1),
 		SkyHorizon: core.V4(fs.SkyHorizon.R, fs.SkyHorizon.G, fs.SkyHorizon.B, 1),
 		Misc:       core.V4(float32(fs.Tonemap), float32(n), 0, 0),
+		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, 1),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	r.items = r.items[:0]

@@ -26,6 +26,7 @@ struct Frame {
     sky_top : vec4f,
     sky_horizon : vec4f,
     misc : vec4f,        // x tonemap mode, y light count
+    sun : vec4f,         // rgb the sun's radiance (colour times energy)
 }
 `
 
@@ -389,7 +390,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     let v = normalize(frame.cam_pos.xyz - in.world);
     let l = normalize(-frame.light_dir.xyz);
     let ndl = max(dot(shaded_n, l), 0.0);
-    let sun = max(frame.light_dir.w, 0.0);
+    let sun = max(frame.sun.rgb, vec3f(0.0));
     var lo = brdf(shaded_n, v, l, albedo, metallic, roughness) * sun * shadow_factor(in.world, ndl);
 
     let count = u32(frame.misc.y);
