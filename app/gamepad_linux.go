@@ -9,12 +9,14 @@ package app
 
 import (
 	"encoding/binary"
-	"os"
 	"syscall"
 )
 
 type joyDev struct {
-	f *os.File
+	// fd is a raw non-blocking descriptor, kept away from Go's poller: an
+	// *os.File would park a read that finds nothing until the next event,
+	// and a quiet device never sends one.
+	fd int
 	// raw accumulated state, remapped on snapshot
 	buttons [32]bool
 	axes    [16]int16
@@ -37,19 +39,15 @@ func pollGamepads() [maxGamepads]GamepadState {
 		if joySlots[i] == nil {
 			// Probe (cheap open; fails fast when absent). Non-blocking so
 			// reads drain without stalling the frame.
-			f, err := os.OpenFile("/dev/input/js"+string(rune('0'+i)), os.O_RDONLY, 0)
+			fd, err := syscall.Open("/dev/input/js"+string(rune('0'+i)), syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 			if err != nil {
 				continue
 			}
-			if err := syscall.SetNonblock(int(f.Fd()), true); err != nil {
-				f.Close()
-				continue
-			}
-			joySlots[i] = &joyDev{f: f}
+			joySlots[i] = &joyDev{fd: fd}
 		}
 		d := joySlots[i]
 		if !d.drain() {
-			d.f.Close()
+			syscall.Close(d.fd)
 			joySlots[i] = nil // unplugged; re-probed next poll
 			continue
 		}
@@ -62,11 +60,14 @@ func pollGamepads() [maxGamepads]GamepadState {
 func (d *joyDev) drain() bool {
 	var buf [jsEventSize * 64]byte
 	for {
-		n, err := d.f.Read(buf[:])
-		if err != nil {
-			if pe, ok := err.(*os.PathError); ok && pe.Err == syscall.EAGAIN {
-				return true // no more events
-			}
+		n, err := syscall.Read(d.fd, buf[:])
+		if err == syscall.EINTR {
+			continue
+		}
+		if err == syscall.EAGAIN {
+			return true // no more events
+		}
+		if err != nil || n == 0 {
 			return false // ENODEV etc: unplugged
 		}
 		for o := 0; o+jsEventSize <= n; o += jsEventSize {
