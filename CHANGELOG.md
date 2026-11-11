@@ -5,6 +5,9 @@
 - A release more than `ui.TapSlop` (4 px) from its press over a `Viewport3D`
   is a drag (an orbit, say), not a tap: `OnTap` no longer runs for it.
 - `Viewport3DEl.View` returns the View3D an element shows.
+- `navcube.Options.Axes` draws the world axes from the cube's (-1, -1, -1)
+  corner along its edges, depth-tested; `navcube.ViewProj`, `Scale`,
+  `AxisTip` and `AxisColors` let a host label them.
 - Linux joysticks are read with raw non-blocking syscalls: a quiet
   `/dev/input/jsN` no longer parks `Gamepads` until its next event.
 

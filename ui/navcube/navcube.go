@@ -55,6 +55,10 @@ type Options struct {
 	// Labels names the faces Top, Bottom, Front, Back, Right, Left in
 	// that order; empty entries keep the English names.
 	Labels [6]string
+	// Axes draws the world axes from the cube's (-1, -1, -1) corner along its
+	// edges, out past the far corners (X red, Y green, Z blue; AxisColors),
+	// depth-tested, so the cube hides the stretches behind it.
+	Axes bool
 }
 
 // Cube is one orientation cube with its own renderer and offscreen view.
@@ -68,6 +72,7 @@ type Cube struct {
 	Hover int
 
 	facets     []facet
+	axes       [3]*render.Mesh // with Options.Axes
 	light      core.Vec3
 	yaw, pitch float32 // the angles the cube was last rendered at
 }
@@ -176,6 +181,11 @@ func New(dev *gpu.Device, q *gpu.Queue, format gpu.TextureFormat, r2 *render.Ren
 		}
 		c.facets = append(c.facets, f)
 	}
+	if opt.Axes {
+		for a := range c.axes {
+			c.axes[a] = axisBar(r3, a)
+		}
+	}
 	return c, nil
 }
 
@@ -239,6 +249,14 @@ func (c *Cube) Viewport(size float32, onSnap func(yaw, pitch float32)) *ui.Viewp
 	})
 }
 
+// ViewProj is the cube's camera at the given angles for a w×h view: the
+// cube spans [-1, 1]³ in it (hosts draw beside it, an axis triad from a
+// corner, say).
+func ViewProj(yaw, pitch float32, w, h int) core.Mat4 {
+	vp, _ := viewProj(yaw, pitch, w, h)
+	return vp
+}
+
 // viewProj is the cube's camera at the given angles.
 func viewProj(yaw, pitch float32, w, h int) (core.Mat4, core.Vec3) {
 	const d = 5.4
@@ -260,7 +278,7 @@ func (c *Cube) Render(enc *gpu.CommandEncoder, yaw, pitch float32) error {
 	}
 	vp, eye := viewProj(yaw, pitch, w, h)
 	c.R3.Begin(vp, c.light, eye)
-	model := core.Mat4Scale(core.V3(1.55, 1.55, 1.55))
+	model := core.Mat4Scale(core.V3(Scale, Scale, Scale))
 	for i, f := range c.facets {
 		col := FaceColor
 		if f.label == nil {
@@ -273,6 +291,11 @@ func (c *Cube) Render(enc *gpu.CommandEncoder, yaw, pitch float32) error {
 		c.R3.DrawShaded(f.mesh, model, col, 0.55, f.label)
 	}
 	c.R3.SetPickTag(-1)
+	for a, m := range c.axes {
+		if m != nil {
+			c.R3.DrawUnlit(m, model, AxisColors[a])
+		}
+	}
 	return c.View.Render(enc, c.R3)
 }
 
@@ -317,6 +340,12 @@ func (c *Cube) Tap(x, y float32) (yaw, pitch float32, ok bool) {
 
 // Release frees the cube's GPU resources.
 func (c *Cube) Release() {
+	for a, m := range c.axes {
+		if m != nil {
+			m.Release()
+			c.axes[a] = nil
+		}
+	}
 	if c.View != nil {
 		c.View.Release()
 		c.View = nil
@@ -371,4 +400,80 @@ func (c *Cube) Element(size float32, onSnap func(yaw, pitch float32), onOrbit fu
 		}
 		lastX, lastY = dx, dy
 	}).Children(c.Viewport(size, onSnap))
+}
+
+// Scale is the cube's size in its view: it spans [-Scale, Scale]³ in the
+// space ViewProj projects.
+const Scale = 1.55
+
+// AxisLength is how far (in cube units, the cube being 2 across) the
+// axes reach from the corner: past the far corner, so their tips and
+// letters clear the cube.
+const AxisLength = 2.7
+
+// AxisColors are the axes' colours, X, Y, Z.
+var AxisColors = [3]render.RGBA{
+	{R: 0.86, G: 0.27, B: 0.27, A: 1},
+	{R: 0.25, G: 0.66, B: 0.31, A: 1},
+	{R: 0.30, G: 0.47, B: 0.92, A: 1},
+}
+
+// AxisTip is where axis a (0 X, 1 Y, 2 Z) ends, in the space ViewProj
+// projects (a host puts its letter there).
+func AxisTip(a int) core.Vec3 {
+	p := core.V3(-1, -1, -1)
+	switch a {
+	case 0:
+		p.X += AxisLength
+	case 1:
+		p.Y += AxisLength
+	default:
+		p.Z += AxisLength
+	}
+	return p.Scale(Scale)
+}
+
+// axisBar is axis a as a thin square bar from the (-1, -1, -1) corner,
+// lifted a little off the cube's bevelled edge so it shows where the
+// edge faces the viewer.
+func axisBar(r *render.Renderer3D, a int) *render.Mesh {
+	const w = 0.035 // half thickness
+	lo := core.V3(-1-2*w, -1-2*w, -1-2*w)
+	hi := core.V3(-1, -1, -1)
+	switch a {
+	case 0:
+		hi.X = -1 + AxisLength
+	case 1:
+		hi.Y = -1 + AxisLength
+	default:
+		hi.Z = -1 + AxisLength
+	}
+	c := [8]core.Vec3{}
+	for i := range c {
+		c[i] = core.V3(pick(i&1 != 0, hi.X, lo.X), pick(i&2 != 0, hi.Y, lo.Y), pick(i&4 != 0, hi.Z, lo.Z))
+	}
+	quads := [6][4]int{{0, 2, 3, 1}, {4, 5, 7, 6}, {0, 1, 5, 4}, {2, 6, 7, 3}, {0, 4, 6, 2}, {1, 3, 7, 5}}
+	var verts []render.Vertex3D
+	var idx []uint32
+	mid := lo.Add(hi).Scale(0.5)
+	for _, q := range quads {
+		n := c[q[1]].Sub(c[q[0]]).Cross(c[q[2]].Sub(c[q[0]])).Normalize()
+		if n.Dot(c[q[0]].Add(c[q[2]]).Scale(0.5).Sub(mid)) < 0 {
+			q[1], q[3] = q[3], q[1] // wind it outward
+			n = n.Scale(-1)
+		}
+		base := uint32(len(verts))
+		for _, k := range q {
+			verts = append(verts, render.Vertex3D{Pos: c[k], Normal: n})
+		}
+		idx = append(idx, base, base+1, base+2, base, base+2, base+3)
+	}
+	return r.NewMesh(verts, idx)
+}
+
+func pick(b bool, x, y float32) float32 {
+	if b {
+		return x
+	}
+	return y
 }
