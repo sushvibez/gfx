@@ -433,10 +433,12 @@ func New3D(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*Ren
 	r.frame = device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
 	r.growDraws(24 * 1024)
 	r.white = r.NewImage3D(1, 1, []byte{255, 255, 255, 255})
-	r.lineWhite = r.device.CreateBindGroup(linePL.BindGroupLayout(1),
+	lineTex := linePL.BindGroupLayout(1)
+	r.lineWhite = r.device.CreateBindGroup(lineTex,
 		gpu.BindGroupEntry{Binding: 0, Sampler: r.sampler},
 		gpu.BindGroupEntry{Binding: 1, TextureView: r.white.view},
 	)
+	lineTex.Release()
 	if err := r.initMaterialPass(format); err != nil {
 		r.Release()
 		return nil, err
@@ -559,12 +561,14 @@ func (r *Renderer3D) growDraws(size int) {
 	if r.lineBind != nil {
 		r.lineBind.Release()
 	}
-	r.lineBind = r.device.CreateBindGroup(r.linePL.BindGroupLayout(0),
+	lineLayout := r.linePL.BindGroupLayout(0)
+	r.lineBind = r.device.CreateBindGroup(lineLayout,
 		gpu.BindGroupEntry{Binding: 0, Buffer: r.frame},
 		gpu.BindGroupEntry{Binding: 1, Buffer: r.draws},
 		gpu.BindGroupEntry{Binding: 2, Sampler: r.shadowSampler},
 		gpu.BindGroupEntry{Binding: 3, TextureView: r.shadowView},
 	)
+	lineLayout.Release()
 	r.rebuildSkinBinds()
 }
 
