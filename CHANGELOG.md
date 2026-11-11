@@ -12,6 +12,10 @@
   `Post.Projection`): half-resolution, normals from depth, a depth-aware
   blur, applied to ambient light only. `Renderer3D.KeepDepth` and
   `CommandEncoder.BeginRenderPassDepthStore` keep the depth buffer for it.
+- `FrameSettings.SkyReflection`: materials mirror the sky (its gradient and
+  the sun's glow) by Fresnel, sharp when glossy and smeared when rough.
+  `Material.Water` with `FrameSettings.Time`: a wave map sampled as two
+  layers scrolling across each other.
 - `Post.Atmosphere`: light shafts (the view ray marched against the sun's
   shadow map at half resolution, a two-lobe phase, air thinning with
   height, an analytic far haze) and an analytic sky (gradient, a warm band

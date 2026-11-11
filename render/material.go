@@ -65,6 +65,13 @@ type Material struct {
 	// fix for the repeating-grid look of a tiled texture.
 	AntiTile bool
 
+	// Water animates the surface as water: Normal is a wave map, sampled as
+	// two layers scrolling across each other in the horizontal plane
+	// (FrameSettings.Time moves them; UVScale sets the wave size,
+	// NormalScale their height). Pair it with a dark Color, a low
+	// Roughness and FrameSettings.SkyReflection.
+	Water bool
+
 	Emission float32 // emissive multiplier (0 = no emission unless Emissive is set)
 	Unlit    bool    // skip lighting entirely (still tonemapped-free, display colour)
 
@@ -101,6 +108,7 @@ const (
 	matHasARM
 	matHasRough
 	matHasEmissive
+	matWater
 )
 
 // resolved is the material flattened to what the shader consumes, with
@@ -161,6 +169,9 @@ func (m *Material) resolve() resolved {
 		flags |= matHasARM
 	case m.RoughnessMap != nil:
 		flags |= matHasRough
+	}
+	if m.Water && m.Normal != nil {
+		flags |= matWater
 	}
 	if m.Emissive != nil {
 		flags |= matHasEmissive

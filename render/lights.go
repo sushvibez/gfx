@@ -59,6 +59,13 @@ type FrameSettings struct {
 	// scaled for look: 0 keeps the hard single-tap shadow, 0.02 is a
 	// pleasing sun, 0.06 an overcast-soft one. Material draws only.
 	SunSoftness float32
+	// SkyReflection (0…1) makes surfaces mirror the sky (SkyTop, SkyHorizon
+	// and the sun's glow): by Fresnel, sharp on glossy materials and smeared
+	// on rough ones. It is the environment's specular light; scene geometry
+	// is not reflected. 0 (the default) leaves materials as they were.
+	SkyReflection float32
+	// Time, in seconds, moves what animates in the shader (Material.Water).
+	Time float32
 	// Exposure scales linear radiance before the tone map (zero = 1).
 	Exposure float32
 	// Tonemap: 0 = none (clamp), 1 = filmic, 2 = ACES, TonemapHDR (3) =

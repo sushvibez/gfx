@@ -27,6 +27,7 @@ struct Frame {
     sky_horizon : vec4f,
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
+    env : vec4f,         // x sky reflection strength, y time in seconds
 }
 `
 
@@ -66,6 +67,7 @@ const F_NORMAL = 8u;
 const F_ARM = 16u;
 const F_ROUGH = 32u;
 const F_EMISSIVE = 64u;
+const F_WATER = 128u;
 
 struct VSOut {
     @builtin(position) pos : vec4f,
@@ -329,6 +331,14 @@ fn sky_color(dir : vec3f) -> vec3f {
     return mix(frame.sky_horizon.rgb, frame.sky_top.rgb, t);
 }
 
+// The environment a mirror direction sees: the sky's gradient with the
+// sun's glow in it above the horizon, the dim ground below.
+fn sky_env(dir : vec3f, to_sun : vec3f) -> vec3f {
+    var c = sky_color(dir);
+    c = c + frame.sun.rgb * 0.10 * pow(max(dot(dir, to_sun), 0.0), 10.0);
+    return mix(frame.sky_horizon.rgb * 0.25, c, smoothstep(-0.15, 0.05, dir.y));
+}
+
 // Exponential height fog: density falls off with world height, the optical
 // depth is taken at the midpoint of the view ray, and the fog colour may be
 // blended toward the sky gradient (aerial perspective).
@@ -422,6 +432,20 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         }
     }
 
+    // Water: the normal is two layers of the wave map, scrolling across each
+    // other in the horizontal plane, so the surface moves and never repeats
+    // the same crest twice.
+    if ((flags & F_WATER) != 0u) {
+        let t = frame.env.y;
+        let q = in.world.xz * uvs;
+        let gx = dwx.xz * uvs;
+        let gy = dwy.xz * uvs;
+        let w1 = textureSampleGrad(normal_tex, samp, q + vec2f(0.021, 0.013) * t, gx, gy).xyz * 2.0 - 1.0;
+        let w2 = textureSampleGrad(normal_tex, samp, q * 2.3 + vec2f(-0.017, 0.031) * t, gx * 2.3, gy * 2.3).xyz * 2.0 - 1.0;
+        let w = (w1.xy + w2.xy * 0.6) * d.p0.z;
+        shaded_n = normalize(vec3f(w.x, 1.0, w.y));
+    }
+
     let alpha = d.color.a * d.p1.z * texel.a;
     if (d.p1.z >= 1.0 && alpha < 0.5) {
         discard; // alpha cutout for opaque materials (foliage, grates)
@@ -486,6 +510,19 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
 
     var c = albedo * frame.ambient.rgb * ao + lo;
+    // The sky reflected: what the surface mirrors of the environment, by
+    // Fresnel (strong at grazing angles and on metal), sharp when glossy
+    // and smeared toward the sky's average when rough, dimmed in crevices.
+    if (frame.env.x > 0.0) {
+        let nv = max(dot(shaded_n, v), 0.0);
+        let f0 = mix(vec3f(0.04), albedo, metallic);
+        let fres = f0 + (max(vec3f(1.0 - roughness), f0) - f0) * pow(1.0 - nv, 5.0);
+        let r = reflect(-v, shaded_n);
+        let blur = roughness * roughness;
+        let avg = (frame.sky_top.rgb + frame.sky_horizon.rgb * 2.0) * (1.0 / 3.0) * 0.8;
+        let env_c = mix(sky_env(r, l), avg, clamp(blur * 1.6, 0.0, 1.0));
+        c = c + env_c * fres * ao * frame.env.x * (1.0 - 0.5 * blur);
+    }
     if ((flags & F_EMISSIVE) != 0u) {
         c = c + pow(max(emis.rgb, vec3f(0.0)), vec3f(2.2)) * d.p1.y;
     } else if (d.p1.y > 0.0) {

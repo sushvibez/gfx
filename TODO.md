@@ -109,6 +109,8 @@ real browser. Win32 `WM_TOUCH` is not handled.
   PCSS sun shadows (`FrameSettings.SunSoftness`) and ambient occlusion
   (`PostSettings.AO`) followed the same day, then light shafts and an
   analytic sky (`Post.Atmosphere`). Still to come, in order: a temporal
+  Sky reflection (`FrameSettings.SkyReflection`) and `Material.Water` too;
+  reflections of the scene itself (screen-space or planar) are not there.
   filter for the AO and shaft grain, lamps in the volumetric pass, environment lighting (IBL), lens flare, motion
   blur, GPU particles, quality tiers. The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.
