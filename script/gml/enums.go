@@ -24,6 +24,7 @@ const (
 	qtCursorArrow        = float64(0)
 	qtCursorIBeam        = float64(1)
 	qtCursorCross        = float64(2)
+	qtCursorSizeHor      = float64(6)
 	qtCursorPointingHand = float64(13)
 	qtCursorSplitH       = float64(15)
 	qtCursorSplitV       = float64(16)
@@ -163,6 +164,7 @@ func registerEnums(vars map[string]any) {
 		"CrossCursor":        qtCursorCross,
 		"PointingHandCursor": qtCursorPointingHand,
 		"SplitHCursor":       qtCursorSplitH,
+		"SizeHorCursor":      qtCursorSizeHor,
 		"SplitVCursor":       qtCursorSplitV,
 		// Qt::MouseButton (MouseArea.acceptedButtons, mouse.button)
 		"NoButton":     float64(0),

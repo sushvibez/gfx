@@ -4710,7 +4710,10 @@ func buildPopup(n *node, env *Env, doc *docState) (ui.Element, error) {
 	// exit transition stays drawn until it is done.
 	pst, draw := doc.popupTransition(n, env, st.shown)
 	if !draw {
-		return ui.Div(), nil // closed → no flow space, nothing floating
+		// Closed: out of the flow like an open popup (a plain empty box would
+		// still take a slot in its parent's spacing, so the page shifted by
+		// one gap as the popup opened).
+		return ui.Overlay(ui.Div(), 0, 0), nil
 	}
 	// A ToolTip is its text: there is nothing else to compose, and `text:`
 	// is not an attribute a box builder understands.
@@ -5469,6 +5472,8 @@ func cursorFromQt(v any) app.Cursor {
 		return app.CursorPointer
 	case qtCursorIBeam:
 		return app.CursorText
+	case qtCursorSizeHor, qtCursorSplitH:
+		return app.CursorEW // a divider or edge dragged sideways
 	default:
 		return app.CursorDefault
 	}

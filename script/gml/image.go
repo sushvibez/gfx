@@ -262,6 +262,11 @@ func resolveImagePath(baseDir, src string) string {
 	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
 		return "" // remote fetch not supported yet
 	}
+	// A query ("thumb.png?v=3") names a version of the same file: the
+	// image cache keys on the whole source, so changing it reloads.
+	if i := strings.IndexByte(src, '?'); i >= 0 {
+		src = src[:i]
+	}
 	src = strings.TrimPrefix(src, "file://")
 	src = strings.TrimPrefix(src, "qrc:")
 	src = strings.TrimPrefix(src, "qrc")
