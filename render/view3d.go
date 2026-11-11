@@ -32,7 +32,8 @@ type View3D struct {
 	depth     *gpu.Texture
 	depthView *gpu.TextureView
 	img       *Image
-	w, h      int
+	w, h      int // logical size (the layout box, the units of Size)
+	pw, ph    int // target size in physical pixels (PixelSize)
 }
 
 // NewView3D creates an (initially empty) offscreen target. format must match
@@ -47,28 +48,56 @@ func NewView3D(device *gpu.Device, r2 *Renderer2D, format gpu.TextureFormat) *Vi
 	}
 }
 
-// Resize (re)allocates the target textures; idempotent for an unchanged size.
-func (v *View3D) Resize(w, h int) {
-	if w < 1 {
-		w = 1
-	}
-	if h < 1 {
-		h = 1
-	}
-	if w == v.w && h == v.h {
+// Resize sizes the view to w×h pixels, logical and physical alike (a DPI
+// scale of 1); see ResizeScaled. Idempotent for an unchanged size.
+func (v *View3D) Resize(w, h int) { v.ResizeScaled(w, h, 1) }
+
+// ResizeScaled sizes the view to a w×h box in logical pixels (the units of
+// the layout, the mouse and Size) with the textures allocated at
+// w·scale × h·scale physical pixels, so a display scaled 1.5x or 2x renders
+// the scene at full resolution instead of stretching a logical-sized image.
+// The ui.Viewport3D element calls it during layout with the 2D renderer's
+// DPI scale (Renderer2D.Scale). The textures are (re)allocated only when
+// the pixel size changes; scale <= 0 counts as 1.
+func (v *View3D) ResizeScaled(w, h int, scale float32) {
+	v.w, v.h = max(w, 1), max(h, 1)
+	pw, ph := ScaledPixels(v.w, v.h, scale)
+	if pw == v.pw && ph == v.ph && v.color != nil {
 		return
 	}
 	v.release()
-	v.w, v.h = w, h
-	v.color = v.device.CreateTexture2D(w, h, v.format, gpu.TextureRenderAttachment|gpu.TextureBinding)
+	v.pw, v.ph = pw, ph
+	if v.device == nil {
+		return // test views without a device keep only the sizes
+	}
+	v.color = v.device.CreateTexture2D(pw, ph, v.format, gpu.TextureRenderAttachment|gpu.TextureBinding)
 	v.colorView = v.color.CreateView()
-	v.depth = v.device.CreateDepthTexture(w, h)
+	v.depth = v.device.CreateDepthTexture(pw, ph)
 	v.depthView = v.depth.CreateView()
-	v.img = v.r2.ImageFromView(v.colorView, w, h)
+	v.img = v.r2.ImageFromView(v.colorView, pw, ph)
 }
 
-// Size returns the current target size in pixels (0,0 before first Resize).
+// ScaledPixels is the physical-pixel size of a w×h logical box at a DPI
+// scale (rounded, at least 1×1; scale <= 0 counts as 1) — the size
+// View3D.ResizeScaled allocates.
+func ScaledPixels(w, h int, scale float32) (int, int) {
+	if scale <= 0 {
+		scale = 1
+	}
+	return max(int(float32(w)*scale+0.5), 1), max(int(float32(h)*scale+0.5), 1)
+}
+
+// Size returns the view's size in LOGICAL pixels (0,0 before the first
+// Resize): the laid-out box, in the units of mouse coordinates and ui
+// rects. Use it for the camera aspect and for mapping viewport-local
+// points to pick rays (render.ScreenRay).
 func (v *View3D) Size() (int, int) { return v.w, v.h }
+
+// PixelSize returns the render target's size in physical pixels (Size
+// times the DPI scale the view was sized with; 0,0 before the first
+// Resize). Use it for anything measured in texels: readback, pixel-exact
+// line widths, screen-space effects.
+func (v *View3D) PixelSize() (int, int) { return v.pw, v.ph }
 
 // Render records r3's queued frame (shadow + main pass) into the target.
 // Call between r3.Begin+draws and the UI pass that samples Image.
@@ -106,4 +135,4 @@ func (v *View3D) release() {
 }
 
 // Release frees the target textures.
-func (v *View3D) Release() { v.release(); v.w, v.h = 0, 0 }
+func (v *View3D) Release() { v.release(); v.w, v.h, v.pw, v.ph = 0, 0, 0, 0 }

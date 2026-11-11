@@ -4,7 +4,12 @@ package ui
 // texture instead of the child — QML's `layer.enabled`, and what makes a
 // real blur possible: you cannot average pixels that were never drawn.
 //
-//	ui.Layer(state, card).Blur(24)   // frosted glass over whatever it covers
+//	ui.Layer(state, card).Blur(24)   // card, blurred
+//
+// Blur blurs the layer's OWN content — the child subtree it renders — not
+// the pixels behind it: there is no backdrop sampling (CSS backdrop-filter,
+// a frosted panel over other widgets). For that look, put the content to be
+// frosted inside the layer and draw the panel over the blurred result.
 //
 // The offscreen pass runs between layout and the frame's own paint
 // (UI.RenderLayers), so the texture is one build old at most — the same
@@ -117,7 +122,8 @@ func Layer(st *LayerState, child Element) *LayerEl {
 	return &LayerEl{st: st, child: child, opacity: 1}
 }
 
-// Blur sets the gaussian radius (in pixels) applied when the layer is
+// Blur sets the gaussian radius (in pixels) applied to the layer's own
+// rendered content (its child, not the backdrop behind it) before it is
 // composited; 0 draws the layer as-is.
 func (e *LayerEl) Blur(px float32) *LayerEl { e.blur = px; return e }
 

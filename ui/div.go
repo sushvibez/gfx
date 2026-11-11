@@ -1699,6 +1699,9 @@ func (d *DivEl) paint(ctx *Context) {
 		ctx.R.PushClipRound(d.rect.X, d.rect.Y, d.rect.W, d.rect.H, d.radius)
 	}
 	for _, c := range d.children {
+		if ctx.offView(c) {
+			continue // scrolled out of its viewport (see ScrollEl.paint)
+		}
 		c.paint(ctx)
 	}
 	if d.clip {

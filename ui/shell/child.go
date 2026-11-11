@@ -170,8 +170,10 @@ func (c *ChildWindow) frame(h *childHost, a *App, force bool) bool {
 	view := tex.CreateView()
 	scale := c.Win.Scale() // logical-pixel UI; see shell.Run
 	lw, lh := float32(c.w)/scale, float32(c.h)/scale
+	// The DPI scale is in effect from layout on: Viewport3D sizes its
+	// target in real pixels there, and layer targets are sized in them too.
+	a.R2.SetScale(scale)
 	c.UI.Layout(lw, lh)
-	a.R2.SetScale(scale) // layer targets are sized in real pixels
 	c.UI.RenderLayers()
 	enc := h.device.CreateCommandEncoder()
 	if c.Encode3D != nil {

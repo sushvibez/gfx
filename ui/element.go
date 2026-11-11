@@ -39,6 +39,11 @@ type Context struct {
 	// subtree, whose layout rects do not say where its pixels land.
 	dmg     *damageState
 	dmgLock int
+	// view is the visible window-space rect of the innermost scroll
+	// viewport being painted (viewOn while one is): DivEl.paint skips a
+	// child whose whole subtree lies outside it (see Context.offView).
+	view   Rect
+	viewOn bool
 	// Per-frame counts for GFX_FPS: how often measure and layout ran.
 	MeasureCalls, LayoutCalls int
 	// frame numbers the per-element measure memo (see DivEl.measure): a

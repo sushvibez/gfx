@@ -8,9 +8,12 @@ import "github.com/sushvibez/gfx/render"
 // clips, scrolls and stacks with normal widgets. The app renders the scene
 // into the View3D between layout and the UI pass (see render.View3D).
 //
+// The target is rendered in physical pixels (the laid-out box times the
+// DPI scale, see View3D.ResizeScaled) and drawn back into the logical box.
+//
 // Input: the element is click-targetable; OnTap receives the tap position in
-// viewport-local pixels — feed it to render.ScreenRay + Renderer3D.Pick for
-// object picking. Rect() exposes the laid-out box so orbit-camera code can
+// viewport-local logical pixels — feed it, with View3D.Size (also logical),
+// to render.ScreenRay + Renderer3D.Pick for object picking. Rect() exposes the laid-out box so orbit-camera code can
 // route drags/wheel that land inside the viewport.
 // ViewportOverlay paints 2D graphics over a viewport's rendered frame
 // (rect is the viewport's window-space box). CAD-style vector overlays —
@@ -50,11 +53,19 @@ func (e *Viewport3DEl) Rect() Rect { return e.rect }
 
 func (e *Viewport3DEl) measure(*Context) (float32, float32) { return e.w, e.h }
 
-func (e *Viewport3DEl) layout(_ *Context, r Rect) {
+func (e *Viewport3DEl) layout(ctx *Context, r Rect) {
 	e.rect = r
 	// Size the offscreen target to the laid-out box (idempotent; allocates
-	// only when the size actually changes, e.g. on window resize).
-	e.v.Resize(int(r.W), int(r.H))
+	// only when the size actually changes, e.g. on window resize). The box
+	// is logical; the textures are physical pixels at the 2D renderer's DPI
+	// scale, so a HiDPI display gets a sharp 3D image (paint draws it back
+	// into the logical rect). View3D.Size stays logical, matching mouse
+	// coordinates and Rect; View3D.PixelSize is the texture size.
+	scale := float32(1)
+	if ctx != nil && ctx.R != nil {
+		scale = ctx.R.Scale()
+	}
+	e.v.ResizeScaled(int(r.W), int(r.H), scale)
 }
 
 // dirty: the 3D view renders itself every frame.

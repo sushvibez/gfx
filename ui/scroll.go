@@ -356,7 +356,17 @@ func (e *ScrollEl) paint(ctx *Context) {
 		ctx.R.FillRoundRect(e.rect.X, e.rect.Y, e.rect.W, e.rect.H, e.radius, e.bg)
 	}
 	ctx.R.PushClip(e.rect.X, e.rect.Y, e.rect.W, e.rect.H)
+	// CPU culling: content scrolled out of the viewport is not recorded at
+	// all (the scissor would drop it anyway, after the upload). DivEl.paint
+	// asks offView for each child; a nested scroll narrows the view.
+	prevView, prevOn := ctx.view, ctx.viewOn
+	view := e.rect
+	if prevOn {
+		view = intersectRect(view, prevView)
+	}
+	ctx.view, ctx.viewOn = view, true
 	e.content.paint(ctx)
+	ctx.view, ctx.viewOn = prevView, prevOn
 	bc := RGBA{R: 1, G: 1, B: 1, A: 0.25}
 	if e.hasBarC {
 		bc = e.barC
@@ -388,6 +398,69 @@ func (e *ScrollEl) paint(ctx *Context) {
 		ctx.R.FillRoundRect(barX, e.rect.Y+e.rect.H-5, barW, 3, 1.5, bc)
 	}
 	ctx.R.PopClip()
+}
+
+// ScrollCulled counts subtrees a scroll viewport skipped painting because
+// they lay wholly outside it (for GFX_FPS and tests; reset by the reader).
+var ScrollCulled int
+
+// viewCullMargin widens the viewport for the cull test: glyph overhang and
+// antialiasing can reach a little past a layout rect.
+const viewCullMargin = 4
+
+// offView reports whether e can be skipped while painting inside a scroll
+// viewport: no part of its subtree's paint bounds touches the view. Only
+// paint is skipped — hit testing, focus and overlays come from layout,
+// which still visits everything. Under a transform nothing is culled
+// (layout rects are not where those pixels land), as with damage culling.
+func (c *Context) offView(e Element) bool {
+	if !c.viewOn || c.dmgLock > 0 || e == nil {
+		return false
+	}
+	if d, ok := e.(*DivEl); ok {
+		if _, xf := d.xform(); xf {
+			return false
+		}
+	}
+	view := inflate(c.view, viewCullMargin)
+	if intersects(paintBoundsOf(e), view) {
+		return false
+	}
+	// The element's own box is out of view; its descendants may still
+	// overflow into it (anchored children, shadows), so check them all.
+	if subtreeTouches(e, view) {
+		return false
+	}
+	ScrollCulled++
+	return true
+}
+
+// subtreeTouches reports whether any element under e (e excluded) paints
+// into view, or might: a transformed box counts as touching, since its
+// descendants' rects are pre-transform.
+func subtreeTouches(e Element, view Rect) bool {
+	for _, ch := range Children(e) {
+		if ch == nil {
+			continue
+		}
+		if d, ok := ch.(*DivEl); ok {
+			if _, xf := d.xform(); xf {
+				return true
+			}
+		}
+		if intersects(paintBoundsOf(ch), view) || subtreeTouches(ch, view) {
+			return true
+		}
+	}
+	return false
+}
+
+// intersectRect is the overlap of a and b (zero-sized when they are
+// disjoint).
+func intersectRect(a, b Rect) Rect {
+	x0, y0 := max(a.X, b.X), max(a.Y, b.Y)
+	x1, y1 := min(a.X+a.W, b.X+b.W), min(a.Y+a.H, b.Y+b.H)
+	return Rect{x0, y0, max(x1-x0, 0), max(y1-y0, 0)}
 }
 
 func (e *ScrollEl) hit(x, y float32) Element {

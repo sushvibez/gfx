@@ -541,6 +541,10 @@ func Run(o Options, hooks Hooks) error {
 		// are half a millisecond a frame of wgpu and driver time.
 		lw, lh := float32(w)/scale, float32(h)/scale
 		tMark = time.Now()
+		// The DPI scale is in effect from layout on: a Viewport3D sizes its
+		// offscreen target in real pixels there (Renderer2D.Scale). A child
+		// window sharing the renderer may have left its own scale behind.
+		r.SetScale(scale)
 		u.Layout(lw, lh)
 		lap(&tLayout)
 		if damageOK {

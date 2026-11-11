@@ -568,9 +568,22 @@ the same renderer (and its font atlases) draw both. On top of it,
 `ui.Layer(state, child).Blur(px)` is a real gaussian: the layer renders
 downscaled, is blurred once in its own texture and once while compositing,
 from a 13-tap kernel whose taps are drawn over each other at their share of
-the weight so far (so the result is their weighted average). That is what
-frosted glass is made of, and what `layer.effect: MultiEffect { blurEnabled }`
-maps to in gml.
+the weight so far (so the result is their weighted average). It blurs the
+layer's OWN content (its child subtree) — what
+`layer.effect: MultiEffect { blurEnabled }` maps to in gml. It does not
+sample what lies behind the layer, so it is not backdrop blur (CSS
+`backdrop-filter`): a frosted panel over other content needs that content
+inside the layer; a backdrop pass does not exist yet.
+*(2026-11-11)* **HiDPI 3D views and scroll culling**: `ui.Viewport3D` sizes
+its `render.View3D` target in physical pixels (`View3D.ResizeScaled` with
+the 2D renderer's DPI scale, which the shells now set before layout) and
+draws it back into its logical box; `View3D.Size` stays logical (camera
+aspect, `ScreenRay` with mouse coordinates) and `View3D.PixelSize` is the
+texture. A `Scroll` no longer records content scrolled out of its viewport:
+`DivEl.paint` skips a child whose whole subtree's paint bounds miss the
+innermost scroll view (nothing under a transform is culled; layout, hit
+testing, focus and overlays are unaffected). `List` remains the choice for
+very long content, since layout still visits every row.
 *(2026-08-31)* **Fill rules**: a path that overlaps itself now fills by
 even-odd or non-zero (`render.FillRule`, SVG's fill-rule, QML's
 ShapePath.fillRule, canvas `fill("evenodd")`). A simple outline still takes
