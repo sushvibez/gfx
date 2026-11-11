@@ -51,6 +51,10 @@ func (e *Viewport3DEl) Overlay(fn ViewportOverlay) *Viewport3DEl { e.overlay = f
 // Rect returns the last laid-out box in window pixels.
 func (e *Viewport3DEl) Rect() Rect { return e.rect }
 
+// View is the View3D the element shows (a host with several tells them
+// apart by it).
+func (e *Viewport3DEl) View() *render.View3D { return e.v }
+
 func (e *Viewport3DEl) measure(*Context) (float32, float32) { return e.w, e.h }
 
 func (e *Viewport3DEl) layout(ctx *Context, r Rect) {
@@ -97,6 +101,15 @@ func (e *Viewport3DEl) hit(x, y float32) Element {
 		return nil
 	}
 	return e
+}
+
+// TapSlop is how far (pixels) the pointer may travel between press and
+// release over a Viewport3D for the release to still be a tap; further,
+// it was a drag (orbiting the camera, say) and OnTap does not run.
+const TapSlop = 4
+
+func (e *Viewport3DEl) dragged(dx, dy float32) bool {
+	return dx*dx+dy*dy > TapSlop*TapSlop
 }
 
 func (e *Viewport3DEl) onClick() func() {

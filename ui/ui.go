@@ -670,7 +670,11 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 				}
 			}
 			if u.root != nil && u.pressTarget.W > 0 {
-				if el := u.hitTest(m.X, m.Y); el != nil && el.onClick() != nil && el.bounds() == u.pressTarget {
+				el := u.hitTest(m.X, m.Y)
+				if v, ok := el.(*Viewport3DEl); ok && v.dragged(m.X-u.ctx.pressX, m.Y-u.ctx.pressY) {
+					el = nil // a drag over a 3D view turned the camera: not a tap
+				}
+				if el != nil && el.onClick() != nil && el.bounds() == u.pressTarget {
 					el.onClick()()
 					u.gestures.clicked(el)
 				}

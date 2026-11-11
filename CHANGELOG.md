@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- A release more than `ui.TapSlop` (4 px) from its press over a `Viewport3D`
+  is a drag (an orbit, say), not a tap: `OnTap` no longer runs for it.
+- `Viewport3DEl.View` returns the View3D an element shows.
+- Linux joysticks are read with raw non-blocking syscalls: a quiet
+  `/dev/input/jsN` no longer parks `Gamepads` until its next event.
+
 ## v0.3.0 (2026-11-11)
 
 Accessibility, menus and a lighter gml: every control describes itself in

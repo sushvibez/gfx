@@ -3,6 +3,7 @@ package ui
 import (
 	"testing"
 
+	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/gpu"
 	"github.com/sushvibez/gfx/render"
 )
@@ -47,5 +48,32 @@ func TestScaledPixels(t *testing.T) {
 		if pw, ph := render.ScaledPixels(tc.w, tc.h, tc.s); pw != tc.pw || ph != tc.ph {
 			t.Errorf("ScaledPixels(%d,%d,%v) = %d,%d want %d,%d", tc.w, tc.h, tc.s, pw, ph, tc.pw, tc.ph)
 		}
+	}
+}
+
+// TestViewport3DDragIsNotTap: a release within TapSlop of the press taps
+// the view; one further off ended a drag (an orbit) and does not.
+func TestViewport3DDragIsNotTap(t *testing.T) {
+	v := render.NewView3D(nil, nil, gpu.TextureFormat(gpu.FormatRGBA8Unorm))
+	taps := 0
+	u := New(&render.Renderer2D{}, nil, func() Element {
+		return Div().Children(Viewport3D(v).Size(300, 200).OnTap(func(x, y float32) { taps++ }))
+	})
+	press := func(x0, y0, x1, y1 float32) {
+		u.Layout(800, 600)
+		u.Mouse([]app.MouseEvent{
+			{Kind: app.MouseMove, X: x0, Y: y0},
+			{Kind: app.MouseDown, X: x0, Y: y0, Button: 1},
+			{Kind: app.MouseMove, X: x1, Y: y1},
+			{Kind: app.MouseUp, X: x1, Y: y1, Button: 1},
+		})
+	}
+	press(50, 50, 52, 51)
+	if taps != 1 {
+		t.Fatalf("a still click gave %d taps, want 1", taps)
+	}
+	press(50, 50, 120, 90)
+	if taps != 1 {
+		t.Fatalf("a drag tapped (%d taps)", taps)
 	}
 }
