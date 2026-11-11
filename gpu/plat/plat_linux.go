@@ -35,13 +35,8 @@ func LibPaths() []string {
 			}
 		}
 	}
-	for _, up := range []string{".", "..", "../.."} {
-		abs, err := filepath.Abs(filepath.Join(up, "build", "wgpu", paths[0]))
-		if err == nil {
-			if _, err := os.Stat(abs); err == nil {
-				return append([]string{abs}, paths...)
-			}
-		}
+	if p := findBuildLib(paths[0]); p != "" {
+		return append([]string{p}, paths...)
 	}
 	return paths
 }
