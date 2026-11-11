@@ -101,6 +101,11 @@ type Post struct {
 	// for the frame in the scene target: ambient occlusion rebuilds
 	// positions from depth with it. Zero disables the depth-based passes.
 	Projection core.Mat4
+	// View is the camera's view matrix for that frame; with Projection it
+	// gives the atmosphere its view rays.
+	View core.Mat4
+	// Atmosphere is the air and the sky (post_atmos.go); zero is off.
+	Atmosphere Atmosphere
 
 	device *gpu.Device
 	queue  *gpu.Queue
@@ -129,7 +134,19 @@ type Post struct {
 	bgComposite [2]*gpu.BindGroup
 	bgFinal     *gpu.BindGroup
 	bgAO        *gpu.BindGroup
-	bgAOBlur    [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
+
+	// The atmosphere (post_atmos.go).
+	shadowView                             *gpu.TextureView // the sun's shadow map (not owned)
+	lightVP                                core.Mat4
+	atmosDirty                             bool
+	vol                                    [2]postTex // half resolution: the shafts, and blur scratch
+	lit                                    postTex    // the scene with the air and the sky: what the camera sees
+	noShadow                               postTex
+	atmosUni                               *gpu.Buffer
+	plVol, plVolBlurH, plVolBlurV, plAtmos *gpu.RenderPipeline
+	bgVol, bgAtmos                         *gpu.BindGroup
+	bgVolBlur                              [2]*gpu.BindGroup
+	bgAOBlur                               [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
 }
 
 type postTex struct {
@@ -183,6 +200,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.plAO = mk("post-ao", postAOWGSL, "fs", gpu.FormatRGBA8Unorm)
 	p.plAOBlurH = mk("post-ao-blur-h", postAOBlurWGSL, "fs_h", gpu.FormatRGBA8Unorm)
 	p.plAOBlurV = mk("post-ao-blur-v", postAOBlurWGSL, "fs_v", gpu.FormatRGBA8Unorm)
+	p.atmosPipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -233,6 +251,7 @@ func (p *Post) Resize(w, h int) {
 	p.ldr = tex(w, h, gpu.FormatRGBA8Unorm)
 	hw, hh := max(w/2, 1), max(h/2, 1)
 	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
+	p.atmosTargets(tex, w, h)
 
 	// Bind groups. Each pipeline's layout is taken, used and released (a
 	// kept layout keeps its pipeline alive).
@@ -248,7 +267,7 @@ func (p *Post) Resize(w, h int) {
 	uni := func(b int) gpu.BindGroupEntry { return gpu.BindGroupEntry{Binding: b, Buffer: p.uni} }
 	for i := range p.down {
 		if i == 0 {
-			p.bgDown = append(p.bgDown, group(p.plDownFirst, samp, texEntry(1, p.sceneView)))
+			p.bgDown = append(p.bgDown, group(p.plDownFirst, samp, texEntry(1, p.lit.view)))
 		} else {
 			p.bgDown = append(p.bgDown, group(p.plDown, samp, texEntry(1, p.down[i-1].view)))
 		}
@@ -268,7 +287,7 @@ func (p *Post) Resize(w, h int) {
 	for k := 0; k < 2; k++ {
 		// Frame k reads adapt[1-k] and writes adapt[k].
 		p.bgAdapt[k] = group(p.plAdapt, samp, texEntry(1, small), texEntry(2, p.adapt[1-k].view), uni(3))
-		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.sceneView), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4), texEntry(5, p.ao[0].view))
+		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.lit.view), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4), texEntry(5, p.ao[0].view))
 	}
 	p.bgFinal = group(p.plFinal, samp, texEntry(1, p.ldr.view), uni(2))
 	p.bgAO = group(p.plAO, texEntry(0, p.depthView), uni(1))
@@ -292,6 +311,7 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		rp.Draw(3, 1, 0, 0)
 		rp.End()
 	}
+	p.atmosRender(enc) // the air and the sky: p.lit is what the camera sees
 	for i := range p.down {
 		pl := p.plDown
 		if i == 0 {
@@ -386,6 +406,7 @@ func (p *Post) releaseTargets() {
 	p.ldr.release()
 	p.ao[0].release()
 	p.ao[1].release()
+	p.atmosReleaseTargets()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -408,6 +429,7 @@ func (p *Post) releaseTargets() {
 // Release frees everything Post made.
 func (p *Post) Release() {
 	p.releaseTargets()
+	p.atmosRelease()
 	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal, &p.plAO, &p.plAOBlurH, &p.plAOBlurV} {
 		if *pl != nil {
 			(*pl).Release()

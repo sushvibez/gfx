@@ -24,6 +24,10 @@ type Renderer3D struct {
 	// depth target then needs TextureBinding; View3D sets this for its Post.
 	KeepDepth bool
 
+	// lastLightVP is the sun's shadow matrix as of the last Begin (Post's
+	// light shafts read the shadow map with it).
+	lastLightVP core.Mat4
+
 	device    *gpu.Device
 	queue     *gpu.Queue
 	pipeline  *gpu.RenderPipeline
@@ -720,6 +724,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	if fs.Fog.Enabled {
 		fogOn = 1
 	}
+	r.lastLightVP = lightProj.Mul(lightView)
 	u := frameUniforms{
 		ViewProj:   viewProj,
 		LightVP:    lightProj.Mul(lightView),

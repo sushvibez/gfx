@@ -5,6 +5,7 @@ package render
 import (
 	"image"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -240,5 +241,111 @@ func TestPostAmbientOcclusion(t *testing.T) {
 	// the horizon or the frame's edge.
 	if mx < w/5 || mx > 4*w/5 || my < h/4 {
 		t.Fatalf("the darkest occlusion is at (%d, %d), not by the box", mx, my)
+	}
+}
+
+// atmosScene renders a long slab (10 wide, 44 deep along the view) floating in empty air under an overhead sun,
+// seen level from the side, through Post with the given atmosphere.
+func atmosScene(t *testing.T, w, h int, atm Atmosphere, yaw float32) []byte {
+	t.Helper()
+	dev, q := headlessDevice(t)
+	r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r3.Release()
+	fs := DefaultFrameSettings()
+	fs.Tonemap = TonemapHDR
+	r3.SetFrameSettings(fs)
+	r3.SetShadowArea(core.V3(0, 5, 0), 30)
+	r3.KeepDepth = true
+	post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer post.Release()
+	s := &post.Settings
+	s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen, s.AO = 0, 0, 0, 0, 0, 0, 0
+	s.Lift = [3]float32{} // black stays black, so empty air reads zero
+	s.FXAA = false
+	post.Resize(w, h)
+	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+	tview := target.CreateView()
+	defer func() { tview.Release(); target.Release() }()
+
+	eye := core.V3(0, 5, 40)
+	at := eye.Add(core.V3(float32(math.Sin(float64(yaw))), 0, -float32(math.Cos(float64(yaw)))))
+	proj := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.1, 300)
+	view := core.Mat4LookAt(eye, at, core.V3(0, 1, 0))
+	post.Projection, post.View, post.Atmosphere = proj, view, atm
+	grey := &Material{Color: RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}, Roughness: 1}
+	r3.Begin(proj.Mul(view), atm.SunDir, eye)
+	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, 10, 0)).Mul(core.Mat4Scale(core.V3(10, 0.3, 44))), grey)
+	post.UseShadow(r3)
+	enc := dev.CreateCommandEncoder()
+	if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{A: 1}); err != nil {
+		t.Fatal(err)
+	}
+	post.Render(enc, tview)
+	q.Submit(enc.Finish())
+	pix, err := dev.ReadTexture(q, target, w, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir := os.Getenv("POST_DUMP"); dir != "" {
+		img := &image.RGBA{Pix: pix, Stride: w * 4, Rect: image.Rect(0, 0, w, h)}
+		if f, err := os.Create(filepath.Join(dir, "atmos.png")); err == nil {
+			png.Encode(f, img)
+			f.Close()
+		}
+	}
+	return pix
+}
+
+// Light shafts: air in a slab's shadow scatters less sunlight than the lit
+// air beside it, so the shadow shows as a darker column in the haze.
+func TestPostLightShafts(t *testing.T) {
+	const w, h = 480, 300
+	atm := Atmosphere{Shafts: 0.02, Falloff: 1000, MaxDistance: 140, SunDir: core.V3(0, -1, 0), Sun: [3]float32{3, 3, 3}}
+	pix := atmosScene(t, w, h, atm, 0)
+	// Level with the eye: under the slab (the image's centre column) and
+	// well to its side.
+	y := h/2 + 20
+	under, beside := lumAt(pix, w, w/2, y), lumAt(pix, w, w/2+170, y)
+	if beside < 20 {
+		t.Fatalf("lit air reads %v: no in-scattered light", beside)
+	}
+	if under > beside*0.9 {
+		t.Fatalf("no shaft: the air under the slab reads %v, beside it %v", under, beside)
+	}
+	// Without shafts the empty air is black.
+	off := atm
+	off.Shafts = 0
+	if l := lumAt(atmosScene(t, w, h, off, 0), w, w/2+170, y); l > 3 {
+		t.Fatalf("with Shafts 0 the air reads %v, want the clear colour", l)
+	}
+}
+
+// The sky: brighter toward the sun than away from it, and the zenith's
+// colour overhead where the horizon's is at eye level.
+func TestPostSky(t *testing.T) {
+	const w, h = 480, 300
+	// A low sun in front of the camera (the light travels toward +z).
+	atm := Atmosphere{Sky: true, Zenith: [3]float32{0.05, 0.10, 0.40}, Horizon: [3]float32{0.6, 0.4, 0.2},
+		SunDir: core.V3(0, -0.2, 1), Sun: [3]float32{4, 3, 2}}
+	toward := atmosScene(t, w, h, atm, 0)
+	away := atmosScene(t, w, h, atm, math.Pi)
+	// Above eye level and to the side, clear of the slab overhead.
+	x, y := w/2+170, h/2-30
+	if a, b := lumAt(toward, w, x, y), lumAt(away, w, x, y); a < b+25 {
+		t.Fatalf("the sky toward the sun reads %v, away from it %v", a, b)
+	}
+	// Away from the sun: blue at the top of the frame, warm at eye level.
+	top, eyeLevel := (5*w+x)*4, ((h/2-4)*w+x)*4
+	if !(away[top+2] > away[top]) {
+		t.Fatalf("the sky overhead is not blue: rgb %v", away[top:top+3])
+	}
+	if !(away[eyeLevel] > away[eyeLevel+2]) {
+		t.Fatalf("the horizon is not warm: rgb %v", away[eyeLevel:eyeLevel+3])
 	}
 }

@@ -114,6 +114,7 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 	}
 	if v.Post != nil {
 		v.Post.Resize(v.pw, v.ph)
+		v.Post.UseShadow(r3) // the light shafts read the sun's shadow map
 		keep := r3.KeepDepth
 		r3.KeepDepth = true // Post reads the depth buffer
 		err := r3.Render(enc, v.Post.SceneView(), v.Post.DepthView(), v.Clear)

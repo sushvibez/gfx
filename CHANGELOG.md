@@ -12,6 +12,10 @@
   `Post.Projection`): half-resolution, normals from depth, a depth-aware
   blur, applied to ambient light only. `Renderer3D.KeepDepth` and
   `CommandEncoder.BeginRenderPassDepthStore` keep the depth buffer for it.
+- `Post.Atmosphere`: light shafts (the view ray marched against the sun's
+  shadow map at half resolution, a two-lobe phase, air thinning with
+  height, an analytic far haze) and an analytic sky (gradient, a warm band
+  toward the sun, its glow and disc). `Post.View`, `Post.UseShadow`.
 - The sun's shadow volume snaps to its own texels, so shadow edges hold
   still while a camera it follows moves (they shimmered).
 - `FrameSettings.SunSoftness`: PCSS sun shadows for material draws, crisp

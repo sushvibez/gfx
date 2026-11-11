@@ -107,8 +107,9 @@ real browser. Win32 `WM_TOUCH` is not handled.
 - **`render` post stack** (§9, 2026-11-11): `render.Post` displays an HDR
   scene (bloom, auto exposure, ACES/AgX, grade, vignette, FXAA, grain).
   PCSS sun shadows (`FrameSettings.SunSoftness`) and ambient occlusion
-  (`PostSettings.AO`) followed the same day. Still to come, in order:
-  volumetric light and a physical sky, a temporal filter for AO's grain, environment lighting (IBL), lens flare, motion
+  (`PostSettings.AO`) followed the same day, then light shafts and an
+  analytic sky (`Post.Atmosphere`). Still to come, in order: a temporal
+  filter for the AO and shaft grain, lamps in the volumetric pass, environment lighting (IBL), lens flare, motion
   blur, GPU particles, quality tiers. The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.
 - **`app`** (§8): Wayland; multi-window beyond X11 (`NewChild`, `Hide`,
