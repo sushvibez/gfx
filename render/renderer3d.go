@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/chewxy/math32"
+
 	"sort"
 	"unsafe"
 
@@ -683,13 +685,28 @@ func (r *Renderer3D) SetShadowArea(center core.Vec3, radius float32) {
 // Begin starts a frame with the camera and light setup.
 func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	ld := lightDir.Normalize()
-	eye := r.shadowCenter.Sub(ld.Scale(2 * r.shadowRadius))
 	up := core.V3(0, 1, 0)
 	if ld.Y > 0.99 || ld.Y < -0.99 {
 		up = core.V3(1, 0, 0)
 	}
-	lightView := core.Mat4LookAt(eye, r.shadowCenter, up)
 	s := r.shadowRadius
+	// Snap the shadow volume to whole texels of its own map (in the light's
+	// plane): a volume that follows the camera continuously slides its
+	// texels across the ground, and every shadow edge shimmers as you move.
+	center := r.shadowCenter
+	if s > 0 {
+		lz := ld.Scale(-1)
+		lx := up.Cross(lz).Normalize()
+		ly := lz.Cross(lx)
+		texel := 2 * s / shadowMapSize
+		cx, cy, cz := center.Dot(lx), center.Dot(ly), center.Dot(lz)
+		step := 64 * texel // along the light: coarse, so stored depths hold still too
+		center = center.Add(lx.Scale(math32.Floor(cx/texel)*texel - cx)).
+			Add(ly.Scale(math32.Floor(cy/texel)*texel - cy)).
+			Add(lz.Scale(math32.Floor(cz/step)*step - cz))
+	}
+	eye := center.Sub(ld.Scale(2 * s))
+	lightView := core.Mat4LookAt(eye, center, up)
 	lightProj := core.Mat4Ortho(-s, s, -s, s, 0.1, 4.5*s)
 
 	fs := r.settings

@@ -108,3 +108,58 @@ func TestSoftShadowWidensWithDistance(t *testing.T) {
 		t.Fatalf("no contact hardening: %d px far, %d px near the foot", softFar, softNear)
 	}
 }
+
+// shadowAt renders a wall's shadow with the shadow volume centred at c.
+func shadowAt(t *testing.T, c core.Vec3) []byte {
+	t.Helper()
+	const w, h = 256, 256
+	dev, q := headlessDevice(t)
+	r3, err := New3D(dev, q, gpu.FormatRGBA8Unorm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r3.Release()
+	fs := DefaultFrameSettings()
+	fs.Tonemap = 0
+	r3.SetFrameSettings(fs)
+	r3.SetShadowArea(c, 16)
+	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+	view := target.CreateView()
+	depth := dev.CreateDepthTexture(w, h)
+	dview := depth.CreateView()
+	defer func() { dview.Release(); depth.Release(); view.Release(); target.Release() }()
+	eye := core.V3(0, 60, 0)
+	vp := core.Mat4Perspective(0.4, 1, 1, 200).Mul(core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 0, -1)))
+	grey := &Material{Color: RGBA{R: 0.8, G: 0.8, B: 0.8, A: 1}, Roughness: 1}
+	r3.Begin(vp, core.V3(0.3, -1, 1), eye)
+	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60))), grey)
+	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, 5, -8)).Mul(core.Mat4Scale(core.V3(8, 10, 0.3))), grey)
+	enc := dev.CreateCommandEncoder()
+	if err := r3.Render(enc, view, dview, gpu.Color{A: 1}); err != nil {
+		t.Fatal(err)
+	}
+	q.Submit(enc.Finish())
+	pix, err := dev.ReadTexture(q, target, w, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pix
+}
+
+// The shadow volume snaps to its own texels: following a camera that moves
+// a fraction of a texel changes nothing, so shadow edges do not shimmer as
+// the player walks. A whole-texel move still follows.
+func TestShadowVolumeSnapsToTexels(t *testing.T) {
+	const texel = 2 * 16.0 / shadowMapSize
+	a := shadowAt(t, core.V3(0.2*texel, 0, 0.2*texel))
+	b := shadowAt(t, core.V3(0.5*texel, 0, 0.5*texel))
+	diff := 0
+	for i := range a {
+		if a[i] != b[i] {
+			diff++
+		}
+	}
+	if diff != 0 {
+		t.Fatalf("a sub-texel move of the shadow volume changed %d bytes of the image", diff)
+	}
+}

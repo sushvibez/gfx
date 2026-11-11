@@ -12,6 +12,8 @@
   `Post.Projection`): half-resolution, normals from depth, a depth-aware
   blur, applied to ambient light only. `Renderer3D.KeepDepth` and
   `CommandEncoder.BeginRenderPassDepthStore` keep the depth buffer for it.
+- The sun's shadow volume snaps to its own texels, so shadow edges hold
+  still while a camera it follows moves (they shimmered).
 - `FrameSettings.SunSoftness`: PCSS sun shadows for material draws, crisp
   at contact and wider with distance from the caster, with an analytic
   receiver-plane bias (no screen derivatives).
