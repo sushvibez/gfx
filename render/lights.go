@@ -48,6 +48,14 @@ type SpotLight struct {
 // MaxSpotShadows is how many spot lights can cast shadows in one frame.
 const MaxSpotShadows = 4
 
+// The sky map: a depth map looking straight down on skyMapRadius metres
+// round the camera, drawn when the frame is wet or rained on, so that
+// what has a roof over it stays dry.
+const (
+	skyMapSize   = 1024
+	skyMapRadius = 64
+)
+
 // spotShadowSize is the side of one spot light's shadow map.
 const spotShadowSize = 1024
 
@@ -81,14 +89,16 @@ type FrameSettings struct {
 	// is off screen or hidden is not reflected). Opaque material draws
 	// carry their mirror strength in the HDR target's alpha.
 	SceneReflection float32
-	// Wetness (0…1) wets every material surface: damp surfaces darken and
-	// gloss over, and standing water gathers in puddles on level ground
-	// (placed by a noise over world x and z, more of them as it rises).
-	// With SceneReflection the puddles mirror the scene.
+	// Wetness (0…1) wets every material surface open to the sky: damp
+	// surfaces darken and gloss over, and standing water gathers in puddles
+	// on level ground (placed by a noise over world x and z, more of them as
+	// it rises). With SceneReflection the puddles mirror the scene. What
+	// has a roof over it (any opaque material draw above it, within 64 m of
+	// the camera) stays dry.
 	Wetness float32
-	// Rain (0…1) is rain falling on the wet: rings spread across the
-	// puddles and their mirror ripples (see Atmosphere.Rain for the
-	// streaks in the air).
+	// Rain (0…1) is rain falling on the wet: each drop leaves a pale fleck
+	// where it lands, rings spread across the puddles and their mirror
+	// ripples (see Atmosphere.Rain for the streaks in the air).
 	Rain float32
 	// Time, in seconds, moves what animates in the shader (Material.Water).
 	Time float32
@@ -176,6 +186,7 @@ type gpuLight struct {
 type lightBlock struct {
 	Items  [maxLights]gpuLight
 	SpotVP [MaxSpotShadows]core.Mat4 // the shadow-casting spots' view-projections, by slot
+	RainVP core.Mat4                 // the sky map's view-projection (all zero when there is none)
 }
 
 // packLights flattens the frame's point and spot lights into the GPU block

@@ -45,7 +45,7 @@ struct Light {
     dir_cos : vec4f,    // xyz cone axis, w cos(outer half angle)
     params : vec4f,     // x cos(inner half angle), y shadow slot + 1, z shadow texel size per metre
 }
-struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4> }
+struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4>, rain_vp : mat4x4f }
 
 @group(0) @binding(0) var<storage, read> frame : Frame;
 @group(0) @binding(1) var<storage, read> draws : array<MDraw>;
@@ -56,6 +56,7 @@ struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4> }
 @group(0) @binding(6) var spot_tex1 : texture_depth_2d;
 @group(0) @binding(7) var spot_tex2 : texture_depth_2d;
 @group(0) @binding(8) var spot_tex3 : texture_depth_2d;
+@group(0) @binding(9) var sky_tex : texture_depth_2d;
 
 @group(1) @binding(0) var samp : sampler;
 @group(1) @binding(1) var albedo_tex : texture_2d<f32>;
@@ -168,11 +169,32 @@ fn wet_noise(p : vec2f) -> f32 {
     return mix(mix(wet_hash(i), wet_hash(i + vec2f(1.0, 0.0)), u.x),
                mix(wet_hash(i + vec2f(0.0, 1.0)), wet_hash(i + vec2f(1.0, 1.0)), u.x), u.y);
 }
-// Raindrop rings on standing water: in each cell of a grid a drop lands at
-// its own place and time and a ring spreads from it, fading; the result is
-// the slope the rings give the surface.
-fn rain_rings(p : vec2f, t : f32) -> vec2f {
+// How open to the sky a point is (1 = nothing over it): the sky map is a
+// depth map looking straight down, tested a hand above the surface with
+// four taps so a roof's edge is soft. Without a map everything is open.
+fn sky_open(world : vec3f) -> f32 {
+    if (lights.rain_vp[3][3] == 0.0) {
+        return 1.0;
+    }
+    let sc = lights.rain_vp * vec4f(world + vec3f(0.0, 0.3, 0.0), 1.0);
+    let uv = vec2f(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
+        return 1.0;
+    }
+    let o = 1.0 / f32(textureDimensions(sky_tex).x);
+    var open = 0.0;
+    open += textureSampleCompareLevel(sky_tex, shadow_samp, uv + vec2f(-o, -o), sc.z - 0.0006);
+    open += textureSampleCompareLevel(sky_tex, shadow_samp, uv + vec2f(o, -o), sc.z - 0.0006);
+    open += textureSampleCompareLevel(sky_tex, shadow_samp, uv + vec2f(-o, o), sc.z - 0.0006);
+    open += textureSampleCompareLevel(sky_tex, shadow_samp, uv + vec2f(o, o), sc.z - 0.0006);
+    return open * 0.25;
+}
+// Raindrops landing: in each cell of a grid a drop lands at its own place
+// and time; a ring spreads from it, fading (xy: the slope the rings give
+// standing water), and for a moment the drop itself is a pale fleck (z).
+fn rain_drops(p : vec2f, t : f32) -> vec3f {
     var slope = vec2f(0.0);
+    var fleck = 0.0;
     for (var k = 0; k < 2; k++) {
         let q = p * (2.6 + 1.7 * f32(k)) + vec2f(13.7, 5.1) * f32(k);
         let cell = floor(q);
@@ -183,8 +205,9 @@ fn rain_rings(p : vec2f, t : f32) -> vec2f {
         let dist = length(dv);
         let ring = sin((dist - age * 0.45) * 60.0) * smoothstep(0.07, 0.0, abs(dist - age * 0.45)) * (1.0 - age);
         slope += dv / max(dist, 1e-3) * ring;
+        fleck = max(fleck, smoothstep(0.10, 0.03, dist) * (1.0 - smoothstep(0.0, 0.16, age)));
     }
-    return slope;
+    return vec3f(slope, fleck);
 }
 
 // The sun's shadow. Hard (one hardware-filtered tap) by default; with
@@ -551,7 +574,10 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     // raindrops when it rains. ripples tells Post to bend this pixel's
     // mirror image (the sea, and puddles in the rain).
     var ripples = (flags & F_WATER) != 0u;
-    let wet = frame.env.w;
+    var wet = frame.env.w;
+    if (wet > 0.0 && (flags & F_WATER) == 0u) {
+        wet = wet * sky_open(in.world); // under a roof it is dry
+    }
     if (wet > 0.0 && (flags & F_WATER) == 0u) {
         let up = clamp(n.y, 0.0, 1.0);
         let film = wet * (0.5 + 0.5 * up);
@@ -565,10 +591,16 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         metallic = mix(metallic, 0.0, puddle);
         shaded_n = normalize(mix(shaded_n, n, puddle));
         let rain = frame.sun.w;
-        if (rain > 0.0 && puddle > 0.0) {
-            let rs = rain_rings(in.world.xz, frame.env.y) * 0.5 * rain * puddle;
+        if (rain > 0.0 && up > 0.5) {
+            let drops = rain_drops(in.world.xz, frame.env.y);
+            let rs = drops.xy * 0.5 * rain * puddle;
             shaded_n = normalize(shaded_n + vec3f(rs.x, 0.0, rs.y));
             ripples = puddle > 0.5;
+            // Where a drop has just landed: a pale, matt fleck of spray.
+            let fleck = drops.z * min(rain * 1.5, 1.0) * smoothstep(0.5, 0.9, up) * wet;
+            albedo = mix(albedo, vec3f(0.8), fleck);
+            roughness = mix(roughness, 1.0, fleck);
+            metallic = mix(metallic, 0.0, fleck);
         }
     }
 

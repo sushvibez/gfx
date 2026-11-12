@@ -107,11 +107,18 @@ type Renderer3D struct {
 	spotFrames  [MaxSpotShadows]*gpu.Buffer
 	spotBinds   [MaxSpotShadows]*gpu.BindGroup
 	spotShadows int // how many slots this frame uses
-	mdraws      *gpu.Buffer
-	lightBuf    *gpu.Buffer
-	mipSampler  *gpu.Sampler
-	flatNormal  *Image3D // 1x1 (0.5,0.5,1) tangent-space "no bump"
-	black       *Image3D // 1x1 black for the emissive fallback
+	// The sky map (what is open to the rain), drawn like a spot's shadow.
+	skyMap     *gpu.Texture
+	skyView    *gpu.TextureView
+	skyFrame   *gpu.Buffer
+	skyBind    *gpu.BindGroup
+	skyOn      bool
+	lastRainVP core.Mat4
+	mdraws     *gpu.Buffer
+	lightBuf   *gpu.Buffer
+	mipSampler *gpu.Sampler
+	flatNormal *Image3D // 1x1 (0.5,0.5,1) tangent-space "no bump"
+	black      *Image3D // 1x1 black for the emissive fallback
 
 	mitems   []matItem
 	mdata    []float32
@@ -521,6 +528,9 @@ func (r *Renderer3D) initMaterialPass(format gpu.TextureFormat) error {
 		r.spotViews[i] = r.spotMaps[i].CreateView()
 		r.spotFrames[i] = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
 	}
+	r.skyMap = r.device.CreateShadowMap(skyMapSize)
+	r.skyView = r.skyMap.CreateView()
+	r.skyFrame = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
 	r.mipSampler = r.device.CreateSamplerMip(true, 8)
 	r.flatNormal = r.NewImage3D(1, 1, []byte{128, 128, 255, 255})
 	r.black = r.NewImage3D(1, 1, []byte{0, 0, 0, 255})
@@ -547,6 +557,9 @@ func (r *Renderer3D) growMDraws(size int) {
 			r.spotBinds[i] = nil
 		}
 	}
+	if r.skyBind != nil {
+		r.skyBind.Release()
+	}
 	if r.mdraws != nil {
 		r.mdraws.Release()
 	}
@@ -567,6 +580,10 @@ func (r *Renderer3D) growMDraws(size int) {
 			gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
 		)
 	}
+	r.skyBind = r.device.CreateBindGroup(r.matShLayout,
+		gpu.BindGroupEntry{Binding: 0, Buffer: r.skyFrame},
+		gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
+	)
 	r.rebuildMatSkinShadowBind()
 }
 
@@ -583,7 +600,7 @@ func (r *Renderer3D) matFrameEntries() []gpu.BindGroupEntry {
 	for i, v := range r.spotViews {
 		e = append(e, gpu.BindGroupEntry{Binding: 5 + i, TextureView: v})
 	}
-	return e
+	return append(e, gpu.BindGroupEntry{Binding: 9, TextureView: r.skyView})
 }
 
 func (r *Renderer3D) growDraws(size int) {
@@ -657,6 +674,10 @@ func (r *Renderer3D) Release() {
 	rel(r.lightBuf)
 	rel(r.mdraws)
 	rel(r.matShadowBind)
+	rel(r.skyBind)
+	rel(r.skyFrame)
+	rel(r.skyView)
+	rel(r.skyMap)
 	for i := range r.spotMaps {
 		rel(r.spotBinds[i])
 		rel(r.spotFrames[i])
@@ -761,6 +782,18 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		fs.Exposure = 1
 	}
 	n := r.packLights(&r.lights)
+	// The sky map looks straight down on the camera's surroundings, snapped
+	// to its own texels so the edge of a roof's shelter holds still.
+	r.skyOn = fs.Wetness > 0 || fs.Rain > 0
+	r.lights.RainVP = core.Mat4{}
+	if r.skyOn {
+		const texel = 2.0 * skyMapRadius / skyMapSize
+		cx, cz := math32.Floor(camPos.X/texel)*texel, math32.Floor(camPos.Z/texel)*texel
+		top := math32.Floor(camPos.Y/8)*8 + 120
+		r.lights.RainVP = core.Mat4Ortho(-skyMapRadius, skyMapRadius, -skyMapRadius, skyMapRadius, 0.5, 320).
+			Mul(core.Mat4LookAt(core.V3(cx, top, cz), core.V3(cx, top-1, cz), core.V3(0, 0, -1)))
+	}
+	r.lastRainVP = r.lights.RainVP
 	r.lastLightCount = n
 	r.queue.WriteBuffer(r.lightBuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&r.lights)), unsafe.Sizeof(r.lights)))
 
@@ -790,6 +823,11 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		su := u
 		su.LightVP = r.lights.SpotVP[i]
 		r.queue.WriteBuffer(r.spotFrames[i], 0, unsafe.Slice((*byte)(unsafe.Pointer(&su)), unsafe.Sizeof(su)))
+	}
+	if r.skyOn {
+		su := u
+		su.LightVP = r.lights.RainVP
+		r.queue.WriteBuffer(r.skyFrame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&su)), unsafe.Sizeof(su)))
 	}
 	r.items = r.items[:0]
 	r.data = r.data[:0]
@@ -978,6 +1016,11 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 		for i := 0; i < r.spotShadows; i++ {
 			sp := enc.BeginShadowPass(r.spotViews[i])
 			r.drawMatShadows(sp, r.spotBinds[i])
+			sp.End()
+		}
+		if r.skyOn {
+			sp := enc.BeginShadowPass(r.skyView)
+			r.drawMatShadows(sp, r.skyBind)
 			sp.End()
 		}
 	}

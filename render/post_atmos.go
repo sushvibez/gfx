@@ -70,6 +70,7 @@ type atmosUniforms struct {
 	Proj    core.Vec4 // projection x and y scales, depth terms
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
 	Rain    core.Vec4 // x how hard it rains, y time in seconds
+	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -77,16 +78,18 @@ type atmosUniforms struct {
 // and the lamps' beams. View3D calls it.
 func (p *Post) UseShadow(r *Renderer3D) {
 	if r == nil {
-		if p.shadowView != nil || p.lightBuf != nil {
+		if p.shadowView != nil || p.lightBuf != nil || p.skyView != nil {
 			p.atmosDirty = true
 		}
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
+		p.skyView, p.rainVP = nil, core.Mat4{}
 		return
 	}
-	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf {
-		p.shadowView, p.lightBuf = r.shadowView, r.lightBuf
+	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf || p.skyView != r.skyView {
+		p.shadowView, p.lightBuf, p.skyView = r.shadowView, r.lightBuf, r.skyView
 		p.atmosDirty = true
 	}
+	p.rainVP = r.lastRainVP
 	p.lightVP = r.lastLightVP
 	p.lightCount = r.lastLightCount
 	p.reflect = r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
@@ -151,7 +154,11 @@ func (p *Post) atmosBind() {
 	p.bgVol = group(p.plVol, tex(0, p.depthView), tex(1, shadow), uni(2), gpu.BindGroupEntry{Binding: 3, Buffer: lights})
 	p.bgVolBlur[0] = group(p.plVolBlurH, tex(0, p.depthView), tex(1, p.vol[0].view), uni(2))
 	p.bgVolBlur[1] = group(p.plVolBlurV, tex(0, p.depthView), tex(1, p.vol[1].view), uni(2))
-	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3))
+	skyMap := p.skyView
+	if skyMap == nil {
+		skyMap = p.noShadow.view
+	}
+	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3), tex(4, skyMap))
 }
 
 // atmosRender records the shafts and the combine pass; the result is
@@ -198,6 +205,9 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 		u.Lamps.Z = 1
 	}
 	u.Rain = core.V4(0, p.time, 0, 0)
+	if p.skyView != nil {
+		u.RainVP = p.rainVP
+	}
 	if ok && p.Projection[0] != 0 {
 		u.Rain.X = a.Rain
 	}
@@ -271,6 +281,7 @@ struct AtmU {
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
     rain : vec4f,      // x how hard it rains, y time
+    rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
 // The view-space ray through a uv (not normalised: z is -1).
@@ -439,7 +450,23 @@ const postAtmosWGSL = `
 @group(0) @binding(1) var scene : texture_2d<f32>;
 @group(0) @binding(2) var vol : texture_2d<f32>;
 @group(0) @binding(3) var<uniform> A : AtmU;
+@group(0) @binding(4) var sky_map : texture_depth_2d;
 ` + postAtmosCommonWGSL + `
+// Whether the air at a world point is open to the sky (1) or has a roof
+// over it (0), by the renderer's sky map; open where there is no map.
+fn rain_open(w : vec3f) -> f32 {
+    if (A.rain_vp[3][3] == 0.0) {
+        return 1.0;
+    }
+    let sc = A.rain_vp * vec4f(w, 1.0);
+    let uv = vec2f(sc.x * 0.5 + 0.5, -sc.y * 0.5 + 0.5);
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
+        return 1.0;
+    }
+    let dims = vec2f(textureDimensions(sky_map));
+    let top = textureLoad(sky_map, min(vec2i(uv * dims), vec2i(dims) - 1), 0);
+    return step(sc.z - 0.0006, top);
+}
 // One layer of rain: a grid of tall cells, each with a streak at its own
 // place, length and phase, falling at speed (screens per second); cells is
 // how many columns span the screen's height, so nearer layers are coarser
@@ -589,10 +616,13 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
         let turn = vec2f(atan2(fwd.x, -fwd.z), -asin(clamp(fwd.y, -1.0, 1.0)));
         let zd = select(view_dist(d), 1e6, is_sky);
         let glow = A.amb.rgb * 1.4 + A.sun.rgb * 0.12 + col * 0.8;
+        // Each layer stands at its own distance: hidden behind what is
+        // nearer, and absent where the air there has a roof over it.
+        let ray = world_dir(view_ray(uv));
         var streaks = 0.0;
-        streaks += rain_layer(uv, dims.x / dims.y, turn, 9.0, 1.9, 1.0) * step(2.0, zd) * 1.0;
-        streaks += rain_layer(uv, dims.x / dims.y, turn, 17.0, 1.5, 2.0) * step(6.0, zd) * 0.7;
-        streaks += rain_layer(uv, dims.x / dims.y, turn, 31.0, 1.1, 3.0) * step(15.0, zd) * 0.45;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 9.0, 1.9, 1.0) * step(2.0, zd) * rain_open(A.cam.xyz + ray * 2.0) * 1.0;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 17.0, 1.5, 2.0) * step(6.0, zd) * rain_open(A.cam.xyz + ray * 6.0) * 0.7;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 31.0, 1.1, 3.0) * step(15.0, zd) * rain_open(A.cam.xyz + ray * 15.0) * 0.45;
         col = col + glow * streaks * A.rain.x * 0.5;
     }
     return vec4f(col, 1.0);

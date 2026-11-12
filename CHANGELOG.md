@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Rain keeps out from under roofs: when a frame is wet or rained on the renderer draws a sky map (a depth map looking straight down on 64 m round the camera); wetness, puddles and `Atmosphere.Rain`'s streaks test it. Each raindrop also leaves a pale fleck where it lands.
+
 - Weather: `FrameSettings.Wetness` wets every material surface (damp surfaces darken and gloss over; puddles gather on level ground and, with `SceneReflection`, mirror the scene), `FrameSettings.Rain` rings the puddles with drops, and `Atmosphere.Rain` draws rain in the air in three depth layers. Water and rained-on puddles now ripple their mirror image (a negative alpha in the HDR target marks them for Post).
 
 - `FrameSettings.SceneReflection`: glossy surfaces mirror the scene itself. Opaque material draws leave their mirror strength in the HDR target's alpha and `render.Post` traces the reflected ray through the depth buffer (screen-space: what is off screen or hidden is not reflected), swapping the sky's reflection for what the ray meets.
