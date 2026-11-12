@@ -17,6 +17,9 @@ import (
 // postScene renders frames of one lamp (an unlit cube of the given
 // radiance) over a dark lit floor through Post and returns the last
 // frame's pixels (RGBA8, w×h). gain scales the whole scene's radiance.
+// postSceneEach, when set, is called before each of postScene's frames.
+var postSceneEach func(i int, p *Post)
+
 // postSceneLampX moves postScene's lamp off the picture's centre.
 var postSceneLampX float32
 
@@ -51,6 +54,9 @@ func postScene(t *testing.T, w, h int, radiance, gain float32, tune func(*PostSe
 	lamp := &Material{Color: RGBA{R: 1, G: 0.8, B: 0.5, A: 1}, Unlit: true, Emission: radiance}
 	floor := &Material{Color: RGBA{R: 0.3, G: 0.3, B: 0.3, A: 1}, Roughness: 0.9}
 	for i := 0; i < frames; i++ {
+		if postSceneEach != nil {
+			postSceneEach(i, post)
+		}
 		r3.Begin(vp, core.V3(-0.4, -1, -0.3), eye)
 		r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(postSceneLampX, 1, 0)).Mul(core.Mat4Scale(core.V3(0.5, 0.5, 0.5))), lamp)
 		r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(30, 1, 30))), floor)
@@ -439,5 +445,32 @@ func TestPostLens(t *testing.T) {
 	}
 	if a, b := lumAt(streak, w, sx, ly+70), lumAt(plain, w, sx, ly+70); a > b+6 {
 		t.Fatalf("the streak is not a streak: %v below it, %v without", a, b)
+	}
+}
+
+// Resizing Post (a render scale stepping) keeps the eye's adaptation: the
+// frame after the resize is exposed like the frame before it, not flashed
+// to the maximum exposure of an eye that has seen nothing.
+func TestPostResizeKeepsExposure(t *testing.T) {
+	const w, h = 320, 200
+	defer func() { postSceneEach = nil }()
+	mean := func(pix []byte) float64 {
+		s := 0.0
+		for i := 0; i < w*h; i++ {
+			s += float64(pix[i*4+1])
+		}
+		return s / float64(w*h)
+	}
+	tune := func(s *PostSettings) { s.Bloom, s.AO, s.LensFlare = 0, 0, 0 }
+	postSceneEach = nil
+	steady := mean(postScene(t, w, h, 3, 1, tune, 12))
+	postSceneEach = func(i int, p *Post) {
+		if i == 11 {
+			p.Resize(w*4/5, h*4/5)
+		}
+	}
+	resized := mean(postScene(t, w, h, 3, 1, tune, 12))
+	if resized > steady*1.15+2 || resized < steady*0.85-2 {
+		t.Fatalf("the picture's mean went from %.1f to %.1f on the frame after a resize", steady, resized)
 	}
 }

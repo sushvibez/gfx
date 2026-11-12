@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: resizing `Post` (which `View3D.RenderScale` does whenever it changes) threw away the eye-adaptation history, so the exposure flashed to its maximum for a moment.
+
 - Performance: `View3D.RenderScale` renders the scene and Post at a fraction of the view's pixels and stretches the result; triplanar sampling skips planes with no weight (a face square to an axis reads one projection, not three) and the emissive map when a material has none; soft sun shadows return early deep in the umbra; the haze reads lamps on every other step. `shell.ScreenshotScript` has its js stub.
 
 - The lens: `PostSettings.LensFlare` (ghosts and a halo from whatever is far brighter than white, image-based, so a light that goes behind something loses its flare), `LensStreak` (an anamorphic streak) and `LensDirt` (dust and smears that light up under a bright light).

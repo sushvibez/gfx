@@ -263,7 +263,13 @@ func (p *Post) Resize(w, h int) {
 	for i := 0; i < len(p.down)-1; i++ {
 		p.up = append(p.up, tex(p.down[i].w, p.down[i].h, hdr))
 	}
-	p.adapt[0], p.adapt[1] = tex(1, 1, hdr), tex(1, 1, hdr)
+	// The eye's adaptation is history, and no size: it outlives a resize
+	// (a new pair would start from black, and the exposure would flash to
+	// its maximum each time a render scale stepped).
+	if p.adapt[0].tex == nil {
+		p.adapt[0], p.adapt[1] = tex(1, 1, hdr), tex(1, 1, hdr)
+		p.frame = 0 // no history yet: the first frames adapt at once
+	}
 	p.ldr = tex(w, h, gpu.FormatRGBA8Unorm)
 	hw, hh := max(w/2, 1), max(h/2, 1)
 	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
@@ -417,8 +423,6 @@ func (p *Post) releaseTargets() {
 		p.up[i].release()
 	}
 	p.down, p.up = nil, nil
-	p.adapt[0].release()
-	p.adapt[1].release()
 	p.ldr.release()
 	p.ao[0].release()
 	p.ao[1].release()
@@ -445,6 +449,8 @@ func (p *Post) releaseTargets() {
 // Release frees everything Post made.
 func (p *Post) Release() {
 	p.releaseTargets()
+	p.adapt[0].release()
+	p.adapt[1].release()
 	p.atmosRelease()
 	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal, &p.plAO, &p.plAOBlurH, &p.plAOBlurV} {
 		if *pl != nil {
