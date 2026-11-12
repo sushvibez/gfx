@@ -264,6 +264,12 @@ fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
     if (nb < 0.5) {
         return 1.0;
     }
+    // Deep in the umbra (every tap blocked) there is no edge to filter.
+    let e = min(uv, 1.0 - uv);
+    let border = smoothstep(0.0, 0.03, min(e.x, e.y));
+    if (nb > 7.5) {
+        return 1.0 - border;
+    }
     // Penumbra: wider the further the blockers are.
     let pen = clamp((zr - blk / nb) * soft, 1.25 / dims.x, search);
     var lit = 0.0;
@@ -273,8 +279,7 @@ fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
     }
     lit /= 12.0;
     // Fade to lit at the map's edge, so its border never shows.
-    let e = min(uv, 1.0 - uv);
-    return mix(1.0, lit, smoothstep(0.0, 0.03, min(e.x, e.y)));
+    return mix(1.0, lit, border);
 }
 
 // ---- stochastic hex tiling (Heitz & Neyret / Mikkelsen) --------------------
@@ -356,25 +361,36 @@ fn tex_sample(t : texture_2d<f32>, uv : vec2f, dx : vec2f, dy : vec2f, anti : bo
 // Triplanar: project the map down the three axes and blend by |n|^4, so a
 // face perpendicular to an axis takes that plane almost exclusively and
 // only the diagonals cross-fade.
+const TRI_MIN = 0.004;
 fn tri_weights(n : vec3f) -> vec3f {
     var w = abs(n);
     w = w * w;
     w = w * w;
+    w = w / max(w.x + w.y + w.z, 1e-6);
+    // Drop what is below the sampling threshold and renormalise, so skipping
+    // a plane takes nothing from the sum.
+    w = w * step(vec3f(TRI_MIN), w);
     return w / max(w.x + w.y + w.z, 1e-6);
 }
 
 fn tri_sample(t : texture_2d<f32>, p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3f, anti : bool, rs : f32) -> vec4f {
-    let cx = tex_sample(t, p.zy, dpx.zy, dpy.zy, anti, rs);
-    let cy = tex_sample(t, p.xz, dpx.xz, dpy.xz, anti, rs);
-    let cz = tex_sample(t, p.xy, dpx.xy, dpy.xy, anti, rs);
-    return cx * w.x + cy * w.y + cz * w.z;
+    // A plane that contributes nothing is not sampled: a face square to an
+    // axis (most of a built world) reads one projection, not three.
+    var c = vec4f(0.0);
+    if (w.x > TRI_MIN) { c += tex_sample(t, p.zy, dpx.zy, dpy.zy, anti, rs) * w.x; }
+    if (w.y > TRI_MIN) { c += tex_sample(t, p.xz, dpx.xz, dpy.xz, anti, rs) * w.y; }
+    if (w.z > TRI_MIN) { c += tex_sample(t, p.xy, dpx.xy, dpy.xy, anti, rs) * w.z; }
+    return c;
 }
 
 // Whiteout blend of three tangent-space normal samples into world space.
 fn tri_normal(p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3f, n : vec3f, anti : bool, rs : f32, scale : f32) -> vec3f {
-    var tx = tex_sample(normal_tex, p.zy, dpx.zy, dpy.zy, anti, rs).xyz * 2.0 - 1.0;
-    var ty = tex_sample(normal_tex, p.xz, dpx.xz, dpy.xz, anti, rs).xyz * 2.0 - 1.0;
-    var tz = tex_sample(normal_tex, p.xy, dpx.xy, dpy.xy, anti, rs).xyz * 2.0 - 1.0;
+    var tx = vec3f(0.0, 0.0, 1.0);
+    var ty = vec3f(0.0, 0.0, 1.0);
+    var tz = vec3f(0.0, 0.0, 1.0);
+    if (w.x > TRI_MIN) { tx = tex_sample(normal_tex, p.zy, dpx.zy, dpy.zy, anti, rs).xyz * 2.0 - 1.0; }
+    if (w.y > TRI_MIN) { ty = tex_sample(normal_tex, p.xz, dpx.xz, dpy.xz, anti, rs).xyz * 2.0 - 1.0; }
+    if (w.z > TRI_MIN) { tz = tex_sample(normal_tex, p.xy, dpx.xy, dpy.xy, anti, rs).xyz * 2.0 - 1.0; }
     tx = vec3f(tx.xy * scale, tx.z);
     ty = vec3f(ty.xy * scale, ty.z);
     tz = vec3f(tz.xy * scale, tz.z);
@@ -499,14 +515,18 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     if (triplanar) {
         texel = tri_sample(albedo_tex, wp, dpx, dpy, tw, anti, rot_scale);
         arm = tri_sample(arm_tex, wp, dpx, dpy, tw, anti, rot_scale);
-        emis = tri_sample(emis_tex, wp, dpx, dpy, tw, anti, rot_scale);
+        if ((flags & F_EMISSIVE) != 0u) {
+            emis = tri_sample(emis_tex, wp, dpx, dpy, tw, anti, rot_scale);
+        }
         if ((flags & F_NORMAL) != 0u) {
             shaded_n = tri_normal(wp, dpx, dpy, tw, n, anti, rot_scale, d.p0.z);
         }
     } else {
         texel = tex_sample(albedo_tex, uv, duvx, duvy, anti, rot_scale);
         arm = tex_sample(arm_tex, uv, duvx, duvy, anti, rot_scale);
-        emis = tex_sample(emis_tex, uv, duvx, duvy, anti, rot_scale);
+        if ((flags & F_EMISSIVE) != 0u) {
+            emis = tex_sample(emis_tex, uv, duvx, duvy, anti, rot_scale);
+        }
         if ((flags & F_NORMAL) != 0u) {
             var tn = tex_sample(normal_tex, uv, duvx, duvy, anti, rot_scale).xyz * 2.0 - 1.0;
             tn = vec3f(tn.xy * d.p0.z, tn.z);

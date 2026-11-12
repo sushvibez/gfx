@@ -29,6 +29,12 @@ type View3D struct {
 	// view does not own it: release it yourself. Clear is then linear
 	// radiance.
 	Post *Post
+	// RenderScale (0…1; zero means 1) is the fraction of the view's pixels,
+	// each way, that the scene is rendered at when Post is set: 0.7 shades
+	// half the pixels and Post stretches the picture back over the view. The
+	// lever for slow GPUs; change it freely (the targets are rebuilt when it
+	// changes).
+	RenderScale float32
 
 	device *gpu.Device
 	r2     *Renderer2D
@@ -113,7 +119,14 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 		return nil // not yet sized
 	}
 	if v.Post != nil {
-		v.Post.Resize(v.pw, v.ph)
+		// The scene and every pass over it run at RenderScale of the view's
+		// pixels; Post's last pass (FXAA, sharpen) stretches the result over
+		// the full target.
+		s := v.RenderScale
+		if s <= 0 || s > 1 {
+			s = 1
+		}
+		v.Post.Resize(max(int(float32(v.pw)*s+0.5), 1), max(int(float32(v.ph)*s+0.5), 1))
 		v.Post.UseShadow(r3) // the light shafts read the sun's shadow map
 		keep := r3.KeepDepth
 		r3.KeepDepth = true // Post reads the depth buffer

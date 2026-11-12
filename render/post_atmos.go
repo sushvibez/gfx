@@ -373,12 +373,14 @@ fn lamp_light(p : vec3f) -> vec3f {
         let dv = li.pos_range.xyz - p;
         let dist = length(dv);
         if (dist >= li.pos_range.w) { continue; }
+        // Outside a spot's cone first: the cheapest way out.
+        let cd = dot(-dv / max(dist, 1e-4), li.dir_cos.xyz);
+        if (li.color.w > 0.5 && cd <= li.dir_cos.w) { continue; }
         let nd = dist / li.pos_range.w;
         var win = max(1.0 - nd * nd * nd * nd, 0.0);
         win = win * win;
         var att = win / (1.0 + dist * dist);
         if (li.color.w > 0.5) {
-            let cd = dot(-dv / max(dist, 1e-4), li.dir_cos.xyz);
             att = att * smoothstep(li.dir_cos.w, li.params.x, cd);
         }
         if (att > 0.0 && li.params.y > 0.5) {
@@ -420,6 +422,7 @@ fn sun_vis(p : vec3f) -> f32 {
     var acc = vec3f(0.0);
     var T = 1.0;
     var t0 = 0.0;
+    var lamp = vec3f(0.0);
     for (var i = 0; i < VOL_STEPS; i++) {
         let f = (f32(i) + 1.0) / f32(VOL_STEPS);
         let t1 = march * f * (0.3 + 0.7 * f);    // denser steps near the eye
@@ -430,7 +433,11 @@ fn sun_vis(p : vec3f) -> f32 {
         let ext = sigma * shape(p.y);
         let Ti = exp(-ext * ds);
         var src = A.sun.rgb * (ph * lit) + A.amb.rgb * (0.35 + 0.65 * lit);
-        if (A.lamps.x > 0.5) { src += lamp_light(p); }
+        // The lamps are the march's dearest term (every light, every step):
+        // they are read on every other step and held for the one between,
+        // which the blur after this pass hides.
+        if (A.lamps.x > 0.5 && (i & 1) == 0) { lamp = lamp_light(p); }
+        src += lamp;
         acc += T * src * (1.0 - Ti);
         T *= Ti;
         t0 = t1;

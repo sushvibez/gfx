@@ -675,12 +675,12 @@ fn lens(uv : vec2f, asp : f32, e : f32) -> vec3f {
         // (and each pixel shifts its taps by its own fraction of a step, which
         // turns what beading is left into grain).
         let jit = lens_hash(uv * 913.0) - 0.5;
-        for (var k = 1; k <= 16; k++) {
-            let o = vec2f((f32(k) + jit) * 0.011, 0.0);
-            let w = 1.0 - f32(k) / 17.0;
+        for (var k = 1; k <= 10; k++) {
+            let o = vec2f((f32(k) + jit) * 0.0176, 0.0);
+            let w = 1.0 - f32(k) / 11.0;
             streak += (bright(uv + o, thr) + bright(uv - o, thr)) * w * w;
         }
-        add += streak * vec3f(0.55, 0.75, 1.0) * U.lift.w * 0.035;
+        add += streak * vec3f(0.55, 0.75, 1.0) * U.lift.w * 0.056;
     }
     if (U.p4.z > 0.0) {
         add += bright(uv, thr) * lens_dirt(uv, asp) * U.p4.z * 1.2;

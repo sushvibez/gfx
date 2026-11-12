@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Performance: `View3D.RenderScale` renders the scene and Post at a fraction of the view's pixels and stretches the result; triplanar sampling skips planes with no weight (a face square to an axis reads one projection, not three) and the emissive map when a material has none; soft sun shadows return early deep in the umbra; the haze reads lamps on every other step. `shell.ScreenshotScript` has its js stub.
+
 - The lens: `PostSettings.LensFlare` (ghosts and a halo from whatever is far brighter than white, image-based, so a light that goes behind something loses its flare), `LensStreak` (an anamorphic streak) and `LensDirt` (dust and smears that light up under a bright light).
 
 - Rain drips from edges: the rain pass finds where the sky map's surface falls away by most of a metre (a roof's rim, the top edge of a box) and drops beads from it under gravity.
