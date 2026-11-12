@@ -14,6 +14,27 @@ import (
 // under the roof and out in the open.
 func roofScene(t *testing.T, wetness float32) (under, open float64) {
 	t.Helper()
+	pix, vp := roofPixels(t, wetness, 0)
+	const w, h = 320, 240
+	// The mean over a patch of floor, so puddles and dry spots average out.
+	patch := func(cx float32) float64 {
+		sum, n := 0.0, 0
+		for x := cx - 1.5; x <= cx+1.5; x += 0.25 {
+			for z := float32(2); z <= 6; z += 0.25 {
+				c := vp.MulVec4(core.V4(x, 0, z, 1))
+				sum += lumAt(pix, w, int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h))
+				n++
+			}
+		}
+		return sum / float64(n)
+	}
+	return patch(-5), patch(5)
+}
+
+// roofPixels renders roofScene's picture (320×240) at the given wetness
+// and rain.
+func roofPixels(t *testing.T, wetness, rain float32) ([]byte, core.Mat4) {
+	t.Helper()
 	const w, h = 320, 240
 	dev, q := headlessDevice(t)
 	r3, err := New3D(dev, q, gpu.FormatRGBA8Unorm)
@@ -25,7 +46,7 @@ func roofScene(t *testing.T, wetness float32) (under, open float64) {
 	fs.Tonemap = 0
 	fs.Sun = RGBA{R: 1e-4, G: 1e-4, B: 1e-4, A: 1}
 	fs.Ambient = RGBA{R: 0.6, G: 0.6, B: 0.6, A: 1}
-	fs.Wetness = wetness
+	fs.Wetness, fs.Rain = wetness, rain
 	r3.SetFrameSettings(fs)
 	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
 	view := target.CreateView()
@@ -49,19 +70,7 @@ func roofScene(t *testing.T, wetness float32) (under, open float64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The mean over a patch of floor, so puddles and dry spots average out.
-	patch := func(cx float32) float64 {
-		sum, n := 0.0, 0
-		for x := cx - 1.5; x <= cx+1.5; x += 0.25 {
-			for z := float32(2); z <= 6; z += 0.25 {
-				c := vp.MulVec4(core.V4(x, 0, z, 1))
-				sum += lumAt(pix, w, int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h))
-				n++
-			}
-		}
-		return sum / float64(n)
-	}
-	return patch(-5), patch(5)
+	return pix, vp
 }
 
 // Wetness darkens what is open to the sky and leaves what has a roof over
@@ -74,5 +83,25 @@ func TestWetnessStopsUnderRoof(t *testing.T) {
 	}
 	if uWet < uDry*0.95 {
 		t.Fatalf("the floor under the roof got wet: %.0f wet, %.0f dry", uWet, uDry)
+	}
+}
+
+// FrameSettings.Rain fills the air with drops: bright streaks over part of
+// the picture (not none of it, not most of it).
+func TestRainDrops(t *testing.T) {
+	const w, h = 320, 240
+	dry, _ := roofPixels(t, 0, 0)
+	rain, _ := roofPixels(t, 0, 1)
+	n := 0
+	for i := 0; i < w*h; i++ {
+		if int(rain[i*4+1]) > int(dry[i*4+1])+5 {
+			n++
+		}
+	}
+	if frac := float64(n) / float64(w*h); frac < 0.002 || frac > 0.5 {
+		t.Fatalf("drops cover %.2f%% of the picture", frac*100)
+	}
+	if testing.Verbose() {
+		dumpPNG(t, rain, w, h, "rain-drops")
 	}
 }

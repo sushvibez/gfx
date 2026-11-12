@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Rain as particles: `FrameSettings.Rain` now also fills a box of air round the camera with falling drops and the ground with splashes (`render/rain.go`: stateless, one instanced draw, lit by the ambient light and every lamp, stopped by the sky map at roofs and the ground). `Atmosphere.Rain`'s screen-space streaks remain as an option.
+- Lamp beams are shadowed: the haze reads the shadow maps of spot lights with `Shadow` set.
+- `gpu.RenderPipelineDesc.DepthNoWrite`: depth test without depth write.
+
 - Rain keeps out from under roofs: when a frame is wet or rained on the renderer draws a sky map (a depth map looking straight down on 64 m round the camera); wetness, puddles and `Atmosphere.Rain`'s streaks test it. Each raindrop also leaves a pale fleck where it lands.
 
 - Weather: `FrameSettings.Wetness` wets every material surface (damp surfaces darken and gloss over; puddles gather on level ground and, with `SceneReflection`, mirror the scene), `FrameSettings.Rain` rings the puddles with drops, and `Atmosphere.Rain` draws rain in the air in three depth layers. Water and rained-on puddles now ripple their mirror image (a negative alpha in the HDR target marks them for Post).

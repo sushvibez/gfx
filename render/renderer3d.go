@@ -108,11 +108,15 @@ type Renderer3D struct {
 	spotBinds   [MaxSpotShadows]*gpu.BindGroup
 	spotShadows int // how many slots this frame uses
 	// The sky map (what is open to the rain), drawn like a spot's shadow.
-	skyMap     *gpu.Texture
-	skyView    *gpu.TextureView
-	skyFrame   *gpu.Buffer
-	skyBind    *gpu.BindGroup
-	skyOn      bool
+	skyMap   *gpu.Texture
+	skyView  *gpu.TextureView
+	skyFrame *gpu.Buffer
+	skyBind  *gpu.BindGroup
+	skyOn    bool
+	// The rain pass (rain.go), built the first time it rains.
+	rainPL     *gpu.RenderPipeline
+	rainBind   *gpu.BindGroup
+	rainFailed bool
 	lastRainVP core.Mat4
 	mdraws     *gpu.Buffer
 	lightBuf   *gpu.Buffer
@@ -674,6 +678,7 @@ func (r *Renderer3D) Release() {
 	rel(r.lightBuf)
 	rel(r.mdraws)
 	rel(r.matShadowBind)
+	r.releaseRain()
 	rel(r.skyBind)
 	rel(r.skyFrame)
 	rel(r.skyView)
@@ -1037,6 +1042,7 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 	if len(r.mitems) > 0 {
 		r.drawMatItems(mp, true)
 	}
+	r.drawRain(mp)
 	mp.End()
 	return nil
 }

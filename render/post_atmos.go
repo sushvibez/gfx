@@ -83,10 +83,11 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		}
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
 		p.skyView, p.rainVP = nil, core.Mat4{}
+		p.spotViews = [MaxSpotShadows]*gpu.TextureView{}
 		return
 	}
-	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf || p.skyView != r.skyView {
-		p.shadowView, p.lightBuf, p.skyView = r.shadowView, r.lightBuf, r.skyView
+	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf || p.skyView != r.skyView || p.spotViews != r.spotViews {
+		p.shadowView, p.lightBuf, p.skyView, p.spotViews = r.shadowView, r.lightBuf, r.skyView, r.spotViews
 		p.atmosDirty = true
 	}
 	p.rainVP = r.lastRainVP
@@ -151,7 +152,14 @@ func (p *Post) atmosBind() {
 	if lights == nil {
 		lights = p.noLights
 	}
-	p.bgVol = group(p.plVol, tex(0, p.depthView), tex(1, shadow), uni(2), gpu.BindGroupEntry{Binding: 3, Buffer: lights})
+	vol := []gpu.BindGroupEntry{tex(0, p.depthView), tex(1, shadow), uni(2), {Binding: 3, Buffer: lights}}
+	for i, v := range p.spotViews {
+		if v == nil {
+			v = p.noShadow.view
+		}
+		vol = append(vol, tex(4+i, v))
+	}
+	p.bgVol = group(p.plVol, vol...)
 	p.bgVolBlur[0] = group(p.plVolBlurH, tex(0, p.depthView), tex(1, p.vol[0].view), uni(2))
 	p.bgVolBlur[1] = group(p.plVolBlurV, tex(0, p.depthView), tex(1, p.vol[1].view), uni(2))
 	skyMap := p.skyView
@@ -324,15 +332,36 @@ const postVolWGSL = `
 @group(0) @binding(1) var shadow : texture_depth_2d;
 @group(0) @binding(2) var<uniform> A : AtmU;
 @group(0) @binding(3) var<storage, read> lights : Lights;
+@group(0) @binding(4) var spot0 : texture_depth_2d;
+@group(0) @binding(5) var spot1 : texture_depth_2d;
+@group(0) @binding(6) var spot2 : texture_depth_2d;
+@group(0) @binding(7) var spot3 : texture_depth_2d;
 ` + postAtmosCommonWGSL + `
 // The Renderer3D's light list (matshader.go's layout).
 struct Light {
     pos_range : vec4f,  // xyz position, w range
     color : vec4f,      // rgb colour * energy, w kind (0 point, 1 spot)
     dir_cos : vec4f,    // xyz cone axis, w cos(outer half angle)
-    params : vec4f,     // x cos(inner half angle)
+    params : vec4f,     // x cos(inner half angle), y shadow slot + 1
 }
-struct Lights { items : array<Light, 16> }
+struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4>, rain_vp : mat4x4f }
+// Whether a shadow-casting spot's light reaches a point of air: one read
+// of its shadow map (the march's own jitter softens the edge).
+fn spot_vis(slot : i32, p : vec3f) -> f32 {
+    let sc = lights.spot_vp[slot] * vec4f(p, 1.0);
+    if (sc.w <= 0.0) { return 1.0; }
+    let q = sc.xyz / sc.w;
+    let uv = vec2f(q.x * 0.5 + 0.5, -q.y * 0.5 + 0.5);
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return 1.0; }
+    var d = 1.0;
+    switch slot {
+        case 0 { let n = vec2f(textureDimensions(spot0)); d = textureLoad(spot0, min(vec2i(uv * n), vec2i(n) - 1), 0); }
+        case 1 { let n = vec2f(textureDimensions(spot1)); d = textureLoad(spot1, min(vec2i(uv * n), vec2i(n) - 1), 0); }
+        case 2 { let n = vec2f(textureDimensions(spot2)); d = textureLoad(spot2, min(vec2i(uv * n), vec2i(n) - 1), 0); }
+        default { let n = vec2f(textureDimensions(spot3)); d = textureLoad(spot3, min(vec2i(uv * n), vec2i(n) - 1), 0); }
+    }
+    return step(q.z - 0.00003, d);
+}
 const VOL_STEPS = 20;
 // The lamps' light reaching a point of air: the surface shader's falloff
 // and cone, scattered evenly in all directions.
@@ -351,6 +380,9 @@ fn lamp_light(p : vec3f) -> vec3f {
         if (li.color.w > 0.5) {
             let cd = dot(-dv / max(dist, 1e-4), li.dir_cos.xyz);
             att = att * smoothstep(li.dir_cos.w, li.params.x, cd);
+        }
+        if (att > 0.0 && li.params.y > 0.5) {
+            att = att * spot_vis(i32(li.params.y) - 1, p); // what stands under the lamp cuts its beam
         }
         sum += li.color.rgb * att;
     }

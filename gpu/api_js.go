@@ -258,6 +258,7 @@ type RenderPipelineDesc struct {
 	DualSrcBlend   bool       // dual-source (subpixel text); not supported on WebGPU/js yet
 	Blend          *BlendDesc // an explicit blend equation; wins over AlphaBlend
 	DepthTest      bool       // Depth32Float attachment, less-compare, write
+	DepthNoWrite   bool       // with DepthTest: test against the depth buffer but leave it as it is (particles, overlays)
 	CullBack       bool
 	Samples        int // MSAA sample count (0/1 = none); must match the pass target
 	// Lines draws the index list as line segments (pairs) instead of
@@ -384,7 +385,7 @@ func (d *Device) CreateRenderPipeline(rp *RenderPipelineDesc) (*RenderPipeline, 
 	if rp.DepthTest {
 		desc["depthStencil"] = map[string]any{
 			"format":            string(FormatDepth32Float),
-			"depthWriteEnabled": true,
+			"depthWriteEnabled": !rp.DepthNoWrite,
 			"depthCompare":      "less",
 		}
 	}

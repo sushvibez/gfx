@@ -672,6 +672,7 @@ type RenderPipelineDesc struct {
 	DualSrcBlend   bool       // dual-source (subpixel text): src1 is a per-channel mask
 	Blend          *BlendDesc // an explicit blend equation; wins over AlphaBlend
 	DepthTest      bool       // Depth32Float attachment, less-compare, write
+	DepthNoWrite   bool       // with DepthTest: test against the depth buffer but leave it as it is (particles, overlays)
 	CullBack       bool
 	Samples        int // MSAA sample count (0/1 = none); must match the pass target
 	// Lines draws the index list as line segments (pairs) instead of
@@ -788,9 +789,13 @@ func (d *Device) CreateRenderPipeline(rp *RenderPipelineDesc) (*RenderPipeline, 
 	}
 	var depth *depthStencilState
 	if rp.DepthTest {
+		write := uint32(1)
+		if rp.DepthNoWrite {
+			write = 0
+		}
 		depth = &depthStencilState{
 			format:            uint32(FormatDepth32Float),
-			depthWriteEnabled: 1,
+			depthWriteEnabled: write,
 			depthCompare:      compareLess,
 			stencilFront:      stencilFaceState{compareAlways, stencilOpKeep, stencilOpKeep, stencilOpKeep},
 			stencilBack:       stencilFaceState{compareAlways, stencilOpKeep, stencilOpKeep, stencilOpKeep},

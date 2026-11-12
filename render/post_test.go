@@ -376,3 +376,27 @@ func TestPostLampBeam(t *testing.T) {
 		t.Fatalf("with Lamps 0 the cone's air still reads %v (dark air reads %v)", l, out)
 	}
 }
+
+// A shadow-casting lamp's beam is cut by what stands under it: with the
+// lamp above the slab, the air below the slab holds a beam only when the
+// lamp casts no shadow.
+func TestPostLampBeamShadow(t *testing.T) {
+	const w, h = 480, 300
+	defer func() { atmosSceneSpots = nil }()
+	atm := Atmosphere{Shafts: 0.02, Falloff: 1000, MaxDistance: 140, SunDir: core.V3(0, -1, 0),
+		Sun: [3]float32{0.0001, 0.0001, 0.0001}, Lamps: 1}
+	beam := func(shadow bool) float64 {
+		atmosSceneSpots = []SpotLight{{Pos: core.V3(0, 14, 0), Dir: core.V3(0, -1, 0),
+			Color: RGBA{R: 1, G: 0.7, B: 0.3, A: 1}, Energy: 900, Range: 40, Angle: 0.3, Shadow: shadow}}
+		pix := atmosScene(t, w, h, atm, 0)
+		y := h/2 + 20
+		return lumAt(pix, w, w/2, y) - lumAt(pix, w, w/2+170, y)
+	}
+	through, cut := beam(false), beam(true)
+	if through < 10 {
+		t.Fatalf("no beam below the slab without shadows (%v over the air beside it)", through)
+	}
+	if cut > through*0.3 {
+		t.Fatalf("the slab does not cut the beam: %v with shadows, %v without", cut, through)
+	}
+}
