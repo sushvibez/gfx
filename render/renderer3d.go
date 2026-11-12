@@ -781,7 +781,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		SkyHorizon: core.V4(fs.SkyHorizon.R, fs.SkyHorizon.G, fs.SkyHorizon.B, 1),
 		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/shadowMapSize),
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, 1),
-		Env:        core.V4(fs.SkyReflection, fs.Time, 0, 0),
+		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, 0),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	// Each shadow-casting spot renders its map through the same depth-only

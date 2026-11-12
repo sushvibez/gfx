@@ -139,6 +139,7 @@ type Post struct {
 	shadowView                             *gpu.TextureView // the sun's shadow map (not owned)
 	lightBuf                               *gpu.Buffer      // the renderer's light list (not owned)
 	lightCount                             int
+	reflect                                bool // trace scene reflections (the renderer asked for them)
 	noLights                               *gpu.Buffer
 	lightVP                                core.Mat4
 	atmosDirty                             bool

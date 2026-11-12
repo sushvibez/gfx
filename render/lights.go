@@ -74,6 +74,13 @@ type FrameSettings struct {
 	// on rough ones. It is the environment's specular light; scene geometry
 	// is not reflected. 0 (the default) leaves materials as they were.
 	SkyReflection float32
+	// SceneReflection (0…1) makes glossy surfaces mirror the scene itself:
+	// where the reflected ray meets something on screen, that replaces the
+	// sky's reflection (screen-space, traced by render.Post through the
+	// depth buffer, so it needs SkyReflection, TonemapHDR and a Post; what
+	// is off screen or hidden is not reflected). Opaque material draws
+	// carry their mirror strength in the HDR target's alpha.
+	SceneReflection float32
 	// Time, in seconds, moves what animates in the shader (Material.Water).
 	Time float32
 	// Exposure scales linear radiance before the tone map (zero = 1).

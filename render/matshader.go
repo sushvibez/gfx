@@ -550,6 +550,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
 
     var c = albedo * frame.ambient.rgb * ao + lo;
+    var mirror = 0.0; // how much of a sharp reflection this pixel shows
     // The sky reflected: what the surface mirrors of the environment, by
     // Fresnel (strong at grazing angles and on metal), sharp when glossy
     // and smeared toward the sky's average when rough, dimmed in crevices.
@@ -562,6 +563,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         let avg = (frame.sky_top.rgb + frame.sky_horizon.rgb * 2.0) * (1.0 / 3.0) * 0.8;
         let env_c = mix(sky_env(r, l), avg, clamp(blur * 1.6, 0.0, 1.0));
         c = c + env_c * fres * ao * frame.env.x * (1.0 - 0.5 * blur);
+        mirror = dot(fres, vec3f(1.0 / 3.0)) * ao * frame.env.x * (1.0 - 0.5 * blur) * (1.0 - clamp(blur * 1.6, 0.0, 1.0));
     }
     if ((flags & F_EMISSIVE) != 0u) {
         c = c + pow(max(emis.rgb, vec3f(0.0)), vec3f(2.2)) * d.p1.y;
@@ -571,7 +573,13 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     c = apply_fog(c, in.world);
     if (u32(frame.misc.x) == 3u) {
         // HDR: linear radiance out, for render.Post to expose, tone map and encode.
-        return vec4f(max(c * frame.ambient.w, vec3f(0.0)), alpha);
+        // With scene reflections on, an opaque pixel's alpha says how mirror-like
+        // it is (1 = not at all), for Post to trace.
+        var a = alpha;
+        if (frame.env.z > 0.0 && alpha >= 0.999) {
+            a = 1.0 - clamp(mirror * frame.env.z, 0.0, 0.98);
+        }
+        return vec4f(max(c * frame.ambient.w, vec3f(0.0)), a);
     }
     c = tonemap(c * frame.ambient.w);
     c = pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.2));

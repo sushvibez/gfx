@@ -64,7 +64,7 @@ type atmosUniforms struct {
 	Zenith  core.Vec4 // rgb, w 1 when the sky is drawn
 	Horizon core.Vec4 // rgb, w max march distance
 	Proj    core.Vec4 // projection x and y scales, depth terms
-	Lamps   core.Vec4 // x light count, y how strongly lamps light the air
+	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -75,7 +75,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		if p.shadowView != nil || p.lightBuf != nil {
 			p.atmosDirty = true
 		}
-		p.shadowView, p.lightBuf, p.lightCount = nil, nil, 0
+		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
 		return
 	}
 	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf {
@@ -84,6 +84,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 	}
 	p.lightVP = r.lastLightVP
 	p.lightCount = r.lastLightCount
+	p.reflect = r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
 }
 
 // atmosInit builds the atmosphere's pipelines (NewPost calls it through mk).
@@ -188,6 +189,9 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 	if p.lightBuf != nil && a.Lamps > 0 {
 		u.Lamps = core.V4(float32(p.lightCount), a.Lamps, 0, 0)
 	}
+	if p.reflect && ok && p.Projection[0] != 0 {
+		u.Lamps.Z = 1
+	}
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -256,7 +260,7 @@ struct AtmU {
     zenith : vec4f,    // rgb, w 1 when the sky is drawn
     horizon : vec4f,   // rgb, w max march distance
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
-    lamps : vec4f,     // x light count, y how strongly lamps light the air
+    lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
 // The view-space ray through a uv (not normalised: z is -1).
@@ -426,11 +430,89 @@ const postAtmosWGSL = `
 @group(0) @binding(2) var vol : texture_2d<f32>;
 @group(0) @binding(3) var<uniform> A : AtmU;
 ` + postAtmosCommonWGSL + `
+// The view-space position of a texel.
+fn view_pos(t : vec2i, dims : vec2f) -> vec3f {
+    return view_ray((vec2f(t) + 0.5) / dims) * view_dist(textureLoad(depth, t, 0));
+}
+// Screen-space reflection: from a mirror-like pixel, march the reflected
+// ray through the depth buffer (strides growing with distance, then a
+// bisection to the surface) and return what it meets with a confidence in
+// w: zero when it leaves the screen, goes behind something, or comes back
+// toward the camera.
+fn trace_reflection(c : vec2i, dims : vec2f) -> vec4f {
+    let dmax = vec2i(dims) - 1;
+    let p = view_pos(c, dims);
+    // The surface normal from the depth buffer: on each axis, the neighbour
+    // whose depth is nearer ours (so an edge does not bend the normal).
+    let px0 = view_pos(clamp(c - vec2i(1, 0), vec2i(0), dmax), dims);
+    let px1 = view_pos(clamp(c + vec2i(1, 0), vec2i(0), dmax), dims);
+    let py0 = view_pos(clamp(c - vec2i(0, 1), vec2i(0), dmax), dims);
+    let py1 = view_pos(clamp(c + vec2i(0, 1), vec2i(0), dmax), dims);
+    var dx = px1 - p;
+    if (abs(px0.z - p.z) < abs(px1.z - p.z)) { dx = p - px0; }
+    var dy = py1 - p;
+    if (abs(py0.z - p.z) < abs(py1.z - p.z)) { dy = p - py0; }
+    var n = normalize(cross(dy, dx));
+    let v = normalize(p);
+    if (dot(n, v) > 0.0) { n = -n; }
+    let r = reflect(v, n);
+    if (r.z > 0.15) {
+        return vec4f(0.0); // back toward the camera: nothing on screen to meet
+    }
+    let dist = -p.z;
+    var stride = max(0.08, dist * 0.02) * (0.6 + 0.8 * ign(vec2f(c)));
+    var t0 = max(0.05, dist * 0.004);
+    var t1 = t0;
+    var found = false;
+    for (var i = 0; i < 40; i++) {
+        t1 = t0 + stride;
+        let q = p + r * t1;
+        if (q.z > -0.05) { break; }
+        let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+        if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { break; }
+        let dq = textureLoad(depth, min(vec2i(uv * dims), dmax), 0);
+        let zs = view_dist(dq);
+        let zr = -q.z;
+        // Behind the surface there, but not by more than a plausible thickness.
+        if (dq < 0.99999 && zr > zs && zr - zs < max(1.5 * stride, 0.3 + 0.05 * zr)) {
+            found = true;
+            break;
+        }
+        t0 = t1;
+        stride *= 1.14;
+    }
+    if (!found) {
+        return vec4f(0.0);
+    }
+    for (var i = 0; i < 5; i++) {
+        let tm = 0.5 * (t0 + t1);
+        let q = p + r * tm;
+        let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+        let zs = view_dist(textureLoad(depth, clamp(vec2i(uv * dims), vec2i(0), dmax), 0));
+        if (-q.z > zs) { t1 = tm; } else { t0 = tm; }
+    }
+    let q = p + r * t1;
+    let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+    let hit = max(textureLoad(scene, clamp(vec2i(uv * dims), vec2i(0), dmax), 0).rgb, vec3f(0.0));
+    // Fade toward the screen's edges and for rays turning back at the camera.
+    let e = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    let conf = smoothstep(0.0, 0.08, e) * (1.0 - smoothstep(-0.1, 0.15, r.z));
+    return vec4f(hit - sky_color(world_dir(r)), conf);
+}
+
 @fragment fn fs(in : VOut) -> @location(0) vec4f {
     let c = vec2i(in.pos.xy);
     let d = textureLoad(depth, c, 0);
-    var col = max(textureLoad(scene, c, 0).rgb, vec3f(0.0));
+    let sc = textureLoad(scene, c, 0);
+    var col = max(sc.rgb, vec3f(0.0));
     let is_sky = d >= 0.99999;
+    // Reflections of the scene: the material left its mirror strength in
+    // alpha and already added the sky's reflection; where the ray meets the
+    // scene, swap the sky for what it meets.
+    if (A.lamps.z > 0.5 && !is_sky && sc.a < 0.995) {
+        let hit = trace_reflection(c, vec2f(textureDimensions(depth)));
+        col = max(col + hit.rgb * hit.w * (1.0 - sc.a), vec3f(0.0));
+    }
     if (is_sky && A.zenith.w > 0.5) {
         let dims = vec2f(textureDimensions(depth));
         col = sky_color(world_dir(view_ray((vec2f(c) + 0.5) / dims)));
