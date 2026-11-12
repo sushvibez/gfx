@@ -39,6 +39,12 @@ type Atmosphere struct {
 	// (0 = 140); beyond it the haze continues analytically into the
 	// horizon colour.
 	Shafts, Falloff, MaxDistance float32
+	// Lamps is how strongly the Renderer3D's point and spot lights light
+	// the air (0 = not at all; 1 = as they light surfaces): a spot lamp
+	// then shows its cone as a beam in the haze. It needs Shafts > 0 (the
+	// air must have something in it) and a renderer (UseShadow). Lamps
+	// cast no shadows, so a beam passes through what stands in it.
+	Lamps float32
 	// SunDir is the direction the sunlight travels, Sun its radiance and
 	// Ambient the sky's fill light: normally the Renderer3D's own
 	// (FrameSettings.Sun and Ambient, and Begin's light direction).
@@ -58,20 +64,26 @@ type atmosUniforms struct {
 	Zenith  core.Vec4 // rgb, w 1 when the sky is drawn
 	Horizon core.Vec4 // rgb, w max march distance
 	Proj    core.Vec4 // projection x and y scales, depth terms
+	Lamps   core.Vec4 // x light count, y how strongly lamps light the air
 }
 
-// UseShadow gives Post the sun's shadow map and matrix from a Renderer3D
-// (as of its last Begin), for the light shafts. View3D calls it.
+// UseShadow gives Post the sun's shadow map and matrix and the frame's
+// lights from a Renderer3D (as of its last Begin), for the light shafts
+// and the lamps' beams. View3D calls it.
 func (p *Post) UseShadow(r *Renderer3D) {
 	if r == nil {
-		p.shadowView = nil
+		if p.shadowView != nil || p.lightBuf != nil {
+			p.atmosDirty = true
+		}
+		p.shadowView, p.lightBuf, p.lightCount = nil, nil, 0
 		return
 	}
-	if p.shadowView != r.shadowView {
-		p.shadowView = r.shadowView
+	if p.shadowView != r.shadowView || p.lightBuf != r.lightBuf {
+		p.shadowView, p.lightBuf = r.shadowView, r.lightBuf
 		p.atmosDirty = true
 	}
 	p.lightVP = r.lastLightVP
+	p.lightCount = r.lastLightCount
 }
 
 // atmosInit builds the atmosphere's pipelines (NewPost calls it through mk).
@@ -93,6 +105,10 @@ func (p *Post) atmosTargets(tex func(w, h int, f gpu.TextureFormat) postTex, w, 
 		// A stand-in for the shadow map when no renderer supplied one.
 		t := p.device.CreateTexture2D(1, 1, gpu.FormatDepth32Float, gpu.TextureRenderAttachment|gpu.TextureBinding)
 		p.noShadow = postTex{tex: t, view: t.CreateView(), w: 1, h: 1}
+	}
+	if p.noLights == nil {
+		// A stand-in for the renderer's light list.
+		p.noLights = p.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(lightBlock{})))
 	}
 	if p.atmosUni == nil {
 		p.atmosUni = p.device.CreateBuffer(gpu.BufferUniform|gpu.BufferCopyDst, int(unsafe.Sizeof(atmosUniforms{})))
@@ -122,7 +138,11 @@ func (p *Post) atmosBind() {
 	if shadow == nil {
 		shadow = p.noShadow.view
 	}
-	p.bgVol = group(p.plVol, tex(0, p.depthView), tex(1, shadow), uni(2))
+	lights := p.lightBuf
+	if lights == nil {
+		lights = p.noLights
+	}
+	p.bgVol = group(p.plVol, tex(0, p.depthView), tex(1, shadow), uni(2), gpu.BindGroupEntry{Binding: 3, Buffer: lights})
 	p.bgVolBlur[0] = group(p.plVolBlurH, tex(0, p.depthView), tex(1, p.vol[0].view), uni(2))
 	p.bgVolBlur[1] = group(p.plVolBlurV, tex(0, p.depthView), tex(1, p.vol[1].view), uni(2))
 	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3))
@@ -165,6 +185,9 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 	}
 	u.Horizon = core.V4(a.Horizon[0], a.Horizon[1], a.Horizon[2], maxD)
 	u.Proj = core.V4(p.Projection[0], p.Projection[5], p.Projection[10], p.Projection[14])
+	if p.lightBuf != nil && a.Lamps > 0 {
+		u.Lamps = core.V4(float32(p.lightCount), a.Lamps, 0, 0)
+	}
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -212,6 +235,10 @@ func (p *Post) atmosRelease() {
 		p.atmosUni.Release()
 		p.atmosUni = nil
 	}
+	if p.noLights != nil {
+		p.noLights.Release()
+		p.noLights = nil
+	}
 }
 
 // ---- shaders ---------------------------------------------------------------
@@ -229,6 +256,7 @@ struct AtmU {
     zenith : vec4f,    // rgb, w 1 when the sky is drawn
     horizon : vec4f,   // rgb, w max march distance
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
+    lamps : vec4f,     // x light count, y how strongly lamps light the air
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
 // The view-space ray through a uv (not normalised: z is -1).
@@ -270,8 +298,39 @@ const postVolWGSL = `
 @group(0) @binding(0) var depth : texture_depth_2d;
 @group(0) @binding(1) var shadow : texture_depth_2d;
 @group(0) @binding(2) var<uniform> A : AtmU;
+@group(0) @binding(3) var<storage, read> lights : Lights;
 ` + postAtmosCommonWGSL + `
+// The Renderer3D's light list (matshader.go's layout).
+struct Light {
+    pos_range : vec4f,  // xyz position, w range
+    color : vec4f,      // rgb colour * energy, w kind (0 point, 1 spot)
+    dir_cos : vec4f,    // xyz cone axis, w cos(outer half angle)
+    params : vec4f,     // x cos(inner half angle)
+}
+struct Lights { items : array<Light, 16> }
 const VOL_STEPS = 20;
+// The lamps' light reaching a point of air: the surface shader's falloff
+// and cone, scattered evenly in all directions.
+fn lamp_light(p : vec3f) -> vec3f {
+    var sum = vec3f(0.0);
+    let count = u32(A.lamps.x);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let li = lights.items[i];
+        let dv = li.pos_range.xyz - p;
+        let dist = length(dv);
+        if (dist >= li.pos_range.w) { continue; }
+        let nd = dist / li.pos_range.w;
+        var win = max(1.0 - nd * nd * nd * nd, 0.0);
+        win = win * win;
+        var att = win / (1.0 + dist * dist);
+        if (li.color.w > 0.5) {
+            let cd = dot(-dv / max(dist, 1e-4), li.dir_cos.xyz);
+            att = att * smoothstep(li.dir_cos.w, li.params.x, cd);
+        }
+        sum += li.color.rgb * att;
+    }
+    return sum * (A.lamps.y / 12.566371);
+}
 // The air's density relative to the ground's, thinning with height.
 fn shape(h : f32) -> f32 { return 0.28 + 0.72 * exp(-max(h, 0.0) / A.amb.w); }
 // Whether a point of air is in sunlight.
@@ -313,7 +372,8 @@ fn sun_vis(p : vec3f) -> f32 {
         if (A.sun_dir.w > 0.5) { lit = sun_vis(p); }
         let ext = sigma * shape(p.y);
         let Ti = exp(-ext * ds);
-        let src = A.sun.rgb * (ph * lit) + A.amb.rgb * (0.35 + 0.65 * lit);
+        var src = A.sun.rgb * (ph * lit) + A.amb.rgb * (0.35 + 0.65 * lit);
+        if (A.lamps.x > 0.5) { src += lamp_light(p); }
         acc += T * src * (1.0 - Ti);
         T *= Ti;
         t0 = t1;

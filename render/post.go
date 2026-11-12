@@ -137,6 +137,9 @@ type Post struct {
 
 	// The atmosphere (post_atmos.go).
 	shadowView                             *gpu.TextureView // the sun's shadow map (not owned)
+	lightBuf                               *gpu.Buffer      // the renderer's light list (not owned)
+	lightCount                             int
+	noLights                               *gpu.Buffer
 	lightVP                                core.Mat4
 	atmosDirty                             bool
 	vol                                    [2]postTex // half resolution: the shafts, and blur scratch

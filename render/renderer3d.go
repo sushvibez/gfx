@@ -27,6 +27,8 @@ type Renderer3D struct {
 	// lastLightVP is the sun's shadow matrix as of the last Begin (Post's
 	// light shafts read the shadow map with it).
 	lastLightVP core.Mat4
+	// lastLightCount is how many lights the last Begin packed.
+	lastLightCount int
 
 	device    *gpu.Device
 	queue     *gpu.Queue
@@ -719,6 +721,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		fs.Exposure = 1
 	}
 	n := r.packLights(&r.lights)
+	r.lastLightCount = n
 	r.queue.WriteBuffer(r.lightBuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&r.lights)), unsafe.Sizeof(r.lights)))
 
 	fogOn := float32(0)

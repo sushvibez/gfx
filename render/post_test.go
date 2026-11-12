@@ -279,6 +279,7 @@ func atmosScene(t *testing.T, w, h int, atm Atmosphere, yaw float32) []byte {
 	view := core.Mat4LookAt(eye, at, core.V3(0, 1, 0))
 	post.Projection, post.View, post.Atmosphere = proj, view, atm
 	grey := &Material{Color: RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}, Roughness: 1}
+	r3.SetSpotLights(atmosSceneSpots)
 	r3.Begin(proj.Mul(view), atm.SunDir, eye)
 	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, 10, 0)).Mul(core.Mat4Scale(core.V3(10, 0.3, 44))), grey)
 	post.UseShadow(r3)
@@ -347,5 +348,31 @@ func TestPostSky(t *testing.T) {
 	}
 	if !(away[eyeLevel] > away[eyeLevel+2]) {
 		t.Fatalf("the horizon is not warm: rgb %v", away[eyeLevel:eyeLevel+3])
+	}
+}
+
+// atmosSceneSpots are the lamps atmosScene lights its frame with.
+var atmosSceneSpots []SpotLight
+
+// Lamps light the air: a downward spot shows its cone as a brighter column
+// in the haze, and not at all with Lamps at 0.
+func TestPostLampBeam(t *testing.T) {
+	const w, h = 480, 300
+	atmosSceneSpots = []SpotLight{{Pos: core.V3(0, 9.5, 0), Dir: core.V3(0, -1, 0),
+		Color: RGBA{R: 1, G: 0.7, B: 0.3, A: 1}, Energy: 400, Range: 40, Angle: 0.3}}
+	defer func() { atmosSceneSpots = nil }()
+	// Night: no sun to speak of, no ambient; only the lamp.
+	atm := Atmosphere{Shafts: 0.02, Falloff: 1000, MaxDistance: 140, SunDir: core.V3(0, -1, 0),
+		Sun: [3]float32{0.0001, 0.0001, 0.0001}, Lamps: 1}
+	pix := atmosScene(t, w, h, atm, 0)
+	y := h/2 + 20
+	in, out := lumAt(pix, w, w/2, y), lumAt(pix, w, w/2+170, y)
+	if in < out+12 {
+		t.Fatalf("no beam: the air in the lamp's cone reads %v, outside it %v", in, out)
+	}
+	off := atm
+	off.Lamps = 0
+	if l := lumAt(atmosScene(t, w, h, off, 0), w, w/2, y); l > out+4 {
+		t.Fatalf("with Lamps 0 the cone's air still reads %v (dark air reads %v)", l, out)
 	}
 }

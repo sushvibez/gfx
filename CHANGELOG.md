@@ -12,6 +12,8 @@
   `Post.Projection`): half-resolution, normals from depth, a depth-aware
   blur, applied to ambient light only. `Renderer3D.KeepDepth` and
   `CommandEncoder.BeginRenderPassDepthStore` keep the depth buffer for it.
+- `Atmosphere.Lamps`: the renderer's point and spot lights light the air
+  in the volumetric pass, so a spot shows its cone as a beam (unshadowed).
 - `FrameSettings.SkyReflection`: materials mirror the sky (its gradient and
   the sun's glow) by Fresnel, sharp when glossy and smeared when rough.
   `Material.Water` with `FrameSettings.Time`: a wave map sampled as two
