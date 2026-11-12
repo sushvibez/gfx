@@ -105,3 +105,37 @@ func TestRainDrops(t *testing.T) {
 		dumpPNG(t, rain, w, h, "rain-drops")
 	}
 }
+
+// Drips fall from edges: in the rain, the air just outside the roof's rim
+// holds more bright streaks than the same patch of screen a little to the
+// side of it, out in the open.
+func TestRainDripsFromEdges(t *testing.T) {
+	const w, h = 320, 240
+	dry, vp := roofPixels(t, 0, 0)
+	rain, _ := roofPixels(t, 0, 1)
+	// The pixels the strip just outside the rim covers, from the floor to
+	// the roof's height, along the roof's length.
+	strip := map[int]bool{}
+	for x := float32(0.02); x <= 0.3; x += 0.04 {
+		for y := float32(0.3); y <= 4.8; y += 0.05 {
+			for z := float32(-10); z <= 10; z += 0.25 {
+				c := vp.MulVec4(core.V4(x, y, z, 1))
+				px, py := int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h)
+				if px >= 0 && py >= 0 && px < w-60 && py < h {
+					strip[py*w+px] = true
+				}
+			}
+		}
+	}
+	lit := func(shift int) (n int) {
+		for i := range strip {
+			if j := i + shift; int(rain[j*4+1]) > int(dry[j*4+1])+5 {
+				n++
+			}
+		}
+		return n
+	}
+	if rim, open := lit(0), lit(50); rim < 20 || rim < open*3/2 {
+		t.Fatalf("no drips at the roof's rim: %d of %d pixels lit there, %d beside it in the open", rim, len(strip), open)
+	}
+}

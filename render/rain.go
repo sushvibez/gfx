@@ -13,7 +13,9 @@ import "github.com/sushvibez/gfx/gpu"
 // them, lit at their own position by the ambient light, the sun and every
 // lamp (strongly when the lamp is behind them: water scatters forward),
 // which is what makes rain show in a beam and vanish against a bright
-// sky. The sky map (lights.go) stops them at roofs and at the ground and
+// sky. Drips are the same streaks falling from edges: wherever the sky
+// map shows the surface falling away by most of a metre, water gathers on
+// the rim and falls from it. The sky map (lights.go) stops them at roofs and at the ground and
 // says how high the ground is, for the splashes.
 //
 // They are drawn into the main pass after the scene, tested against its
@@ -23,6 +25,7 @@ import "github.com/sushvibez/gfx/gpu"
 const (
 	rainDrops    = 28000
 	rainSplashes = 5000
+	rainDrips    = 9000
 )
 
 const rainWGSL = frameWGSL + `
@@ -38,6 +41,7 @@ struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4>, rain_vp :
 @group(0) @binding(2) var sky_tex : texture_depth_2d;
 
 const DROPS = ` + "28000u" + `;
+const SPLASHES = ` + "5000u" + `;
 const BOX = vec3f(34.0, 22.0, 34.0);    // the air the drops fill, centred on the camera
 const PAD = vec2f(26.0, 26.0);          // the ground the splashes cover
 
@@ -132,6 +136,45 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         let edge = (0.5 - abs(rel / BOX)) * 8.0; // fade toward the box's faces: no popping
         fade = min(0.0028 / width * 3.0, 1.0) * smoothstep(0.5, 1.5, dist) * sky.x
              * clamp(min(edge.x, min(edge.y, edge.z)), 0.0, 1.0) * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, rain * 1.25);
+    } else if (ii >= DROPS + SPLASHES) {
+        o.kind = 0.0;
+        // A drip: water running off an edge. Each has its own spot on the
+        // ground plan; from there it looks a metre or so along one of the
+        // four axes for a place where what the rain lands on falls away (the
+        // rim of a roof, a container's top edge, the quay), and if there is
+        // one a bead gathers on it and falls, faster as it goes, over and over.
+        let hc = hash4(ii * 9973u + 17u);
+        var q = hc.xy * PAD;
+        q = cam.xz + (fract((q - cam.xz) / PAD + 0.5) - 0.5) * PAD;
+        let quarter = floor(hc.z * 4.0) * 1.5707963;
+        let dir = vec2f(cos(quarter), sin(quarter));
+        let high = sky_at(vec3f(q.x, cam.y, q.y)).y;
+        var low = high;
+        var rim = q;
+        var found = 0.0;
+        for (var k = 1; k <= 6; k++) {
+            let qq = q + dir * 0.2 * f32(k);
+            let hh = sky_at(vec3f(qq.x, cam.y, qq.y)).y;
+            if (found < 0.5 && high - hh > 0.8 && hh > -1e4) {
+                found = 1.0;
+                low = hh;
+                rim = qq - dir * 0.05;
+            }
+        }
+        let fall = sqrt(2.0 * max(high - low, 0.01) / 9.8);
+        let period = fall + 0.3 + 1.5 * hc.w;
+        let tf = fract(t / period + h.x) * period - (period - fall); // seconds into the fall
+        let speed = 9.8 * max(tf, 0.0);
+        let p = vec3f(rim.x, high - 4.9 * max(tf, 0.0) * max(tf, 0.0) - 0.03, rim.y);
+        let rel = p - cam;
+        let dist = length(rel);
+        let width = max(0.0045, dist * 0.0009);
+        right = normalize(cross(vec3f(0.0, -1.0, 0.0), rel)) * width;
+        up = vec3f(0.0, -1.0, 0.0) * max(0.02, speed * 0.02);
+        centre = p;
+        let edge = (0.5 - abs(rel.xz / PAD)) * 8.0;
+        fade = found * step(0.0, tf) * step(-1e4, high) * min(0.0045 / width * 3.0, 1.0) * smoothstep(0.4, 1.2, dist)
+             * clamp(min(edge.x, edge.y), 0.0, 1.0) * step(hc.w * 0.6, rain) * 1.4;
     } else {
         o.kind = 1.0;
         // A splash: a new place each time round, on whatever the rain meets.
@@ -222,7 +265,7 @@ func (r *Renderer3D) drawRain(pass *gpu.RenderPass) {
 	}
 	pass.SetPipeline(r.rainPL)
 	pass.SetBindGroup(0, r.rainBind)
-	pass.Draw(6, rainDrops+rainSplashes, 0, 0)
+	pass.Draw(6, rainDrops+rainSplashes+rainDrips, 0, 0)
 }
 
 func (r *Renderer3D) releaseRain() {

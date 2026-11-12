@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Rain drips from edges: the rain pass finds where the sky map's surface falls away by most of a metre (a roof's rim, the top edge of a box) and drops beads from it under gravity.
+
 - Rain as particles: `FrameSettings.Rain` now also fills a box of air round the camera with falling drops and the ground with splashes (`render/rain.go`: stateless, one instanced draw, lit by the ambient light and every lamp, stopped by the sky map at roofs and the ground). `Atmosphere.Rain`'s screen-space streaks remain as an option.
 - Lamp beams are shadowed: the haze reads the shadow maps of spot lights with `Shadow` set.
 - `gpu.RenderPipelineDesc.DepthNoWrite`: depth test without depth write.
