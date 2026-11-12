@@ -81,6 +81,15 @@ type FrameSettings struct {
 	// is off screen or hidden is not reflected). Opaque material draws
 	// carry their mirror strength in the HDR target's alpha.
 	SceneReflection float32
+	// Wetness (0…1) wets every material surface: damp surfaces darken and
+	// gloss over, and standing water gathers in puddles on level ground
+	// (placed by a noise over world x and z, more of them as it rises).
+	// With SceneReflection the puddles mirror the scene.
+	Wetness float32
+	// Rain (0…1) is rain falling on the wet: rings spread across the
+	// puddles and their mirror ripples (see Atmosphere.Rain for the
+	// streaks in the air).
+	Rain float32
 	// Time, in seconds, moves what animates in the shader (Material.Water).
 	Time float32
 	// Exposure scales linear radiance before the tone map (zero = 1).

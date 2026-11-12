@@ -45,6 +45,10 @@ type Atmosphere struct {
 	// air must have something in it) and a renderer (UseShadow). Lamps
 	// cast no shadows, so a beam passes through what stands in it.
 	Lamps float32
+	// Rain (0…1) draws rain in the air: streaks falling past the camera in
+	// three layers of depth, hidden behind whatever is nearer than they
+	// are, lit by the ambient light and by what shines behind them.
+	Rain float32
 	// SunDir is the direction the sunlight travels, Sun its radiance and
 	// Ambient the sky's fill light: normally the Renderer3D's own
 	// (FrameSettings.Sun and Ambient, and Begin's light direction).
@@ -65,6 +69,7 @@ type atmosUniforms struct {
 	Horizon core.Vec4 // rgb, w max march distance
 	Proj    core.Vec4 // projection x and y scales, depth terms
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
+	Rain    core.Vec4 // x how hard it rains, y time in seconds
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -192,6 +197,10 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 	if p.reflect && ok && p.Projection[0] != 0 {
 		u.Lamps.Z = 1
 	}
+	u.Rain = core.V4(0, p.time, 0, 0)
+	if ok && p.Projection[0] != 0 {
+		u.Rain.X = a.Rain
+	}
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -261,6 +270,7 @@ struct AtmU {
     horizon : vec4f,   // rgb, w max march distance
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
+    rain : vec4f,      // x how hard it rains, y time
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
 // The view-space ray through a uv (not normalised: z is -1).
@@ -430,6 +440,22 @@ const postAtmosWGSL = `
 @group(0) @binding(2) var vol : texture_2d<f32>;
 @group(0) @binding(3) var<uniform> A : AtmU;
 ` + postAtmosCommonWGSL + `
+// One layer of rain: a grid of tall cells, each with a streak at its own
+// place, length and phase, falling at speed (screens per second); cells is
+// how many columns span the screen's height, so nearer layers are coarser
+// and faster.
+fn rain_layer(uv : vec2f, aspect : f32, turn : vec2f, cells : f32, speed : f32, seed : f32) -> f32 {
+    var q = vec2f((uv.x - 0.5) * aspect + uv.y * 0.06 + turn.x * 0.9, uv.y - turn.y * 0.9) * vec2f(cells, cells * 0.11);
+    q.y -= A.rain.y * speed * cells * 0.11;
+    let cell = floor(q);
+    let f = fract(q);
+    let h = fract(sin(dot(cell + seed * 17.0, vec2f(127.1, 311.7))) * 43758.5453);
+    let x = 0.15 + 0.7 * h;
+    let len = 0.35 + 0.5 * fract(h * 17.3);
+    let line = smoothstep(0.045, 0.0, abs(f.x - x));
+    let seg = smoothstep(0.0, 0.15, f.y) * smoothstep(len, len - 0.2, f.y);
+    return line * seg * step(0.3, fract(h * 7.7));
+}
 // The view-space position of a texel.
 fn view_pos(t : vec2i, dims : vec2f) -> vec3f {
     return view_ray((vec2f(t) + 0.5) / dims) * view_dist(textureLoad(depth, t, 0));
@@ -439,7 +465,7 @@ fn view_pos(t : vec2i, dims : vec2f) -> vec3f {
 // bisection to the surface) and return what it meets with a confidence in
 // w: zero when it leaves the screen, goes behind something, or comes back
 // toward the camera.
-fn trace_reflection(c : vec2i, dims : vec2f) -> vec4f {
+fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
     let dmax = vec2i(dims) - 1;
     let p = view_pos(c, dims);
     // The surface normal from the depth buffer: on each axis, the neighbour
@@ -455,6 +481,21 @@ fn trace_reflection(c : vec2i, dims : vec2f) -> vec4f {
     var n = normalize(cross(dy, dx));
     let v = normalize(p);
     if (dot(n, v) > 0.0) { n = -n; }
+    if (ripples) {
+        // Moving water: a few trains of waves crossing in the horizontal
+        // plane tilt the mirror, less with distance (where they would only
+        // shimmer).
+        let rot = mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz);
+        let w = (A.cam.xyz + rot * p).xz;
+        let t = A.rain.y;
+        var g = vec2f(0.0);
+        g += vec2f(0.8, 0.6) * 0.045 * cos(dot(w, vec2f(0.8, 0.6)) * 1.7 + t * 1.3);
+        g += vec2f(-0.5, 0.87) * 0.040 * cos(dot(w, vec2f(-0.5, 0.87)) * 3.9 - t * 1.9);
+        g += vec2f(0.3, -0.95) * 0.030 * cos(dot(w, vec2f(0.3, -0.95)) * 8.3 + t * 2.7);
+        g += vec2f(-0.9, -0.44) * 0.022 * cos(dot(w, vec2f(-0.9, -0.44)) * 17.0 - t * 3.6);
+        g = g / (1.0 + 0.015 * length(p));
+        n = normalize(n + transpose(rot) * vec3f(g.x, 0.0, g.y));
+    }
     let r = reflect(v, n);
     if (r.z > 0.15) {
         return vec4f(0.0); // back toward the camera: nothing on screen to meet
@@ -509,9 +550,9 @@ fn trace_reflection(c : vec2i, dims : vec2f) -> vec4f {
     // Reflections of the scene: the material left its mirror strength in
     // alpha and already added the sky's reflection; where the ray meets the
     // scene, swap the sky for what it meets.
-    if (A.lamps.z > 0.5 && !is_sky && sc.a < 0.995) {
-        let hit = trace_reflection(c, vec2f(textureDimensions(depth)));
-        col = max(col + hit.rgb * hit.w * (1.0 - sc.a), vec3f(0.0));
+    if (A.lamps.z > 0.5 && !is_sky && abs(sc.a) < 0.995) {
+        let hit = trace_reflection(c, vec2f(textureDimensions(depth)), sc.a < 0.0);
+        col = max(col + hit.rgb * hit.w * (1.0 - abs(sc.a)), vec3f(0.0));
     }
     if (is_sky && A.zenith.w > 0.5) {
         let dims = vec2f(textureDimensions(depth));
@@ -538,6 +579,21 @@ fn trace_reflection(c : vec2i, dims : vec2f) -> vec4f {
         }
         let v = acc / ws;
         col = col * v.a + v.rgb;
+    }
+    if (A.rain.x > 0.0) {
+        let dims = vec2f(textureDimensions(depth));
+        let uv = (vec2f(c) + 0.5) / dims;
+        // The view's heading and tilt slide the layers, so the rain stays in
+        // the world as the camera turns instead of sticking to the glass.
+        let fwd = -A.inv_view[2].xyz;
+        let turn = vec2f(atan2(fwd.x, -fwd.z), -asin(clamp(fwd.y, -1.0, 1.0)));
+        let zd = select(view_dist(d), 1e6, is_sky);
+        let glow = A.amb.rgb * 1.4 + A.sun.rgb * 0.12 + col * 0.8;
+        var streaks = 0.0;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 9.0, 1.9, 1.0) * step(2.0, zd) * 1.0;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 17.0, 1.5, 2.0) * step(6.0, zd) * 0.7;
+        streaks += rain_layer(uv, dims.x / dims.y, turn, 31.0, 1.1, 3.0) * step(15.0, zd) * 0.45;
+        col = col + glow * streaks * A.rain.x * 0.5;
     }
     return vec4f(col, 1.0);
 }

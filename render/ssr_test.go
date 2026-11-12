@@ -13,6 +13,12 @@ import (
 // it, seen from a low camera, through Post; strength is
 // FrameSettings.SceneReflection.
 func mirrorScene(t *testing.T, w, h int, strength float32) (pix []byte, vp core.Mat4) {
+	return mirrorFloorScene(t, w, h, strength, 0.05, 1, 0)
+}
+
+// mirrorFloorScene is mirrorScene with the floor's roughness and metalness and
+// the frame's wetness given.
+func mirrorFloorScene(t *testing.T, w, h int, strength, rough, metal, wet float32) (pix []byte, vp core.Mat4) {
 	t.Helper()
 	dev, q := headlessDevice(t)
 	r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
@@ -22,7 +28,7 @@ func mirrorScene(t *testing.T, w, h int, strength float32) (pix []byte, vp core.
 	defer r3.Release()
 	fs := DefaultFrameSettings()
 	fs.Tonemap = TonemapHDR
-	fs.SkyReflection, fs.SceneReflection = 1, strength
+	fs.SkyReflection, fs.SceneReflection, fs.Wetness = 1, strength, wet
 	fs.SkyTop, fs.SkyHorizon = RGBA{R: 0.02, G: 0.02, B: 0.03, A: 1}, RGBA{R: 0.03, G: 0.03, B: 0.03, A: 1}
 	fs.Sun = RGBA{R: 0.3, G: 0.3, B: 0.3, A: 1}
 	fs.Ambient = RGBA{R: 0.02, G: 0.02, B: 0.02, A: 1}
@@ -49,7 +55,7 @@ func mirrorScene(t *testing.T, w, h int, strength float32) (pix []byte, vp core.
 	vp = proj.Mul(view)
 	post.Projection, post.View = proj, view
 	post.Atmosphere = Atmosphere{SunDir: core.V3(0, -1, 0.2), Zenith: [3]float32{0.02, 0.02, 0.03}, Horizon: [3]float32{0.03, 0.03, 0.03}}
-	floor := &Material{Color: RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}, Roughness: 0.05, Metallic: 1}
+	floor := &Material{Color: RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}, Roughness: rough, Metallic: metal}
 	red := &Material{Color: RGBA{R: 1, G: 0.05, B: 0.05, A: 1}, Unlit: true, Emission: 2}
 	r3.Begin(vp, core.V3(0, -1, 0.2), eye)
 	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60))), floor)
@@ -96,5 +102,47 @@ func TestSceneReflection(t *testing.T) {
 	}
 	if testing.Verbose() {
 		dumpPNG(t, on, w, h, "ssr-on")
+	}
+}
+
+// Wet ground: a rough, dull floor mirrors nothing when dry; wet, its
+// puddles mirror the block standing on it.
+func TestWetGroundMirrors(t *testing.T) {
+	const w, h = 480, 300
+	dry, vp := mirrorFloorScene(t, w, h, 1, 1, 0, 0)
+	wet, _ := mirrorFloorScene(t, w, h, 1, 1, 0, 1)
+	// The strip of floor in front of the block, across its width.
+	reddest := func(pix []byte) (best float64) {
+		for z := float32(2.5); z <= 8; z += 0.25 {
+			for x := float32(-1.2); x <= 1.2; x += 0.2 {
+				c := vp.MulVec4(core.V4(x, 0, z, 1))
+				i := (int((0.5-c.Y/c.W*0.5)*h)*w + int((c.X/c.W*0.5+0.5)*w)) * 4
+				best = max(best, float64(pix[i])-float64(pix[i+1]))
+			}
+		}
+		return best
+	}
+	if d, wt := reddest(dry), reddest(wet); wt < d+50 {
+		t.Fatalf("no puddle mirrors the block: reddest floor %v wet, %v dry", wt, d)
+	}
+}
+
+// Rain in the air: Atmosphere.Rain draws streaks over part of the picture
+// (not none of it, not all of it).
+func TestPostRain(t *testing.T) {
+	const w, h = 480, 300
+	atm := Atmosphere{Sky: true, Zenith: [3]float32{0.2, 0.2, 0.25}, Horizon: [3]float32{0.3, 0.3, 0.3},
+		SunDir: core.V3(0, -1, 0.2), Sun: [3]float32{1, 1, 1}, Ambient: [3]float32{0.3, 0.3, 0.3}}
+	clear := atmosScene(t, w, h, atm, 0)
+	atm.Rain = 1
+	rain := atmosScene(t, w, h, atm, 0)
+	n := 0
+	for i := 0; i < w*h; i++ {
+		if int(rain[i*4+1]) > int(clear[i*4+1])+6 {
+			n++
+		}
+	}
+	if frac := float64(n) / float64(w*h); frac < 0.003 || frac > 0.4 {
+		t.Fatalf("rain covers %.2f%% of the picture", frac*100)
 	}
 }
