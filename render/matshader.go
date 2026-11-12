@@ -43,15 +43,19 @@ struct Light {
     pos_range : vec4f,  // xyz position, w range
     color : vec4f,      // rgb colour * energy, w kind (0 point, 1 spot)
     dir_cos : vec4f,    // xyz cone axis, w cos(outer half angle)
-    params : vec4f,     // x cos(inner half angle)
+    params : vec4f,     // x cos(inner half angle), y shadow slot + 1, z shadow texel size per metre
 }
-struct Lights { items : array<Light, 16> }
+struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4> }
 
 @group(0) @binding(0) var<storage, read> frame : Frame;
 @group(0) @binding(1) var<storage, read> draws : array<MDraw>;
 @group(0) @binding(2) var shadow_samp : sampler_comparison;
 @group(0) @binding(3) var shadow_tex : texture_depth_2d;
 @group(0) @binding(4) var<storage, read> lights : Lights;
+@group(0) @binding(5) var spot_tex0 : texture_depth_2d;
+@group(0) @binding(6) var spot_tex1 : texture_depth_2d;
+@group(0) @binding(7) var spot_tex2 : texture_depth_2d;
+@group(0) @binding(8) var spot_tex3 : texture_depth_2d;
 
 @group(1) @binding(0) var samp : sampler;
 @group(1) @binding(1) var albedo_tex : texture_2d<f32>;
@@ -118,6 +122,39 @@ fn sh_vogel(i : i32, n : i32, phi : f32) -> vec2f {
     let r = sqrt((f32(i) + 0.5) / f32(n));
     let th = f32(i) * 2.39996323 + phi;
     return r * vec2f(cos(th), sin(th));
+}
+
+fn spot_cmp(slot : i32, uv : vec2f, z : f32) -> f32 {
+    switch slot {
+        case 0 { return textureSampleCompareLevel(spot_tex0, shadow_samp, uv, z); }
+        case 1 { return textureSampleCompareLevel(spot_tex1, shadow_samp, uv, z); }
+        case 2 { return textureSampleCompareLevel(spot_tex2, shadow_samp, uv, z); }
+        default { return textureSampleCompareLevel(spot_tex3, shadow_samp, uv, z); }
+    }
+}
+
+// A spot light's shadow: its own perspective map, the receiver pushed
+// along its normal by a couple of that map's texels at its distance, and a
+// small rotated disc of taps.
+fn spot_shadow(li : Light, world : vec3f, n : vec3f, dist : f32, frag : vec2f) -> f32 {
+    let slot = i32(li.params.y) - 1;
+    let texel = li.params.z * dist;
+    let sc = lights.spot_vp[slot] * vec4f(world + n * texel * 2.0, 1.0);
+    if (sc.w <= 0.0) {
+        return 1.0;
+    }
+    let p = sc.xyz / sc.w;
+    let uv = vec2f(p.x * 0.5 + 0.5, -p.y * 0.5 + 0.5);
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) {
+        return 1.0;
+    }
+    let phi = sh_ign(frag) * 6.2831853;
+    let radius = 2.5 / f32(textureDimensions(spot_tex0).x);
+    var lit = 0.0;
+    for (var i = 0; i < 8; i++) {
+        lit += spot_cmp(slot, uv + sh_vogel(i, 8, phi) * radius, p.z - 0.00002);
+    }
+    return lit / 8.0;
 }
 
 // The sun's shadow. Hard (one hardware-filtered tap) by default; with
@@ -505,6 +542,9 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         }
         if (att <= 0.0) {
             continue;
+        }
+        if (li.params.y > 0.5) {
+            att = att * spot_shadow(li, in.world, shaded_n, dist, in.pos.xy);
         }
         lo = lo + brdf(shaded_n, v, ld, albedo, metallic, roughness) * li.color.rgb * att;
     }

@@ -100,11 +100,18 @@ type Renderer3D struct {
 	matShadowPL   *gpu.RenderPipeline
 	matShLayout   *gpu.BindGroupLayout
 	matShadowBind *gpu.BindGroup
-	mdraws        *gpu.Buffer
-	lightBuf      *gpu.Buffer
-	mipSampler    *gpu.Sampler
-	flatNormal    *Image3D // 1x1 (0.5,0.5,1) tangent-space "no bump"
-	black         *Image3D // 1x1 black for the emissive fallback
+	// Spot-light shadows: a depth map per slot, and for its pass a copy of
+	// the frame block whose light matrix is that spot's.
+	spotMaps    [MaxSpotShadows]*gpu.Texture
+	spotViews   [MaxSpotShadows]*gpu.TextureView
+	spotFrames  [MaxSpotShadows]*gpu.Buffer
+	spotBinds   [MaxSpotShadows]*gpu.BindGroup
+	spotShadows int // how many slots this frame uses
+	mdraws      *gpu.Buffer
+	lightBuf    *gpu.Buffer
+	mipSampler  *gpu.Sampler
+	flatNormal  *Image3D // 1x1 (0.5,0.5,1) tangent-space "no bump"
+	black       *Image3D // 1x1 black for the emissive fallback
 
 	mitems   []matItem
 	mdata    []float32
@@ -509,6 +516,11 @@ func (r *Renderer3D) initMaterialPass(format gpu.TextureFormat) error {
 	}
 	r.matShLayout = r.matShadowPL.BindGroupLayout(0)
 	r.lightBuf = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(lightBlock{})))
+	for i := range r.spotMaps {
+		r.spotMaps[i] = r.device.CreateShadowMap(spotShadowSize)
+		r.spotViews[i] = r.spotMaps[i].CreateView()
+		r.spotFrames[i] = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
+	}
 	r.mipSampler = r.device.CreateSamplerMip(true, 8)
 	r.flatNormal = r.NewImage3D(1, 1, []byte{128, 128, 255, 255})
 	r.black = r.NewImage3D(1, 1, []byte{0, 0, 0, 255})
@@ -529,6 +541,12 @@ func (r *Renderer3D) growMDraws(size int) {
 	if r.matShadowBind != nil {
 		r.matShadowBind.Release()
 	}
+	for i, b := range r.spotBinds {
+		if b != nil {
+			b.Release()
+			r.spotBinds[i] = nil
+		}
+	}
 	if r.mdraws != nil {
 		r.mdraws.Release()
 	}
@@ -537,19 +555,35 @@ func (r *Renderer3D) growMDraws(size int) {
 		if r.matLayout[v] == nil {
 			continue // a skinned variant no draw has asked for yet
 		}
-		r.matBind[v] = r.device.CreateBindGroup(r.matLayout[v],
-			gpu.BindGroupEntry{Binding: 0, Buffer: r.frame},
-			gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
-			gpu.BindGroupEntry{Binding: 2, Sampler: r.shadowSampler},
-			gpu.BindGroupEntry{Binding: 3, TextureView: r.shadowView},
-			gpu.BindGroupEntry{Binding: 4, Buffer: r.lightBuf},
-		)
+		r.matBind[v] = r.device.CreateBindGroup(r.matLayout[v], r.matFrameEntries()...)
 	}
 	r.matShadowBind = r.device.CreateBindGroup(r.matShLayout,
 		gpu.BindGroupEntry{Binding: 0, Buffer: r.frame},
 		gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
 	)
+	for i := range r.spotBinds {
+		r.spotBinds[i] = r.device.CreateBindGroup(r.matShLayout,
+			gpu.BindGroupEntry{Binding: 0, Buffer: r.spotFrames[i]},
+			gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
+		)
+	}
 	r.rebuildMatSkinShadowBind()
+}
+
+// matFrameEntries is group 0 of the material pass: the frame block, the
+// draws, the sun's shadow map, the lights and the spot lights' shadow maps.
+func (r *Renderer3D) matFrameEntries() []gpu.BindGroupEntry {
+	e := []gpu.BindGroupEntry{
+		{Binding: 0, Buffer: r.frame},
+		{Binding: 1, Buffer: r.mdraws},
+		{Binding: 2, Sampler: r.shadowSampler},
+		{Binding: 3, TextureView: r.shadowView},
+		{Binding: 4, Buffer: r.lightBuf},
+	}
+	for i, v := range r.spotViews {
+		e = append(e, gpu.BindGroupEntry{Binding: 5 + i, TextureView: v})
+	}
+	return e
 }
 
 func (r *Renderer3D) growDraws(size int) {
@@ -623,6 +657,12 @@ func (r *Renderer3D) Release() {
 	rel(r.lightBuf)
 	rel(r.mdraws)
 	rel(r.matShadowBind)
+	for i := range r.spotMaps {
+		rel(r.spotBinds[i])
+		rel(r.spotFrames[i])
+		rel(r.spotViews[i])
+		rel(r.spotMaps[i])
+	}
 	rel(r.matShLayout)
 	rel(r.matShadowPL)
 	rel(r.layout)
@@ -744,6 +784,13 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		Env:        core.V4(fs.SkyReflection, fs.Time, 0, 0),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
+	// Each shadow-casting spot renders its map through the same depth-only
+	// pipeline as the sun, reading its own copy of the block.
+	for i := 0; i < r.spotShadows; i++ {
+		su := u
+		su.LightVP = r.lights.SpotVP[i]
+		r.queue.WriteBuffer(r.spotFrames[i], 0, unsafe.Slice((*byte)(unsafe.Pointer(&su)), unsafe.Sizeof(su)))
+	}
 	r.items = r.items[:0]
 	r.data = r.data[:0]
 	r.mitems = r.mitems[:0]
@@ -927,6 +974,13 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 		r.drawMatItems(sp, false)
 	}
 	sp.End()
+	if len(r.mitems) > 0 {
+		for i := 0; i < r.spotShadows; i++ {
+			sp := enc.BeginShadowPass(r.spotViews[i])
+			r.drawMatShadows(sp, r.spotBinds[i])
+			sp.End()
+		}
+	}
 
 	var mp *gpu.RenderPass
 	if r.KeepDepth {
@@ -1038,6 +1092,21 @@ func (r *Renderer3D) drawItems(pass *gpu.RenderPass, main bool) {
 		pass.SetVertexBuffer(0, it.mesh.vbuf)
 		pass.SetIndexBuffer(it.mesh.ibuf)
 		pass.DrawIndexedInstanced(it.mesh.indices, 1, i)
+	}
+}
+
+// drawMatShadows records the unskinned opaque material draws into a spot
+// light's depth pass; frame is that light's group 0.
+func (r *Renderer3D) drawMatShadows(pass *gpu.RenderPass, frame *gpu.BindGroup) {
+	pass.SetPipeline(r.matShadowPL)
+	pass.SetBindGroup(0, frame)
+	for _, it := range r.mitems {
+		if it.variant&2 != 0 || it.spal != nil {
+			continue
+		}
+		pass.SetVertexBuffer(0, it.mesh.vbuf)
+		pass.SetIndexBuffer(it.mesh.ibuf)
+		pass.DrawIndexedInstanced(it.mesh.indices, it.count, it.base)
 	}
 }
 

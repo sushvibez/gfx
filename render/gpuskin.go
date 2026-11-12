@@ -369,13 +369,7 @@ func (r *Renderer3D) ensureMatSkin(variant int) bool {
 		r.matLayout[variant] = pl.BindGroupLayout(0)
 		r.matTexLayout[variant] = pl.BindGroupLayout(1)
 		r.matPalLayout[variant] = pl.BindGroupLayout(2)
-		r.matBind[variant] = r.device.CreateBindGroup(r.matLayout[variant],
-			gpu.BindGroupEntry{Binding: 0, Buffer: r.frame},
-			gpu.BindGroupEntry{Binding: 1, Buffer: r.mdraws},
-			gpu.BindGroupEntry{Binding: 2, Sampler: r.shadowSampler},
-			gpu.BindGroupEntry{Binding: 3, TextureView: r.shadowView},
-			gpu.BindGroupEntry{Binding: 4, Buffer: r.lightBuf},
-		)
+		r.matBind[variant] = r.device.CreateBindGroup(r.matLayout[variant], r.matFrameEntries()...)
 	}
 	if r.matSkinShadowPL == nil {
 		mod, err := r.device.CreateShaderModuleWGSL("renderer3d-material-skin-shadow", skinShadowWGSL(matDrawWGSL))

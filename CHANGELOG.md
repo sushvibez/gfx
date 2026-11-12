@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `SpotLight.Shadow`: spot lights cast shadows, the first `MaxSpotShadows` (4) of a frame, each through its own 1024 map (material draws; unskinned casters). `SetSpotLights` and `SetPointLights` take effect at `Begin`, which packs them (their comments said otherwise).
+
 - Fixed for browsers: the plain 3D shader sampled its shadow map with `textureSampleCompare` inside a branch, and the 2D renderer compiled the subpixel text shader on devices without dual-source blending; both raised WebGPU validation errors that invalidated every frame.
 
 - `render.Post`: an opt-in post-processing stack. A `Renderer3D` built for
