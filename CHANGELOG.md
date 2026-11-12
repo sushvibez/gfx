@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The lens: `PostSettings.LensFlare` (ghosts and a halo from whatever is far brighter than white, image-based, so a light that goes behind something loses its flare), `LensStreak` (an anamorphic streak) and `LensDirt` (dust and smears that light up under a bright light).
+
 - Rain drips from edges: the rain pass finds where the sky map's surface falls away by most of a metre (a roof's rim, the top edge of a box) and drops beads from it under gravity.
 
 - Rain as particles: `FrameSettings.Rain` now also fills a box of air round the camera with falling drops and the ground with splashes (`render/rain.go`: stateless, one instanced draw, lit by the ambient light and every lamp, stopped by the sky map at roofs and the ground). `Atmosphere.Rain`'s screen-space streaks remain as an option.

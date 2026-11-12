@@ -73,6 +73,15 @@ type PostSettings struct {
 	FXAA    bool
 	Sharpen float32
 	Grain   float32
+	// The lens. All three work from what is brighter than white after
+	// exposure (lamps, the sun, glints), so a dull picture shows none of
+	// them, and a light that goes behind something loses its flare with it.
+	// LensFlare (0…1) is the ghosts a bright light throws across the frame
+	// through the lens's centre, and the halo round it; LensStreak (0…1) the
+	// horizontal streak of an anamorphic lens; LensDirt (0…1) the dust and
+	// smears on the front element that light up where a bright light falls
+	// on them.
+	LensFlare, LensStreak, LensDirt float32
 }
 
 // DefaultPostSettings is a gentle filmic look: mild bloom, eye
@@ -378,9 +387,9 @@ func (p *Post) uniforms() []float32 {
 		s.Saturation, s.Vignette, s.ChromaticAberration, s.Grain,
 		float32(math.Mod(float64(p.time), 64)), b(s.FXAA), s.Sharpen, s.BloomSpread,
 		s.ShadowTint[0], s.ShadowTint[1], s.ShadowTint[2], s.Contrast,
-		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], 0,
-		s.Lift[0], s.Lift[1], s.Lift[2], 0,
-		ao, max(s.AORadius, 0.05), 0, 0,
+		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], s.LensFlare,
+		s.Lift[0], s.Lift[1], s.Lift[2], s.LensStreak,
+		ao, max(s.AORadius, 0.05), s.LensDirt, 0,
 		// What rebuilds a view position from depth: the projection's x and y
 		// scales and its two depth terms (column-major: [0], [5], [10], [14]).
 		p.Projection[0], p.Projection[5], p.Projection[10], p.Projection[14],
@@ -471,9 +480,9 @@ struct PostU {
     p2 : vec4f,     // saturation, vignette, chromatic aberration, grain
     p3 : vec4f,     // time, fxaa, sharpen, bloom spread
     shadow : vec4f, // rgb shadow tint, w contrast
-    high : vec4f,   // rgb highlight tint
-    lift : vec4f,   // rgb lift
-    p4 : vec4f,     // ambient occlusion strength, radius (world)
+    high : vec4f,   // rgb highlight tint, w lens flare
+    lift : vec4f,   // rgb lift, w lens streak
+    p4 : vec4f,     // ambient occlusion strength, radius (world), lens dirt
     proj : vec4f,   // projection: x scale, y scale, depth terms [10] and [14]
 };
 fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
@@ -603,6 +612,81 @@ fn exposure() -> f32 {
     let e = clamp(pow(U.p0.z / max(a, 1e-4), 0.85), U.p1.x, U.p1.y);
     return U.p0.x * mix(1.0, e, U.p0.y);
 }
+// What the lens sees of the bright: the bloom chain's blurred picture, less
+// everything at or below white for the current exposure.
+fn bright(uv : vec2f, thr : f32) -> vec3f {
+    let inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+    return max(textureSampleLevel(bloom, samp, uv, 0.0).rgb - thr, vec3f(0.0)) * inside;
+}
+fn lens_hash(p : vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
+// The dirt on the front element: specks of dust as soft discs of several
+// sizes, and a broad smear.
+fn lens_dirt(uv : vec2f, asp : f32) -> f32 {
+    let p = vec2f(uv.x * asp, uv.y);
+    var m = 0.0;
+    for (var k = 0; k < 3; k++) {
+        let scale = 5.0 + 6.0 * f32(k);
+        let q = p * scale + 11.3 * f32(k);
+        let cell = floor(q);
+        let h = lens_hash(cell + 2.7 * f32(k));
+        let centre = vec2f(0.3 + 0.4 * h, 0.3 + 0.4 * fract(h * 31.7));
+        let radius = 0.10 + 0.22 * fract(h * 7.3);
+        let disc = 1.0 - smoothstep(radius * 0.75, radius, length(fract(q) - centre));
+        m += disc * step(0.45, fract(h * 13.1)) * (0.35 + 0.65 * fract(h * 5.1));
+    }
+    let i = floor(p * 2.3);
+    let f = fract(p * 2.3);
+    let u = f * f * (3.0 - 2.0 * f);
+    let smear = mix(mix(lens_hash(i), lens_hash(i + vec2f(1.0, 0.0)), u.x),
+                    mix(lens_hash(i + vec2f(0.0, 1.0)), lens_hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+    return clamp(m * 0.5 + smear * smear * 0.35, 0.0, 1.0);
+}
+// The lens's own light, added before exposure: ghosts and a halo (after
+// John Chapman's image-based flare: the bright picture mirrored through
+// the centre and repeated along that line, each colour bent a little
+// differently), an anamorphic streak, and the dirt.
+fn lens(uv : vec2f, asp : f32, e : f32) -> vec3f {
+    let thr = 1.15 / max(e, 1e-4);
+    var add = vec3f(0.0);
+    if (U.high.w > 0.0) {
+        // Ghosts come only from what is far brighter than white (a lamp, the
+        // sun's disc), not from a bright sky, which would mirror the whole view.
+        let thr = thr * 2.6;
+        let fuv = vec2f(1.0) - uv;
+        let step_v = (vec2f(0.5) - fuv) * 0.42;
+        let bend = normalize(step_v + vec2f(1e-5)) * 0.006;
+        var ghosts = vec3f(0.0);
+        for (var i = 0; i < 4; i++) {
+            let g = fuv + step_v * f32(i);
+            let w = pow(1.0 - min(length(vec2f(0.5) - g) / 0.7071, 1.0), 5.0);
+            ghosts += vec3f(bright(g + bend, thr).r, bright(g, thr).g, bright(g - bend, thr).b) * w;
+        }
+        // The halo: the bright picture pushed out to a ring round the centre.
+        let dir = normalize(vec2f(step_v.x * asp, step_v.y) + vec2f(1e-5));
+        let h = fuv + vec2f(dir.x / asp, dir.y) * 0.36;
+        let hw = pow(1.0 - min(abs(length(vec2f(0.5) - h) - 0.0) / 0.7071, 1.0), 8.0);
+        ghosts += vec3f(bright(h + bend * 2.0, thr).r, bright(h, thr).g, bright(h - bend * 2.0, thr).b) * hw * 0.6;
+        add += ghosts * vec3f(0.9, 1.0, 1.1) * U.high.w * 0.16;
+    }
+    if (U.lift.w > 0.0) {
+        var streak = vec3f(0.0);
+        // Taps closer together than the bloom's own blur, so the streak is
+        // a line and not a row of copies.
+        // (and each pixel shifts its taps by its own fraction of a step, which
+        // turns what beading is left into grain).
+        let jit = lens_hash(uv * 913.0) - 0.5;
+        for (var k = 1; k <= 16; k++) {
+            let o = vec2f((f32(k) + jit) * 0.011, 0.0);
+            let w = 1.0 - f32(k) / 17.0;
+            streak += (bright(uv + o, thr) + bright(uv - o, thr)) * w * w;
+        }
+        add += streak * vec3f(0.55, 0.75, 1.0) * U.lift.w * 0.035;
+    }
+    if (U.p4.z > 0.0) {
+        add += bright(uv, thr) * lens_dirt(uv, asp) * U.p4.z * 1.2;
+    }
+    return add;
+}
 @fragment fn fs(in : VOut) -> @location(0) vec4f {
     let uv = in.uv;
     let c = uv - 0.5;
@@ -625,6 +709,9 @@ fn exposure() -> f32 {
     col *= mix(vec3f(a), vec3f(1.0), vec3f(0.0, 0.03, 0.07));
     // bloom: an energy-conserving mix
     col = mix(col, textureSampleLevel(bloom, samp, uv, 0.0).rgb, U.p0.w);
+    if (U.high.w + U.lift.w + U.p4.z > 0.0) {
+        col += lens(uv, asp, e);
+    }
     col *= e;
     // the film curve: ACES for punch, pulled toward AgX so highlights roll off to white
     col = mix(aces(col), agx(col), U.p1.w);

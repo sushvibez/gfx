@@ -17,6 +17,9 @@ import (
 // postScene renders frames of one lamp (an unlit cube of the given
 // radiance) over a dark lit floor through Post and returns the last
 // frame's pixels (RGBA8, w×h). gain scales the whole scene's radiance.
+// postSceneLampX moves postScene's lamp off the picture's centre.
+var postSceneLampX float32
+
 func postScene(t *testing.T, w, h int, radiance, gain float32, tune func(*PostSettings), frames int) []byte {
 	t.Helper()
 	dev, q := headlessDevice(t)
@@ -49,7 +52,7 @@ func postScene(t *testing.T, w, h int, radiance, gain float32, tune func(*PostSe
 	floor := &Material{Color: RGBA{R: 0.3, G: 0.3, B: 0.3, A: 1}, Roughness: 0.9}
 	for i := 0; i < frames; i++ {
 		r3.Begin(vp, core.V3(-0.4, -1, -0.3), eye)
-		r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, 1, 0)).Mul(core.Mat4Scale(core.V3(0.5, 0.5, 0.5))), lamp)
+		r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(postSceneLampX, 1, 0)).Mul(core.Mat4Scale(core.V3(0.5, 0.5, 0.5))), lamp)
 		r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(30, 1, 30))), floor)
 		enc := dev.CreateCommandEncoder()
 		if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{R: 0.01, G: 0.012, B: 0.02, A: 1}); err != nil {
@@ -398,5 +401,43 @@ func TestPostLampBeamShadow(t *testing.T) {
 	}
 	if cut > through*0.3 {
 		t.Fatalf("the slab does not cut the beam: %v with shadows, %v without", cut, through)
+	}
+}
+
+// The lens: a bright lamp left of centre throws a ghost to the mirrored
+// place right of centre with LensFlare, and a streak out to its side with
+// LensStreak; neither is there without them.
+func TestPostLens(t *testing.T) {
+	const w, h = 480, 300
+	postSceneLampX = -1.6
+	defer func() { postSceneLampX = 0 }()
+	shot := func(flare, streak float32) []byte {
+		return postScene(t, w, h, 60, 1, func(s *PostSettings) {
+			s.AutoExposure, s.Bloom, s.AO = 0, 0.1, 0
+			s.LensFlare, s.LensStreak = flare, streak
+		}, 2)
+	}
+	plain, flare, streak := shot(0, 0), shot(1, 0), shot(0, 1)
+	// Find the lamp: the brightest pixel of the left half.
+	lx, ly := 0, 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w/2; x++ {
+			if lumAt(plain, w, x, y) > lumAt(plain, w, lx, ly) {
+				lx, ly = x, y
+			}
+		}
+	}
+	// Its first ghost is the lamp mirrored through the centre.
+	gx, gy := w-1-lx, h-1-ly
+	if a, b := lumAt(flare, w, gx, gy), lumAt(plain, w, gx, gy); a < b+8 {
+		t.Fatalf("no ghost opposite the lamp (%d,%d → %d,%d): %v with the flare, %v without", lx, ly, gx, gy, a, b)
+	}
+	// The streak: level with the lamp, well to its side, and only there.
+	sx := lx + 80
+	if a, b := lumAt(streak, w, sx, ly), lumAt(plain, w, sx, ly); a < b+8 {
+		t.Fatalf("no streak beside the lamp: %v with it, %v without", a, b)
+	}
+	if a, b := lumAt(streak, w, sx, ly+70), lumAt(plain, w, sx, ly+70); a > b+6 {
+		t.Fatalf("the streak is not a streak: %v below it, %v without", a, b)
 	}
 }
