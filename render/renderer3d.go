@@ -307,7 +307,7 @@ fn shadow_factor(world : vec3f, n_dot_l : f32) -> f32 {
         return 1.0; // outside the shadow map: lit
     }
     let bias = clamp(0.002 * (1.0 - n_dot_l) + 0.0006, 0.0005, 0.004);
-    return textureSampleCompare(shadow_tex, shadow_samp, uv, sc.z - bias);
+    return textureSampleCompareLevel(shadow_tex, shadow_samp, uv, sc.z - bias);
 }
 
 @fragment

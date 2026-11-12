@@ -1319,9 +1319,11 @@ func newRenderer2D(device *gpu.Device, queue *gpu.Queue, format gpu.TextureForma
 	// Subpixel (LCD) text pipeline: same vertex layout as sprites, dual-source
 	// blend. Best-effort — if dual_source_blending isn't available the renderer
 	// falls back to grayscale text.
-	spm, err := device.CreateShaderModuleWGSL("subpixel2d", subpixelShader)
+	// (Asking a device without the feature, as every browser is, would raise
+	// a validation error for a shader that was never going to be used.)
 	var subpixelPipeline *gpu.RenderPipeline
-	if err == nil {
+	if !device.DualSourceBlending() {
+	} else if spm, err := device.CreateShaderModuleWGSL("subpixel2d", subpixelShader); err == nil {
 		defer spm.Release()
 		subpixelPipeline, _ = device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
 			Shader: spm, VertexEntry: "vs", FragmentEntry: "fs",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed for browsers: the plain 3D shader sampled its shadow map with `textureSampleCompare` inside a branch, and the 2D renderer compiled the subpixel text shader on devices without dual-source blending; both raised WebGPU validation errors that invalidated every frame.
+
 - `render.Post`: an opt-in post-processing stack. A `Renderer3D` built for
   `FormatRGBA16Float` with `FrameSettings.Tonemap = TonemapHDR` writes
   linear radiance (unlit materials times `Emission`), and Post displays
