@@ -98,10 +98,13 @@ type App struct {
 	Device *gpu.Device
 	Queue  *gpu.Queue
 	Format gpu.TextureFormat
-	R2     *render.Renderer2D
-	Font   *render.Font
-	UI     *ui.UI
-	W, H   int
+	// GPU is the adapter's name (gpu.Adapter.Name), for
+	// render.QualityForAdapter.
+	GPU  string
+	R2   *render.Renderer2D
+	Font *render.Font
+	UI   *ui.UI
+	W, H int
 
 	// Gest folds the window's multi-touch stream into pinch/pan state,
 	// updated by the frame loop each iteration on backends with touch
@@ -281,7 +284,7 @@ func Run(o Options, hooks Hooks) error {
 		return err
 	}
 	owned.add(font.Release)
-	a := &App{Win: win, Device: device, Queue: queue, Format: format, R2: r, Font: font, W: w, H: h,
+	a := &App{Win: win, Device: device, Queue: queue, Format: format, GPU: adapter.Name(), R2: r, Font: font, W: w, H: h,
 		host: &childHost{inst: inst, device: device, format: format, msaa: msaa}}
 	view, err := hooks.Init(a)
 	if err != nil {

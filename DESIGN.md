@@ -583,6 +583,25 @@ sub-pixel. Things moving by themselves have no motion vectors: they are
 handled by the clip alone. About 0.1–0.3 ms at 1600×900 on an RTX 5060 Ti
 (`TestPostTAA*`, `TestPostJitter`; `GFX_POST_BENCH=1` for the timing).
 
+*Status (2026-11-13):* quality tiers and dynamic resolution
+(`render/quality.go`): `QualityTier` (low, medium, high, ultra) with a
+`QualityBudget` per tier (starting render scale and floor, a pixel cap of
+1.0/1.5/2.3/3.7 Mpx, shadow map size, AO, volumetric air, bloom, lens,
+motion blur, TAA, reflections, rain share; `Apply`/`ApplyAtmosphere`
+switch off in `PostSettings`/`Atmosphere` what the tier does not allow);
+`QualityForAdapter` picks one from the adapter's name (`shell.App.GPU`
+carries it; phones and
+software renderers low, integrated and mobile-class GPUs medium, else
+high; ultra is only chosen). `DynamicResolution` steers the render scale
+from frame times: a mean over 21.5 ms per half second lowers it a tenth (a
+fifth past 1.5×), under 17.4 ms raises it a tenth after a wait that
+doubles whenever a raise had to be taken back, frames over 0.25 s are
+hitches and not counted; twice at the floor and still slow asks for a
+tier drop, which `Quality.Frame` takes (never under `Quality.Lowest`).
+Pure Go, no GPU (`TestDynRes*`, `TestQuality*`); `View3D.RenderScale`
+(or a renderer drawing into `Post.SceneView` at the scaled size, which
+`Post`'s last pass stretches to the display) is where the scale lands.
+
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with
 `FrameSettings.Tonemap = TonemapHDR`; `View3D.Post` wires it into a

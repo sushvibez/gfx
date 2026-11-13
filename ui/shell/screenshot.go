@@ -118,7 +118,7 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 		return err
 	}
 	owned.add(font.Release)
-	a := &App{Device: device, Queue: queue, Format: gpu.FormatRGBA8Unorm,
+	a := &App{Device: device, Queue: queue, Format: gpu.FormatRGBA8Unorm, GPU: adapter.Name(),
 		R2: r, Font: font, W: o.Width, H: o.Height}
 	view, err := hooks.Init(a)
 	if err != nil {

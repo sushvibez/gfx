@@ -120,7 +120,8 @@ real browser. Win32 `WM_TOUCH` is not handled.
   the AO and shaft grain (their noise is fixed per pixel, so TAA does not
   average it; AO is applied after TAA), shadows for lamps (their beams,
   `Atmosphere.Lamps`, pass through geometry), environment lighting (IBL), lens flare, GPU
-  particles, quality tiers. The legacy `Draw*` calls do not
+  particles. Quality tiers and dynamic resolution are in
+  (`render.Quality`, 2026-11-13). The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.
 - **`app`** (§8): Wayland; multi-window beyond X11 (`NewChild`, `Hide`,
   `Show` are X11-only); the null-GPU headless backend (§8.1 — today
