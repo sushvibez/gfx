@@ -531,7 +531,13 @@ per-vertex log depth bows across a long one (`TestPostAOLogDepth`). The
 atmosphere passes read it too (light shafts, their blur and upsample,
 rain, reflections: `TestPostShaftsLogDepth`), and `Post.UseSunShadow`
 takes a sun shadow map and matrix from such a renderer for the shafts
-(`TestPostUseSunShadow`); `Atmosphere.NoFarHaze` stops the haze at the
+(`TestPostUseSunShadow`), and `Post.UseReflection` traces screen-space
+reflections for one (`render.Reflection`: its materials leave 1 − mirror
+strength in the HDR alpha, it may hand over the sky they already
+reflected as an equirectangular map to be swapped for what a ray meets,
+level mirrors take world up for their normal, a ray that meets nothing
+can read the sky drawn in the scene, weak mirrors blur down the screen:
+`TestPostUseReflection`); `Atmosphere.NoFarHaze` stops the haze at the
 march for a renderer with its own aerial perspective.
 `PostSettings.MotionBlur` is camera motion blur (`render/post_motion.go`):
 each pixel's point, rebuilt from perspective or log depth, is projected

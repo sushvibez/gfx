@@ -78,6 +78,58 @@ type atmosUniforms struct {
 	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced, w the march's noise frame (0: still)
 	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
 	Depth   core.Vec4 // x log depth scale (0 = perspective), y 1 = no haze past the march, zw the projection's jitter (NDC)
+	Refl    core.Vec4 // a foreign renderer's reflections (UseReflection): x 1 = level mirrors, y 1 = a sky map, z 1 = the sky is in the scene, w blur
+	Origin  core.Vec4 // xyz the eye in a frame fixed to the world, for the ripples' phase
+}
+
+// Reflection asks Post to trace screen-space reflections of the scene for
+// a renderer that is not a Renderer3D (UseReflection; a Renderer3D asks
+// through FrameSettings.SceneReflection and UseShadow). The renderer's
+// materials leave their mirror strength m in the scene target's alpha as
+// 1 − m (negated for moving water, whose mirror Post ripples), having
+// already added the sky's reflection, m × sky; where a traced ray meets
+// the scene, Post swaps that sky for what the ray meets.
+type Reflection struct {
+	// Sky is the sky the materials put in their mirrors, as an
+	// equirectangular map in Post's world (u = ½ + atan2(x, −z)/2π,
+	// v = acos(y)/π; linear radiance on the scene's scale). Nil: the
+	// Atmosphere's analytic sky.
+	Sky *gpu.TextureView
+	// Level says every mirror lies level (water, puddles, wet paving): the
+	// normal is Post's world up rather than the depth buffer's, which on a
+	// terrain mesh carries the relief under the water.
+	Level bool
+	// SkyInScene says the renderer drew its sky into the scene target: a
+	// ray that meets nothing takes the sky from where its direction shows
+	// on screen (the clouds in a lake) before falling back to Sky.
+	SkyInScene bool
+	// Origin is the eye's position in a frame fixed to the world (Post's
+	// axes), for the ripples' phase when the renderer keeps the eye at
+	// Post's origin; zero otherwise.
+	Origin core.Vec3
+	// Blur smears the reflection in a weak mirror (wet ground rather than
+	// standing water) down the screen, as wet tarmac draws a lamp out into
+	// a streak: the spread is Blur × (1 − m)² of the ray's length (0 =
+	// sharp everywhere).
+	Blur float32
+}
+
+// UseReflection turns screen-space reflections on for a renderer that is
+// not a Renderer3D (see Reflection), or off with nil. Call it again when
+// a field changes; UseShadow replaces it.
+func (p *Post) UseReflection(r *Reflection) {
+	if r == nil {
+		if p.foreignRefl != nil {
+			p.atmosDirty = true
+		}
+		p.foreignRefl, p.reflect = nil, false
+		return
+	}
+	if p.foreignRefl == nil || p.foreignRefl.Sky != r.Sky {
+		p.atmosDirty = true
+	}
+	c := *r
+	p.foreignRefl, p.reflect = &c, true
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -89,7 +141,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 			p.atmosDirty = true
 		}
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
-		p.skyView, p.rainVP = nil, core.Mat4{}
+		p.skyView, p.rainVP, p.foreignRefl = nil, core.Mat4{}, nil
 		p.traceNodes, p.traceInsts, p.traceTris, p.bounceOn, p.reflectTraced = nil, nil, nil, false, false
 		p.hazeTraced = false
 		p.spotViews = [MaxSpotShadows]*gpu.TextureView{}
@@ -113,6 +165,10 @@ func (p *Post) UseShadow(r *Renderer3D) {
 	p.lightVP = r.lastLightVP
 	p.lightCount = r.lastLightCount
 	p.reflect = r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
+	if p.foreignRefl != nil {
+		p.foreignRefl = nil
+		p.atmosDirty = true
+	}
 }
 
 // UseSunShadow gives Post a sun shadow map drawn by a renderer that is
@@ -150,6 +206,11 @@ func (p *Post) atmosTargets(tex func(w, h int, f gpu.TextureFormat) postTex, w, 
 		// A stand-in for the shadow map when no renderer supplied one.
 		t := p.device.CreateTexture2D(1, 1, gpu.FormatDepth32Float, gpu.TextureRenderAttachment|gpu.TextureBinding)
 		p.noShadow = postTex{tex: t, view: t.CreateView(), w: 1, h: 1}
+	}
+	if p.noSky.tex == nil {
+		// A stand-in for a foreign renderer's sky map.
+		t := p.device.CreateTexture2D(1, 1, hdr, gpu.TextureBinding|gpu.TextureCopyDst)
+		p.noSky = postTex{tex: t, view: t.CreateView(), w: 1, h: 1}
 	}
 	if p.noLights == nil {
 		// A stand-in for the renderer's light list.
@@ -208,7 +269,11 @@ func (p *Post) atmosBind() {
 	if skyMap == nil {
 		skyMap = p.noShadow.view
 	}
-	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3), tex(4, skyMap), tex(5, p.refl.view))
+	reflSky := p.noSky.view
+	if p.foreignRefl != nil && p.foreignRefl.Sky != nil {
+		reflSky = p.foreignRefl.Sky
+	}
+	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3), tex(4, skyMap), tex(5, p.refl.view), tex(6, reflSky))
 	p.reflDirty = true // its own group reads the same views
 }
 
@@ -275,6 +340,16 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 			u.Rain.W = float32(p.hazeFrame)
 		}
 	}
+	if f := p.foreignRefl; f != nil {
+		b := func(v bool) float32 {
+			if v {
+				return 1
+			}
+			return 0
+		}
+		u.Refl = core.V4(b(f.Level), b(f.Sky != nil), b(f.SkyInScene), max(f.Blur, 0))
+		u.Origin = core.V4(f.Origin.X, f.Origin.Y, f.Origin.Z, 0)
+	}
 	u.Depth.X = max(p.LogDepth, 0)
 	if a.NoFarHaze {
 		u.Depth.Y = 1
@@ -318,6 +393,7 @@ func (p *Post) atmosReleaseTargets() {
 func (p *Post) atmosRelease() {
 	p.atmosReleaseTargets()
 	p.noShadow.release()
+	p.noSky.release()
 	for _, pl := range []**gpu.RenderPipeline{&p.plVol, &p.plVolTraced, &p.plVolBlurH, &p.plVolBlurV, &p.plAtmos} {
 		if *pl != nil {
 			(*pl).Release()
@@ -353,6 +429,8 @@ struct AtmU {
     rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced, w the march's noise frame
     rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
     depth : vec4f,     // x log depth scale (0 = perspective), y 1 = no haze past the march, zw the projection's jitter (NDC)
+    refl : vec4f,      // a foreign renderer's reflections: x 1 = level mirrors, y 1 = sky map, z 1 = sky in the scene, w blur
+    origin : vec4f,    // xyz the eye in a world-fixed frame (the ripples' phase)
 };
 // The view distance (along -z) of a depth-buffer value.
 fn view_dist(d : f32) -> f32 {
@@ -601,6 +679,7 @@ const postAtmosWGSL = `
 @group(0) @binding(3) var<uniform> A : AtmU;
 @group(0) @binding(4) var sky_map : texture_depth_2d;
 @group(0) @binding(5) var refl : texture_2d<f32>;
+@group(0) @binding(6) var refl_sky_map : texture_2d<f32>;
 ` + postAtmosCommonWGSL + `
 // Whether the air at a world point is open to the sky (1) or has a roof
 // over it (0), by the renderer's sky map; open where there is no map.
@@ -637,13 +716,71 @@ fn rain_layer(uv : vec2f, aspect : f32, turn : vec2f, cells : f32, speed : f32, 
 fn view_pos(t : vec2i, dims : vec2f) -> vec3f {
     return view_ray((vec2f(t) + 0.5) / dims) * view_dist(textureLoad(depth, t, 0));
 }
+// The sky the materials put in their mirrors: a foreign renderer's map
+// (Reflection.Sky, equirectangular, filtered by hand), else the analytic one.
+fn refl_sky(rd : vec3f) -> vec3f {
+    if (A.refl.y < 0.5) { return sky_color(rd); }
+    let sz = vec2i(textureDimensions(refl_sky_map));
+    let uv = vec2f(0.5 + atan2(rd.x, -rd.z) / 6.2831853, acos(clamp(rd.y, -1.0, 1.0)) / 3.14159265);
+    let p = uv * vec2f(sz) - 0.5;
+    let i = vec2i(floor(p));
+    let f = fract(p);
+    let x0 = (i.x % sz.x + sz.x) % sz.x;
+    let x1 = (x0 + 1) % sz.x;
+    let y0 = clamp(i.y, 0, sz.y - 1);
+    let y1 = clamp(i.y + 1, 0, sz.y - 1);
+    let a = mix(textureLoad(refl_sky_map, vec2i(x0, y0), 0).rgb, textureLoad(refl_sky_map, vec2i(x1, y0), 0).rgb, f.x);
+    let b = mix(textureLoad(refl_sky_map, vec2i(x0, y1), 0).rgb, textureLoad(refl_sky_map, vec2i(x1, y1), 0).rgb, f.x);
+    return mix(a, b, f.y);
+}
+// A ray that met nothing, when the renderer drew its sky into the scene
+// (Reflection.SkyInScene): the sky where the ray's direction shows on
+// screen, if it shows there and nothing stands in front of it.
+fn sky_in_scene(r : vec3f, dims : vec2f) -> vec4f {
+    if (A.refl.z < 0.5 || r.z > -0.02) { return vec4f(0.0); }
+    let uv = vec2f(r.x * A.proj.x / -r.z, r.y * A.proj.y / -r.z) * vec2f(0.5, -0.5) + 0.5;
+    if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { return vec4f(0.0); }
+    let t = clamp(vec2i(uv * dims), vec2i(0), vec2i(dims) - 1);
+    if (textureLoad(depth, t, 0) < 0.99999) { return vec4f(0.0); }
+    let e = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+    return vec4f(max(textureLoad(scene, t, 0).rgb, vec3f(0.0)), smoothstep(0.0, 0.08, e));
+}
+// A rough mirror's reflection (Reflection.Blur): taps down the screen
+// round the hit, spread by radius (in uv), skipping the sky.
+fn refl_blur(uv : vec2f, dims : vec2f, hit : vec3f, radius : f32) -> vec3f {
+    let dmax = vec2i(dims) - 1;
+    var acc = hit;
+    var ws = 1.0;
+    for (var i = 1; i <= 3; i++) {
+        let o = vec2f(0.12 * radius, radius) * (f32(i) / 3.0);
+        let w = exp(-f32(i * i) * 0.25);
+        for (var s = -1.0; s <= 1.0; s += 2.0) {
+            let t = clamp(vec2i((uv + o * vec2f(-s, s)) * dims), vec2i(0), dmax);
+            if (textureLoad(depth, t, 0) < 0.99999) {
+                acc += max(textureLoad(scene, t, 0).rgb, vec3f(0.0)) * w;
+                ws += w;
+            }
+        }
+    }
+    return acc / ws;
+}
+// Whether a ray off a level mirror (Reflection.Level) at p, now at q,
+// meets the surface at q's pixel (q scaled by k): only if that surface
+// stands up into the ray's rise. A ray grazing off water toward the
+// horizon otherwise "meets" the far water it passes over (the depth
+// buffer is one layer, and a planet's water curves away below the ray).
+fn level_hit(p : vec3f, q : vec3f, k : f32) -> bool {
+    if (A.refl.x < 0.5) { return true; }
+    let up = transpose(mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz)) * vec3f(0.0, 1.0, 0.0);
+    return dot(q * k - p, up) > 0.3 * dot(q - p, up);
+}
 // Screen-space reflection: from a mirror-like pixel, march the reflected
 // ray through the depth buffer (strides growing with distance, then a
 // bisection to the surface) and return what it meets with a confidence in
 // w: zero when it leaves the screen, goes behind something, or comes back
 // toward the camera.
 struct ReflHit { c : vec4f, sky : vec3f }   // rgb what the ray met and w how surely; the sky that way
-fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
+fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool, strength : f32) -> ReflHit {
     let dmax = vec2i(dims) - 1;
     let p = view_pos(c, dims);
     // The surface normal from the depth buffer: on each axis, the neighbour
@@ -659,12 +796,16 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
     var n = normalize(cross(dy, dx));
     let v = normalize(p);
     if (dot(n, v) > 0.0) { n = -n; }
+    if (A.refl.x > 0.5) {
+        // Level mirrors (Reflection.Level): the world's up.
+        n = normalize(transpose(mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz)) * vec3f(0.0, 1.0, 0.0));
+    }
     if (ripples) {
         // Moving water: a few trains of waves crossing in the horizontal
         // plane tilt the mirror, less with distance (where they would only
         // shimmer).
         let rot = mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz);
-        let w = (A.cam.xyz + rot * p).xz;
+        let w = (A.cam.xyz + A.origin.xyz + rot * p).xz;
         let t = A.rain.y;
         var g = vec2f(0.0);
         g += vec2f(0.8, 0.6) * 0.045 * cos(dot(w, vec2f(0.8, 0.6)) * 1.7 + t * 1.3);
@@ -675,7 +816,13 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
         n = normalize(n + transpose(rot) * vec3f(g.x, 0.0, g.y));
     }
     let r = reflect(v, n);
-    let sky = sky_color(world_dir(r)); // what the material mirrored there, roughly
+    let sky = refl_sky(world_dir(r)); // what the material mirrored there
+    // Off a level mirror only a ripple can send the ray down, into the
+    // water behind it: the material's own sky stands for that.
+    let lift = select(1.0, smoothstep(0.0, 0.04, world_dir(r).y), A.refl.x > 0.5);
+    if (lift <= 0.0) {
+        return ReflHit(vec4f(0.0), sky);
+    }
     if (r.z > 0.15) {
         return ReflHit(vec4f(0.0), sky); // back toward the camera: nothing on screen to meet
     }
@@ -694,7 +841,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
         let zs = view_dist(dq);
         let zr = -q.z;
         // Behind the surface there, but not by more than a plausible thickness.
-        if (dq < 0.99999 && zr > zs && zr - zs < max(1.5 * stride, 0.3 + 0.05 * zr)) {
+        if (dq < 0.99999 && zr > zs && zr - zs < max(1.5 * stride, 0.3 + 0.05 * zr) && level_hit(p, q, zs / zr)) {
             found = true;
             break;
         }
@@ -702,7 +849,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
         stride *= 1.14;
     }
     if (!found) {
-        return ReflHit(vec4f(0.0), sky);
+        return ReflHit(sky_in_scene(r, dims) * vec4f(1.0, 1.0, 1.0, lift), sky);
     }
     for (var i = 0; i < 5; i++) {
         let tm = 0.5 * (t0 + t1);
@@ -713,10 +860,14 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
     }
     let q = p + r * t1;
     let uv = screen_uv(q);
-    let hit = max(textureLoad(scene, clamp(vec2i(uv * dims), vec2i(0), dmax), 0).rgb, vec3f(0.0));
+    var hit = max(textureLoad(scene, clamp(vec2i(uv * dims), vec2i(0), dmax), 0).rgb, vec3f(0.0));
+    if (A.refl.w > 0.0 && strength < 0.98) {
+        let k = 1.0 - strength;
+        hit = refl_blur(uv, dims, hit, A.refl.w * k * k * t1 * A.proj.y * 0.5 / max(-q.z, 0.1));
+    }
     // Fade toward the screen's edges and for rays turning back at the camera.
     let e = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
-    let conf = smoothstep(0.0, 0.08, e) * (1.0 - smoothstep(-0.1, 0.15, r.z));
+    let conf = smoothstep(0.0, 0.08, e) * (1.0 - smoothstep(-0.1, 0.15, r.z)) * lift;
     return ReflHit(vec4f(hit, conf), sky);
 }
 
@@ -730,7 +881,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
     // alpha and already added the sky's reflection; where the ray meets the
     // scene, swap the sky for what it meets.
     if (A.lamps.z > 0.5 && !is_sky && abs(sc.a) < 0.995) {
-        let hit = trace_reflection(c, vec2f(textureDimensions(depth)), sc.a < 0.0);
+        let hit = trace_reflection(c, vec2f(textureDimensions(depth)), sc.a < 0.0, 1.0 - abs(sc.a));
         var seen = hit.c.rgb * hit.c.w;
         var sure = hit.c.w;
         if (A.rain.z > 0.5) {

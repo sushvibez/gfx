@@ -113,8 +113,10 @@ real browser. Win32 `WM_TOUCH` is not handled.
   (`PostSettings.TAA`, 2026-11-13; camera reprojection only, no
   per-object motion vectors, and sparse sub-pixel wires still break up in
   fast motion). Sky reflection (`FrameSettings.SkyReflection`) and
-  `Material.Water` too; reflections of the scene itself (screen-space or
-  planar) are not there. Still to come, in order: a temporal filter for
+  `Material.Water` too; screen-space reflections of the scene
+  (`FrameSettings.SceneReflection`, and `Post.UseReflection` for a
+  renderer that is not a `Renderer3D`, 2026-11-13); planar reflections
+  are not there. Still to come, in order: a temporal filter for
   the AO and shaft grain (their noise is fixed per pixel, so TAA does not
   average it; AO is applied after TAA), shadows for lamps (their beams,
   `Atmosphere.Lamps`, pass through geometry), environment lighting (IBL), lens flare, GPU

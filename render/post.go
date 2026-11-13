@@ -237,6 +237,11 @@ type Post struct {
 	bgVolBlur                              [2]*gpu.BindGroup
 	bgAOBlur                               [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
 
+	// A foreign renderer's reflections (UseReflection) and a stand-in for
+	// its sky map.
+	foreignRefl *Reflection
+	noSky       postTex
+
 	motion postMotion // camera motion blur (post_motion.go)
 	taa    postTAA    // temporal anti-aliasing (post_taa.go)
 	pre    postTex    // the scene with the air, before anti-aliasing and blur (allocated on first use)
