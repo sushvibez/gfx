@@ -77,7 +77,7 @@ type atmosUniforms struct {
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
 	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced, w the march's noise frame (0: still)
 	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
-	Depth   core.Vec4 // x log depth scale (0 = perspective), y 1 = no haze past the march
+	Depth   core.Vec4 // x log depth scale (0 = perspective), y 1 = no haze past the march, zw the projection's jitter (NDC)
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -279,6 +279,7 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 	if a.NoFarHaze {
 		u.Depth.Y = 1
 	}
+	u.Depth.Z, u.Depth.W = p.taa.jit[0], p.taa.jit[1]
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -351,7 +352,7 @@ struct AtmU {
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
     rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced, w the march's noise frame
     rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
-    depth : vec4f,     // x log depth scale (0 = perspective), y 1 = no haze past the march
+    depth : vec4f,     // x log depth scale (0 = perspective), y 1 = no haze past the march, zw the projection's jitter (NDC)
 };
 // The view distance (along -z) of a depth-buffer value.
 fn view_dist(d : f32) -> f32 {
@@ -359,8 +360,16 @@ fn view_dist(d : f32) -> f32 {
     return A.proj.w / (d + A.proj.z);
 }
 // The view-space ray through a uv (not normalised: z is -1).
+// The scene was drawn with its projection offset by depth.zw (temporal
+// anti-aliasing's jitter, in NDC), so the pixel at uv saw the ray through
+// uv less that offset, and a view-space point shows at its uv plus it.
 fn view_ray(uv : vec2f) -> vec3f {
-    return vec3f((uv.x * 2.0 - 1.0) / A.proj.x, (1.0 - uv.y * 2.0) / A.proj.y, -1.0);
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0) - A.depth.zw;
+    return vec3f(ndc.x / A.proj.x, ndc.y / A.proj.y, -1.0);
+}
+fn screen_uv(q : vec3f) -> vec2f {
+    let ndc = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) + A.depth.zw;
+    return ndc * vec2f(0.5, -0.5) + 0.5;
 }
 fn world_dir(v : vec3f) -> vec3f {
     return normalize(mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz) * v);
@@ -679,7 +688,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
         t1 = t0 + stride;
         let q = p + r * t1;
         if (q.z > -0.05) { break; }
-        let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+        let uv = screen_uv(q);
         if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0))) { break; }
         let dq = textureLoad(depth, min(vec2i(uv * dims), dmax), 0);
         let zs = view_dist(dq);
@@ -698,12 +707,12 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
     for (var i = 0; i < 5; i++) {
         let tm = 0.5 * (t0 + t1);
         let q = p + r * tm;
-        let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+        let uv = screen_uv(q);
         let zs = view_dist(textureLoad(depth, clamp(vec2i(uv * dims), vec2i(0), dmax), 0));
         if (-q.z > zs) { t1 = tm; } else { t0 = tm; }
     }
     let q = p + r * t1;
-    let uv = vec2f(q.x * A.proj.x / -q.z, q.y * A.proj.y / -q.z) * vec2f(0.5, -0.5) + 0.5;
+    let uv = screen_uv(q);
     let hit = max(textureLoad(scene, clamp(vec2i(uv * dims), vec2i(0), dmax), 0).rgb, vec3f(0.0));
     // Fade toward the screen's edges and for rays turning back at the camera.
     let e = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));

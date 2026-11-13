@@ -109,10 +109,14 @@ real browser. Win32 `WM_TOUCH` is not handled.
   PCSS sun shadows (`FrameSettings.SunSoftness`) and ambient occlusion
   (`PostSettings.AO`) followed the same day, then light shafts and an
   analytic sky (`Post.Atmosphere`); camera motion blur
-  (`PostSettings.MotionBlur`, 2026-11-13). Still to come, in order: a temporal
-  Sky reflection (`FrameSettings.SkyReflection`) and `Material.Water` too;
-  reflections of the scene itself (screen-space or planar) are not there.
-  filter for the AO and shaft grain, shadows for lamps (their beams,
+  (`PostSettings.MotionBlur`, 2026-11-13) and temporal anti-aliasing
+  (`PostSettings.TAA`, 2026-11-13; camera reprojection only, no
+  per-object motion vectors, and sparse sub-pixel wires still break up in
+  fast motion). Sky reflection (`FrameSettings.SkyReflection`) and
+  `Material.Water` too; reflections of the scene itself (screen-space or
+  planar) are not there. Still to come, in order: a temporal filter for
+  the AO and shaft grain (their noise is fixed per pixel, so TAA does not
+  average it; AO is applied after TAA), shadows for lamps (their beams,
   `Atmosphere.Lamps`, pass through geometry), environment lighting (IBL), lens flare, GPU
   particles, quality tiers. The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.

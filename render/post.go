@@ -4,8 +4,9 @@ package render
 // dynamic range (linear radiance in an rgba16float target) and Post turns
 // it into the displayed image the way a film camera would —
 //
-//	scene (HDR) → bloom (a 13-tap downsample chain with firefly
-//	suppression, tent upsampled back) → auto exposure (the scene's
+//	scene (HDR) → air and sky → temporal anti-aliasing → motion blur →
+//	bloom (a 13-tap downsample chain with firefly suppression, tent
+//	upsampled back) → auto exposure (the scene's
 //	log-average luminance, eased over time) → tone curve (ACES pulled
 //	toward AgX) → grade (split tone, S-curve, lifted blacks, saturation)
 //	→ vignette and chromatic aberration → FXAA, sharpen and film grain.
@@ -96,6 +97,14 @@ type PostSettings struct {
 	// screen. It needs Post.View and Post.Projection every frame, and
 	// DeltaTime for the right length at frame rates other than 60.
 	MotionBlur float32
+	// TAA is temporal anti-aliasing (post_taa.go): the scene renderer
+	// jitters its projection by Post.Jitter each frame (View3D does it for a
+	// Renderer3D) and Post blends each frame into a history that follows
+	// the camera, so edges and sub-pixel detail (needles, wires, fences)
+	// settle to a supersampled look instead of crawling. It needs
+	// Post.View and Post.Projection (unjittered) every frame; FXAA is
+	// skipped while it is on.
+	TAA bool
 }
 
 // DefaultPostSettings is a gentle filmic look: mild bloom, eye
@@ -123,6 +132,7 @@ type Post struct {
 	// Projection is the camera's projection matrix (perspective, depth 0…1)
 	// for the frame in the scene target: ambient occlusion rebuilds
 	// positions from depth with it. Zero disables the depth-based passes.
+	// With TAA on it is the projection without Jitter's offset.
 	Projection core.Mat4
 	// View is the camera's view matrix for that frame; with Projection it
 	// gives the atmosphere its view rays.
@@ -228,6 +238,8 @@ type Post struct {
 	bgAOBlur                               [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
 
 	motion postMotion // camera motion blur (post_motion.go)
+	taa    postTAA    // temporal anti-aliasing (post_taa.go)
+	pre    postTex    // the scene with the air, before anti-aliasing and blur (allocated on first use)
 }
 
 type postTex struct {
@@ -286,6 +298,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.bouncePipelines(mk)
 	p.reflectPipelines(mk)
 	p.motionPipelines(mk)
+	p.taaPipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -396,6 +409,8 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		return
 	}
 	p.time += 1.0 / 60
+	cam := p.camera()
+	p.taaSetup(cam)
 	p.queue.WriteBuffer(p.uni, 0, floatBytes(p.uniforms()))
 	black := gpu.Color{}
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup) {
@@ -406,12 +421,24 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		rp.End()
 	}
 	p.bounceRender(enc) // the light this frame's surfaces bounce, for the next frame
-	// The air and the sky, then the camera's motion, then the average over
-	// the frames before: p.lit is what the camera sees.
-	lit, blur := p.motionSetup()
+	// The air and the sky, then temporal anti-aliasing, the camera's
+	// motion and the temporal filter: p.lit is what the camera sees.
+	k := p.frame & 1
+	blur := p.motionSetup(cam)
+	lit := p.lit.view
+	if p.taa.on || blur {
+		p.preTarget()
+		lit = p.pre.view
+	}
 	p.atmosRender(enc, lit)
-	if blur {
-		p.motionRender(enc)
+	switch {
+	case p.taa.on:
+		p.taaRender(enc, k, blur)
+		if blur {
+			p.motionRender(enc, p.taa.hist[k].view)
+		}
+	case blur:
+		p.motionRender(enc, p.pre.view)
 	}
 	p.motionRemember()
 	p.temporalRender(enc) // averaged over the frames before, when asked
@@ -441,15 +468,14 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		aoPass(p.ao[1].view, p.plAOBlurH, p.bgAOBlur[0])
 		aoPass(p.ao[0].view, p.plAOBlurV, p.bgAOBlur[1])
 	}
-	k := p.frame & 1
 	pass(p.adapt[k].view, p.plAdapt, p.bgAdapt[k])
 	pass(p.ldr.view, p.plComposite, p.bgComposite[k])
 	pass(dst, p.plFinal, p.bgFinal)
 	p.frame++
 }
 
-// postUniformSize is the uniform block: nine vec4f.
-const postUniformSize = 9 * 16
+// postUniformSize is the uniform block: ten vec4f.
+const postUniformSize = 10 * 16
 
 // aoOn reports whether ambient occlusion runs: asked for, and the camera
 // known.
@@ -467,6 +493,10 @@ func (p *Post) uniforms() []float32 {
 	if !p.aoOn() {
 		ao = 0
 	}
+	sharpen := s.Sharpen
+	if s.TAA {
+		sharpen += taaSharpen // the history's resampling softens a little
+	}
 	rate := s.AdaptRate
 	if p.frame < 2 {
 		rate = 1 // the first frames have no history: adapt at once
@@ -475,7 +505,7 @@ func (p *Post) uniforms() []float32 {
 		s.Exposure, s.AutoExposure, s.Key, s.Bloom,
 		s.MinExposure, s.MaxExposure, rate, s.AgX,
 		s.Saturation, s.Vignette, s.ChromaticAberration, s.Grain,
-		float32(math.Mod(float64(p.time), 64)), b(s.FXAA), s.Sharpen, s.BloomSpread,
+		float32(math.Mod(float64(p.time), 64)), b(s.FXAA && !s.TAA), sharpen, s.BloomSpread,
 		s.ShadowTint[0], s.ShadowTint[1], s.ShadowTint[2], s.Contrast,
 		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], s.LensFlare,
 		s.Lift[0], s.Lift[1], s.Lift[2], s.LensStreak,
@@ -483,6 +513,7 @@ func (p *Post) uniforms() []float32 {
 		// What rebuilds a view position from depth: the projection's x and y
 		// scales and its two depth terms (column-major: [0], [5], [10], [14]).
 		p.Projection[0], p.Projection[5], p.Projection[10], p.Projection[14],
+		p.taa.jit[0], p.taa.jit[1], b(p.taa.on), 0,
 	}
 }
 
@@ -515,6 +546,8 @@ func (p *Post) releaseTargets() {
 	p.bounceReleaseTargets()
 	p.reflectReleaseTargets()
 	p.motionReleaseTargets()
+	p.taaReleaseTargets()
+	p.pre.release()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -544,6 +577,7 @@ func (p *Post) Release() {
 	p.adapt[1].release()
 	p.atmosRelease()
 	p.motionRelease()
+	p.taaRelease()
 	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal, &p.plAO, &p.plAOBlurH, &p.plAOBlurV} {
 		if *pl != nil {
 			(*pl).Release()
@@ -582,6 +616,7 @@ struct PostU {
     lift : vec4f,   // rgb lift, w lens streak
     p4 : vec4f,     // ambient occlusion strength, radius (world), lens dirt, log depth scale (0 = perspective)
     proj : vec4f,   // projection: x scale, y scale, depth terms [10] and [14]
+    jit : vec4f,    // xy the projection's jitter this frame (NDC; temporal anti-aliasing), z 1 = TAA on
 };
 fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
 `
@@ -705,11 +740,7 @@ fn agx(c : vec3f) -> vec3f {
 fn to_srgb(c : vec3f) -> vec3f {
     return mix(c * 12.92, 1.055 * pow(max(c, vec3f(0.0)), vec3f(1.0 / 2.4)) - 0.055, step(vec3f(0.0031308), c));
 }
-fn exposure() -> f32 {
-    let a = textureLoad(adapt, vec2i(0, 0), 0).r;
-    let e = clamp(pow(U.p0.z / max(a, 1e-4), 0.85), U.p1.x, U.p1.y);
-    return U.p0.x * mix(1.0, e, U.p0.y);
-}
+` + postExposureWGSL + `
 // What the lens sees of the bright: the bloom chain's blurred picture, less
 // everything at or below white for the current exposure.
 fn bright(uv : vec2f, thr : f32) -> vec3f {
@@ -869,6 +900,16 @@ fn t(uv : vec2f) -> vec4f { return textureSampleLevel(src, samp, uv, 0.0); }
 }
 `
 
+// postExposureWGSL: the exposure the eye has adapted to (the 1×1 adapt
+// texture bound as adapt), times the set exposure.
+const postExposureWGSL = `
+fn exposure() -> f32 {
+    let a = textureLoad(adapt, vec2i(0, 0), 0).r;
+    let e = clamp(pow(U.p0.z / max(a, 1e-4), 0.85), U.p1.x, U.p1.y);
+    return U.p0.x * mix(1.0, e, U.p0.y);
+}
+`
+
 // postDepthWGSL: view-space position from the depth buffer and the
 // projection (depth 0…1, right-handed: the camera looks down -z).
 const postDepthWGSL = `
@@ -876,10 +917,14 @@ fn view_dist(d : f32) -> f32 {
     if (U.p4.w > 0.0) { return exp2(d / U.p4.w) - 1.0; } // logarithmic depth (Post.LogDepth)
     return U.proj.w / (d + U.proj.z);
 }
+// The scene was drawn with its projection offset by U.jit.xy (in NDC), so
+// the pixel at uv saw the point that lies at uv less that offset.
 fn view_pos(uv : vec2f, z : f32) -> vec3f {
-    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0) - U.jit.xy;
     return vec3f(ndc.x / U.proj.x * z, ndc.y / U.proj.y * z, -z);
 }
+// Where a pixel's point lies on the screen without the jitter, in uv.
+fn unjitter(uv : vec2f) -> vec2f { return uv - vec2f(U.jit.x, -U.jit.y) * 0.5; }
 fn ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
 `
 

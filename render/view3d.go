@@ -143,6 +143,9 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 		v.Post.AfterLight = r3.RenderRain
 		defer func() { r3.DeferRain, v.Post.AfterLight = false, nil }()
 		v.Post.UseShadow(r3) // the light shafts read the sun's shadow map
+		if dx, dy := v.Post.Jitter(); dx != 0 || dy != 0 {
+			r3.Jitter(dx, dy) // temporal anti-aliasing
+		}
 		keep := r3.KeepDepth
 		r3.KeepDepth = true // Post reads the depth buffer
 		err := r3.Render(enc, v.Post.SceneView(), v.Post.DepthView(), v.Clear)

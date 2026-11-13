@@ -53,6 +53,7 @@ type Renderer3D struct {
 	bind       *gpu.BindGroup
 	shadowBind *gpu.BindGroup
 	frame      *gpu.Buffer // per-frame uniforms
+	viewProj   core.Mat4   // the camera's, as given to Begin (Jitter offsets it)
 	draws      *gpu.Buffer // per-draw array, instance-indexed
 	format     gpu.TextureFormat
 
@@ -902,6 +903,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		View:       core.V4(float32(r.renderW), float32(r.renderH), 0, 0),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
+	r.viewProj = viewProj
 	// Each shadow-casting spot renders its map through the same depth-only
 	// pipeline as the sun, reading its own copy of the block.
 	for i := 0; i < r.spotShadows; i++ {
@@ -920,6 +922,14 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	r.mdata = r.mdata[:0]
 	r.camPos = camPos
 	r.pickTag = -1
+}
+
+// Jitter offsets the camera's projection for this frame by (dx, dy) in
+// NDC, after Begin: Post's temporal anti-aliasing (Post.Jitter). View3D
+// calls it when its Post has TAA on.
+func (r *Renderer3D) Jitter(dx, dy float32) {
+	vp := JitterProjection(r.viewProj, dx, dy)
+	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&vp)), unsafe.Sizeof(vp)))
 }
 
 // DrawMaterial queues a mesh shaded by a full Material: albedo, normal, ARM

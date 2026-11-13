@@ -517,7 +517,7 @@ readback is native-only (no js), and **the null-GPU level doesn't exist yet**
   paths via CPU tessellation first.
 - **3D**: clustered forward+ with PBR materials, mesh instancing from day one
   (it falls out of ECS storage), then shadow maps, then a post stack (tonemap,
-  bloom, TAA much later).
+  bloom, TAA).
 - **Scene format**: text-based like `.tscn`/QML, loading into the `scene` node
   tree; binary-packed variant for release. UUID-stable resource references with
   an import pipeline (source asset → imported artifact cache), Godot-style.
@@ -546,6 +546,36 @@ turn over 30° or a zoom in one frame, points jumping a quarter of the
 screen) are left sharp. Only the camera's motion is seen. About 0.05–0.09
 ms at 1600×900 on an RTX 5060 Ti (`TestPostMotionBlur*`; `GFX_POST_BENCH=1`
 for the timing).
+`PostSettings.TAA` is temporal anti-aliasing (`render/post_taa.go`): the
+scene renderer offsets its projection each frame by `Post.Jitter()` (a
+Halton (2, 3) cycle of eight, within half a pixel, in NDC;
+`JitterProjection` applies it to a matrix; `View3D` calls
+`Renderer3D.Jitter` itself) while `Post.Projection` stays unjittered, and
+every depth pass takes the jitter back out (AO, the atmosphere's rays and
+reflection lookups, the motion blur's velocity). The resolve runs on the
+HDR image after the atmosphere and before motion blur and the bloom: each
+pixel's history is found by reprojecting the nearest depth in its 3×3
+through the previous camera (the motion blur's, so `UsePreviousView` and
+`ResetMotion` serve both; perspective or log depth), read through a
+five-tap Catmull-Rom, clipped in YCoCg to the neighbourhood's min/max
+tightened to mean ± 1.25σ, and blended at 0.1 (up to 0.2 in fast motion)
+in exposed, tone-compressed colour. The history's alpha keeps the nearest
+distance (log2) and a small flicker count: a disocclusion (distance
+mismatch, only where the eye's travel moves things by a pixel's
+fraction) starts afresh, and a pixel whose nearest surface keeps coming
+and going (a sub-pixel needle under the jitter) keeps its history
+unclipped unless something nearer arrives or the motion is fast, so
+sparse needles converge instead of crawling while a drone that leaves a
+pixel is still clipped away. FXAA is skipped and the final sharpen gets
++0.1 while it is on. Against 8×8 supersampling of third-of-a-pixel wires
+a still camera's error falls from 2.34 to 0.93; over a checkered floor
+in a pan (1 px and more a frame) from 6.45 to 4.2–5.4; a fast pan leaves
+no ghost but does not help such thin wires (the history's resampling
+spreads them, and clipping wipes what the neighbourhood misses), so
+sparse sub-pixel detail in fast motion still wants geometry that is not
+sub-pixel. Things moving by themselves have no motion vectors: they are
+handled by the clip alone. About 0.1–0.3 ms at 1600×900 on an RTX 5060 Ti
+(`TestPostTAA*`, `TestPostJitter`; `GFX_POST_BENCH=1` for the timing).
 
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with

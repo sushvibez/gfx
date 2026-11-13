@@ -24,6 +24,10 @@ struct V { @builtin(position) pos : vec4f, @location(0) world : vec3f };
     return V(clip, p);
 }
 @fragment fn fs(in : V) -> @location(0) vec4f {
+    if (u.c.y > 1.5) {   // what stands on the floor bright, the floor dark
+        let g = select(0.03, 0.8, in.world.y > 0.002);
+        return vec4f(g, g, g, 1.0);
+    }
     if (u.c.y > 0.0) {
         let k = floor(in.world * 2.0 + 0.001);
         let g = select(0.08, 0.6, (i32(k.x + k.y + k.z) & 1) == 0);
@@ -56,6 +60,59 @@ var logDepthView = core.Mat4LookAt(core.V3(0, 5, 9), core.V3(0, 0.5, 0), core.V3
 // setup before the first frame and frame (when set) before each, and
 // returns the last frame.
 func logDepthFrames(t *testing.T, w, h int, logDepth, checker bool, setup func(*Post), views []core.Mat4, frame ...func(*Post, int)) []byte {
+	t.Helper()
+	mode := float32(0)
+	if checker {
+		mode = 1
+	}
+	return postFrames(t, w, h, logDepth, mode, floorAndBox(), setup, views, frame...)
+}
+
+// floorAndBox is logDepthScene's floor and a 3 m box on it, as triangles
+// (x, y, z per vertex).
+func floorAndBox() []float32 {
+	var v []float32
+	// Each quad is cut into a fine grid, as a terrain mesh is: depth is
+	// written per vertex and interpolated linearly, so one long triangle
+	// would bow away from the true logarithm between its corners.
+	quad := gridQuad(&v, 24)
+	// The floor stops short of the camera (z = 9): a triangle reaching
+	// behind the eye cannot be drawn with per-vertex logarithmic depth.
+	quad(core.V3(-20, 0, -20), core.V3(20, 0, -20), core.V3(20, 0, 7), core.V3(-20, 0, 7))
+	const b = 1.5
+	quad(core.V3(-b, 0, b), core.V3(b, 0, b), core.V3(b, 3, b), core.V3(-b, 3, b))     // front
+	quad(core.V3(-b, 0, -b), core.V3(-b, 0, b), core.V3(-b, 3, b), core.V3(-b, 3, -b)) // left
+	quad(core.V3(b, 0, b), core.V3(b, 0, -b), core.V3(b, 3, -b), core.V3(b, 3, b))     // right
+	quad(core.V3(-b, 3, b), core.V3(b, 3, b), core.V3(b, 3, -b), core.V3(-b, 3, -b))   // top
+	return v
+}
+
+// gridQuad returns a function that appends the quad a b c d to *v cut
+// into an n×n grid of triangle pairs.
+func gridQuad(v *[]float32, n int) func(a, b, c, d core.Vec3) {
+	return func(a, b, c, d core.Vec3) {
+		at := func(i, j int) core.Vec3 {
+			u, w := float32(i)/float32(n), float32(j)/float32(n)
+			ab := a.Add(b.Sub(a).Scale(u))
+			dc := d.Add(c.Sub(d).Scale(u))
+			return ab.Add(dc.Sub(ab).Scale(w))
+		}
+		for j := 0; j < n; j++ {
+			for i := 0; i < n; i++ {
+				for _, p := range []core.Vec3{at(i, j), at(i+1, j), at(i+1, j+1), at(i, j), at(i+1, j+1), at(i, j+1)} {
+					*v = append(*v, p.X, p.Y, p.Z)
+				}
+			}
+		}
+	}
+}
+
+// postFrames draws the triangles v (shaded by mode: 0 grey, 1 a checker,
+// 2 bright on a dark floor) once from each view in turn, with logarithmic
+// or perspective depth, through one Post, calling setup before the first
+// frame and frame (when set) before each, and returns the last frame. The
+// projection carries Post.Jitter, as a renderer feeding TAA does.
+func postFrames(t *testing.T, w, h int, logDepth bool, mode float32, v []float32, setup func(*Post), views []core.Mat4, frame ...func(*Post, int)) []byte {
 	t.Helper()
 	dev, q := headlessDevice(t)
 	mod, err := dev.CreateShaderModuleWGSL("logdepth", logDepthWGSL)
@@ -92,44 +149,11 @@ func logDepthFrames(t *testing.T, w, h int, logDepth, checker bool, setup func(*
 		post.LogDepth = float32(1 / math.Log2(far+1))
 	}
 
-	// Floor (y = 0) and a 3 m box on it, as triangles.
-	var v []float32
-	// Each quad is cut into a fine grid, as a terrain mesh is: depth is
-	// written per vertex and interpolated linearly, so one long triangle
-	// would bow away from the true logarithm between its corners.
-	quad := func(a, b, c, d core.Vec3) {
-		const n = 24
-		at := func(i, j int) core.Vec3 {
-			u, w := float32(i)/n, float32(j)/n
-			ab := a.Add(b.Sub(a).Scale(u))
-			dc := d.Add(c.Sub(d).Scale(u))
-			return ab.Add(dc.Sub(ab).Scale(w))
-		}
-		for j := 0; j < n; j++ {
-			for i := 0; i < n; i++ {
-				for _, p := range []core.Vec3{at(i, j), at(i+1, j), at(i+1, j+1), at(i, j), at(i+1, j+1), at(i, j+1)} {
-					v = append(v, p.X, p.Y, p.Z)
-				}
-			}
-		}
-	}
-	// The floor stops short of the camera (z = 9): a triangle reaching
-	// behind the eye cannot be drawn with per-vertex logarithmic depth.
-	quad(core.V3(-20, 0, -20), core.V3(20, 0, -20), core.V3(20, 0, 7), core.V3(-20, 0, 7))
-	const b = 1.5
-	quad(core.V3(-b, 0, b), core.V3(b, 0, b), core.V3(b, 3, b), core.V3(-b, 3, b))     // front
-	quad(core.V3(-b, 0, -b), core.V3(-b, 0, b), core.V3(-b, 3, b), core.V3(-b, 3, -b)) // left
-	quad(core.V3(b, 0, b), core.V3(b, 0, -b), core.V3(b, 3, -b), core.V3(b, 3, b))     // right
-	quad(core.V3(-b, 3, b), core.V3(b, 3, b), core.V3(b, 3, -b), core.V3(-b, 3, -b))   // top
 	vb := dev.CreateBuffer(gpu.BufferVertex|gpu.BufferCopyDst, len(v)*4)
 	defer vb.Release()
 	q.WriteBuffer(vb, 0, floatBytes(v))
 	ub := dev.CreateBuffer(gpu.BufferUniform|gpu.BufferCopyDst, 80)
 	defer ub.Release()
-	check := float32(0)
-	if checker {
-		check = 1
-	}
 	lay := pl.BindGroupLayout(0)
 	bg := dev.CreateBindGroup(lay, gpu.BindGroupEntry{Binding: 0, Buffer: ub})
 	lay.Release()
@@ -143,8 +167,9 @@ func logDepthFrames(t *testing.T, w, h int, logDepth, checker bool, setup func(*
 		for _, f := range frame {
 			f(post, i)
 		}
-		vp := proj.Mul(cam)
-		q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, check, 0, 0)))
+		dx, dy := post.Jitter()
+		vp := JitterProjection(proj, dx, dy).Mul(cam)
+		q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, mode, 0, 0)))
 		enc := dev.CreateCommandEncoder()
 		pass := enc.BeginRenderPassDepthStore(post.SceneView(), post.DepthView(), gpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1}) // Post reads the depth
 		pass.SetPipeline(pl)

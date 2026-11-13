@@ -51,25 +51,35 @@ type postMotion struct {
 	override           core.Mat4
 	hasOverride        bool
 
-	pre postTex // the scene with the air, before the blur (allocated on first use)
-	uni *gpu.Buffer
-	pl  *gpu.RenderPipeline
-	bg  *gpu.BindGroup
+	uni   *gpu.Buffer
+	pl    *gpu.RenderPipeline
+	bgPre *gpu.BindGroup    // the blur from p.pre
+	bgTAA [2]*gpu.BindGroup // the blur from the anti-aliased image (p.taa.hist[k])
+}
+
+// postCamera is what Post knows this frame of the previous one's camera.
+type postCamera struct {
+	reproj core.Mat4 // this frame's view space to the previous frame's clip space (x, y and w rows)
+	moved  bool      // the camera moved, turned or zoomed since
+	ok     bool      // reproj holds: the previous camera is known and this is not a cut
+	travel float32   // how far the eye moved, in world units
 }
 
 // UsePreviousView gives the previous frame's view matrix in this frame's
-// world, for the next Render's motion blur: for a renderer that moves its
-// world origin with the camera (camera-relative rendering), where the view
-// remembered from the last frame is in a different world. Without it Post
-// uses the View it was given at the last Render.
+// world, for the next Render's motion blur and temporal anti-aliasing:
+// for a renderer that moves its world origin with the camera
+// (camera-relative rendering), where the view remembered from the last
+// frame is in a different world. Without it Post uses the View it was
+// given at the last Render.
 func (p *Post) UsePreviousView(view core.Mat4) {
 	p.motion.override, p.motion.hasOverride = view, true
 }
 
 // ResetMotion forgets the previous camera, so the next frame is not
-// blurred: call it on a cut or a teleport that the automatic checks (a
-// turn of more than 30° in one frame, a change of zoom, points jumping a
-// quarter of the screen) would not catch.
+// blurred and temporal anti-aliasing starts its history afresh: call it
+// on a cut or a teleport that the automatic checks (a turn of more than
+// 30° in one frame, a change of zoom, points jumping a quarter of the
+// screen) would not catch.
 func (p *Post) ResetMotion() {
 	p.motion.have, p.motion.hasOverride = false, false
 }
@@ -80,63 +90,89 @@ func (p *Post) motionPipelines(mk func(label, body, entry string, format gpu.Tex
 	p.motion.uni = p.device.CreateBuffer(gpu.BufferUniform|gpu.BufferCopyDst, int(unsafe.Sizeof(motionUniforms{})))
 }
 
-// motionSetup decides whether this frame is blurred and, if so, writes the
-// uniforms and makes sure the pass has its target. It returns the view the
-// atmosphere's combine pass should draw into.
-func (p *Post) motionSetup() (dst *gpu.TextureView, on bool) {
+// camera works out how this frame's camera relates to the last one's.
+func (p *Post) camera() postCamera {
 	m := &p.motion
 	prevView := m.prevView
 	if m.hasOverride {
 		prevView = m.override
 	}
-	on = p.Settings.MotionBlur > 0 && m.have && p.Projection[0] != 0 && m.prevProj[0] != 0 &&
-		(prevView != p.View || m.prevProj != p.Projection)
-	if !on {
-		return p.lit.view, false
+	var c postCamera
+	if !m.have || p.Projection[0] == 0 || m.prevProj[0] == 0 {
+		return c
 	}
 	inv, ok := p.View.Inverse()
 	if !ok {
-		return p.lit.view, false
+		return c
 	}
 	// A cut: the camera turned too far, or zoomed, in one frame.
 	fwd := func(v core.Mat4) core.Vec3 { return core.V3(v[2], v[6], v[10]).Normalize() }
 	if fwd(prevView).Dot(fwd(p.View)) < motionCutCos ||
 		math.Abs(float64(m.prevProj[5]/p.Projection[5])-1) > 0.1 {
-		return p.lit.view, false
+		return c
+	}
+	pinv, ok := prevView.Inverse()
+	if !ok {
+		return c
 	}
 	// The previous projection's x, y and w rows only (w = -z): the depth
 	// terms are not needed, and a log-depth renderer may not supply them.
 	var pp core.Mat4
 	pp[0], pp[5], pp[8], pp[9], pp[11] = m.prevProj[0], m.prevProj[5], m.prevProj[8], m.prevProj[9], -1
+	c.reproj = pp.Mul(prevView).Mul(inv)
+	c.moved = prevView != p.View || m.prevProj != p.Projection
+	c.travel = core.V3(inv[12]-pinv[12], inv[13]-pinv[13], inv[14]-pinv[14]).Length()
+	c.ok = true
+	return c
+}
+
+// motionSetup decides whether this frame is blurred and, if so, writes the
+// uniforms.
+func (p *Post) motionSetup(cam postCamera) bool {
+	if p.Settings.MotionBlur <= 0 || !cam.ok || !cam.moved {
+		return false
+	}
 	dt := p.DeltaTime
 	if dt <= 0 {
 		dt = 1.0 / 60
 	}
 	u := motionUniforms{
-		Reproj: pp.Mul(prevView).Mul(inv),
+		Reproj: cam.reproj,
 		M:      core.V4(min(0.5, p.Settings.MotionBlur*motionShutter/dt), motionMaxLen, motionCut, 0),
 	}
-	p.queue.WriteBuffer(m.uni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
-	if m.pre.tex == nil {
-		t := p.device.CreateTexture2D(p.w, p.h, gpu.FormatRGBA16Float, gpu.TextureRenderAttachment|gpu.TextureBinding)
-		m.pre = postTex{tex: t, view: t.CreateView(), w: p.w, h: p.h}
-		l := m.pl.BindGroupLayout(0)
-		m.bg = p.device.CreateBindGroup(l,
-			gpu.BindGroupEntry{Binding: 0, Sampler: p.linear},
-			gpu.BindGroupEntry{Binding: 1, TextureView: m.pre.view},
-			gpu.BindGroupEntry{Binding: 2, TextureView: p.depthView},
-			gpu.BindGroupEntry{Binding: 3, Buffer: p.uni},
-			gpu.BindGroupEntry{Binding: 4, Buffer: m.uni})
-		l.Release()
-	}
-	return m.pre.view, true
+	p.queue.WriteBuffer(p.motion.uni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
+	return true
 }
 
-// motionRender records the blur from the pre-blur image into p.lit.
-func (p *Post) motionRender(enc *gpu.CommandEncoder) {
+// motionRender records the blur from src (p.pre, or the anti-aliased
+// p.taa.hist[k]) into p.lit.
+func (p *Post) motionRender(enc *gpu.CommandEncoder, src *gpu.TextureView) {
+	m := &p.motion
+	group := func(bg **gpu.BindGroup) *gpu.BindGroup {
+		if *bg == nil {
+			l := m.pl.BindGroupLayout(0)
+			*bg = p.device.CreateBindGroup(l,
+				gpu.BindGroupEntry{Binding: 0, Sampler: p.linear},
+				gpu.BindGroupEntry{Binding: 1, TextureView: src},
+				gpu.BindGroupEntry{Binding: 2, TextureView: p.depthView},
+				gpu.BindGroupEntry{Binding: 3, Buffer: p.uni},
+				gpu.BindGroupEntry{Binding: 4, Buffer: m.uni})
+			l.Release()
+		}
+		return *bg
+	}
+	var bg *gpu.BindGroup
+	switch src {
+	case p.pre.view:
+		bg = group(&m.bgPre)
+	case p.taa.hist[0].view:
+		bg = group(&m.bgTAA[0])
+	default:
+		bg = group(&m.bgTAA[1])
+	}
 	rp := enc.BeginRenderPass(p.lit.view, gpu.Color{})
-	rp.SetPipeline(p.motion.pl)
-	rp.SetBindGroup(0, p.motion.bg)
+	rp.SetPipeline(m.pl)
+	rp.SetBindGroup(0, bg)
 	rp.Draw(3, 1, 0, 0)
 	rp.End()
 }
@@ -150,11 +186,12 @@ func (p *Post) motionRemember() {
 }
 
 func (p *Post) motionReleaseTargets() {
-	if p.motion.bg != nil {
-		p.motion.bg.Release()
-		p.motion.bg = nil
+	for _, bg := range []**gpu.BindGroup{&p.motion.bgPre, &p.motion.bgTAA[0], &p.motion.bgTAA[1]} {
+		if *bg != nil {
+			(*bg).Release()
+			*bg = nil
+		}
 	}
-	p.motion.pre.release()
 }
 
 func (p *Post) motionRelease() {
@@ -191,7 +228,7 @@ struct MotionU { reproj : mat4x4f, m : vec4f };
     let pc = M.reproj * vec4f(view_pos(uv, view_dist(d)), 1.0);
     if (pc.w <= 1e-4) { return vec4f(col0, 1.0); }    // behind the previous camera
     let puv = vec2f(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
-    let mv = uv - puv;                                // this frame's motion, in uv
+    let mv = unjitter(uv) - puv;                      // this frame's motion, in uv (not the jitter's)
     // A jump of a quarter of the screen in one frame is a cut, not motion.
     var vel = mv * M.m.x * (1.0 - smoothstep(M.m.z * 0.6, M.m.z, length(mv)));
     let len = length(vel);
