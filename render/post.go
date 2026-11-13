@@ -127,8 +127,9 @@ type Post struct {
 	// depth, as a planet-scale renderer writes it: d = log2(1 + z) ·
 	// LogDepth for a point z in front of the camera (LogDepth is then
 	// 1 / log2(far + 1)). Ambient occlusion rebuilds positions from it
-	// instead of from Projection's depth terms; Projection's x and y
-	// scales are still needed. The atmosphere passes do not read it.
+	// instead of from Projection's depth terms, and so do the atmosphere's
+	// passes (shafts, haze, rain, reflections); Projection's x and y
+	// scales are still needed.
 	LogDepth float32
 
 	device *gpu.Device

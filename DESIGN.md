@@ -528,7 +528,11 @@ renderer that is not a `Renderer3D` (Drone Defend over PTG's terrain) gets
 contact shadows through the same post stack; the renderer must store its
 depth (`BeginRenderPassDepthStore`) and keep its triangles small, since
 per-vertex log depth bows across a long one (`TestPostAOLogDepth`). The
-atmosphere passes still assume a perspective depth.
+atmosphere passes read it too (light shafts, their blur and upsample,
+rain, reflections: `TestPostShaftsLogDepth`), and `Post.UseSunShadow`
+takes a sun shadow map and matrix from such a renderer for the shafts
+(`TestPostUseSunShadow`); `Atmosphere.NoFarHaze` stops the haze at the
+march for a renderer with its own aerial perspective.
 
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with

@@ -56,6 +56,11 @@ type Atmosphere struct {
 	SunDir  core.Vec3
 	Sun     [3]float32
 	Ambient [3]float32
+	// NoFarHaze stops the haze at MaxDistance: past it the scene is left as
+	// it is instead of fading into the horizon colour. For a renderer that
+	// draws its own aerial perspective (a planet's), so the far field is
+	// not fogged twice; the shafts and the near haze are still added.
+	NoFarHaze bool
 }
 
 // atmosUniforms mirrors the WGSL AtmU struct.
@@ -72,6 +77,7 @@ type atmosUniforms struct {
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
 	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced, w the march's noise frame (0: still)
 	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
+	Depth   core.Vec4 // x log depth scale (0 = perspective), y 1 = no haze past the march
 }
 
 // UseShadow gives Post the sun's shadow map and matrix and the frame's
@@ -107,6 +113,21 @@ func (p *Post) UseShadow(r *Renderer3D) {
 	p.lightVP = r.lastLightVP
 	p.lightCount = r.lastLightCount
 	p.reflect = r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
+}
+
+// UseSunShadow gives Post a sun shadow map drawn by a renderer that is
+// not a Renderer3D, for the light shafts: a depth map (0 nearest the sun)
+// and the matrix taking a point in Post's world (the frame View is the
+// camera of) to its clip space, x and y −1…1, z 0…1. The renderer must
+// have drawn it before Render, in the same encoder or earlier. Call it
+// every frame the matrix moves; nil turns the map off again (the air is
+// then lit everywhere). It replaces what UseShadow gave.
+func (p *Post) UseSunShadow(shadow *gpu.TextureView, lightVP core.Mat4) {
+	if p.shadowView != shadow {
+		p.shadowView = shadow
+		p.atmosDirty = true
+	}
+	p.lightVP = lightVP
 }
 
 // atmosInit builds the atmosphere's pipelines (NewPost calls it through mk).
@@ -254,6 +275,10 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 			u.Rain.W = float32(p.hazeFrame)
 		}
 	}
+	u.Depth.X = max(p.LogDepth, 0)
+	if a.NoFarHaze {
+		u.Depth.Y = 1
+	}
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -326,8 +351,13 @@ struct AtmU {
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
     rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced, w the march's noise frame
     rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
+    depth : vec4f,     // x log depth scale (0 = perspective), y 1 = no haze past the march
 };
-fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
+// The view distance (along -z) of a depth-buffer value.
+fn view_dist(d : f32) -> f32 {
+    if (A.depth.x > 0.0) { return exp2(d / A.depth.x) - 1.0; } // logarithmic depth (Post.LogDepth)
+    return A.proj.w / (d + A.proj.z);
+}
 // The view-space ray through a uv (not normalised: z is -1).
 fn view_ray(uv : vec2f) -> vec3f {
     return vec3f((uv.x * 2.0 - 1.0) / A.proj.x, (1.0 - uv.y * 2.0) / A.proj.y, -1.0);
@@ -515,7 +545,7 @@ fn sun_vis(p : vec3f) -> f32 {
     }
     // Past the march: the haze goes on, fading the far field into the
     // horizon's colour in that direction.
-    if (!is_sky && dist > max_d) {
+    if (!is_sky && dist > max_d && A.depth.y < 0.5) {
         let h1 = A.cam.y + rd.y * max_d;
         let h2 = A.cam.y + rd.y * dist;
         let tau = sigma * 0.5 * (dist - max_d) * 0.5 * (shape(h1) + shape(h2));
