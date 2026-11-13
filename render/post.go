@@ -123,6 +123,13 @@ type Post struct {
 	View core.Mat4
 	// Atmosphere is the air and the sky (post_atmos.go); zero is off.
 	Atmosphere Atmosphere
+	// LogDepth, when above zero, says the depth target holds logarithmic
+	// depth, as a planet-scale renderer writes it: d = log2(1 + z) ·
+	// LogDepth for a point z in front of the camera (LogDepth is then
+	// 1 / log2(far + 1)). Ambient occlusion rebuilds positions from it
+	// instead of from Projection's depth terms; Projection's x and y
+	// scales are still needed. The atmosphere passes do not read it.
+	LogDepth float32
 
 	device *gpu.Device
 	queue  *gpu.Queue
@@ -451,7 +458,7 @@ func (p *Post) uniforms() []float32 {
 		s.ShadowTint[0], s.ShadowTint[1], s.ShadowTint[2], s.Contrast,
 		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], s.LensFlare,
 		s.Lift[0], s.Lift[1], s.Lift[2], s.LensStreak,
-		ao, max(s.AORadius, 0.05), s.LensDirt, 0,
+		ao, max(s.AORadius, 0.05), s.LensDirt, max(p.LogDepth, 0),
 		// What rebuilds a view position from depth: the projection's x and y
 		// scales and its two depth terms (column-major: [0], [5], [10], [14]).
 		p.Projection[0], p.Projection[5], p.Projection[10], p.Projection[14],
@@ -550,7 +557,7 @@ struct PostU {
     shadow : vec4f, // rgb shadow tint, w contrast
     high : vec4f,   // rgb highlight tint, w lens flare
     lift : vec4f,   // rgb lift, w lens streak
-    p4 : vec4f,     // ambient occlusion strength, radius (world), lens dirt
+    p4 : vec4f,     // ambient occlusion strength, radius (world), lens dirt, log depth scale (0 = perspective)
     proj : vec4f,   // projection: x scale, y scale, depth terms [10] and [14]
 };
 fn luma(c : vec3f) -> f32 { return dot(c, vec3f(0.2126, 0.7152, 0.0722)); }
@@ -842,7 +849,10 @@ fn t(uv : vec2f) -> vec4f { return textureSampleLevel(src, samp, uv, 0.0); }
 // postDepthWGSL: view-space position from the depth buffer and the
 // projection (depth 0…1, right-handed: the camera looks down -z).
 const postDepthWGSL = `
-fn view_dist(d : f32) -> f32 { return U.proj.w / (d + U.proj.z); }
+fn view_dist(d : f32) -> f32 {
+    if (U.p4.w > 0.0) { return exp2(d / U.p4.w) - 1.0; } // logarithmic depth (Post.LogDepth)
+    return U.proj.w / (d + U.proj.z);
+}
 fn view_pos(uv : vec2f, z : f32) -> vec3f {
     let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     return vec3f(ndc.x / U.proj.x * z, ndc.y / U.proj.y * z, -z);

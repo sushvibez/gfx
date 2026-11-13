@@ -522,6 +522,14 @@ readback is native-only (no js), and **the null-GPU level doesn't exist yet**
   tree; binary-packed variant for release. UUID-stable resource references with
   an import pipeline (source asset → imported artifact cache), Godot-style.
 
+*Status (2026-11-13):* `Post.LogDepth` lets the ambient occlusion read a
+logarithmic depth buffer (d = log2(1 + z) · LogDepth), so a planet-scale
+renderer that is not a `Renderer3D` (Drone Defend over PTG's terrain) gets
+contact shadows through the same post stack; the renderer must store its
+depth (`BeginRenderPassDepthStore`) and keep its triangles small, since
+per-vertex log depth bows across a long one (`TestPostAOLogDepth`). The
+atmosphere passes still assume a perspective depth.
+
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with
 `FrameSettings.Tonemap = TonemapHDR`; `View3D.Post` wires it into a
