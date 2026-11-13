@@ -108,12 +108,13 @@ real browser. Win32 `WM_TOUCH` is not handled.
   scene (bloom, auto exposure, ACES/AgX, grade, vignette, FXAA, grain).
   PCSS sun shadows (`FrameSettings.SunSoftness`) and ambient occlusion
   (`PostSettings.AO`) followed the same day, then light shafts and an
-  analytic sky (`Post.Atmosphere`). Still to come, in order: a temporal
+  analytic sky (`Post.Atmosphere`); camera motion blur
+  (`PostSettings.MotionBlur`, 2026-11-13). Still to come, in order: a temporal
   Sky reflection (`FrameSettings.SkyReflection`) and `Material.Water` too;
   reflections of the scene itself (screen-space or planar) are not there.
   filter for the AO and shaft grain, shadows for lamps (their beams,
-  `Atmosphere.Lamps`, pass through geometry), environment lighting (IBL), lens flare, motion
-  blur, GPU particles, quality tiers. The legacy `Draw*` calls do not
+  `Atmosphere.Lamps`, pass through geometry), environment lighting (IBL), lens flare, GPU
+  particles, quality tiers. The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.
 - **`app`** (§8): Wayland; multi-window beyond X11 (`NewChild`, `Hide`,
   `Show` are X11-only); the null-GPU headless backend (§8.1 — today

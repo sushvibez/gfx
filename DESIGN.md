@@ -533,6 +533,19 @@ rain, reflections: `TestPostShaftsLogDepth`), and `Post.UseSunShadow`
 takes a sun shadow map and matrix from such a renderer for the shafts
 (`TestPostUseSunShadow`); `Atmosphere.NoFarHaze` stops the haze at the
 march for a renderer with its own aerial perspective.
+`PostSettings.MotionBlur` is camera motion blur (`render/post_motion.go`):
+each pixel's point, rebuilt from perspective or log depth, is projected
+with the previous frame's camera (the `View`/`Projection` of the last
+`Render`, or `Post.UsePreviousView` for a camera-relative renderer), and
+the HDR image is averaged along that motion in nine jittered taps, after
+the atmosphere and before the bloom. The shutter is 1/190 s at strength 1
+(`Post.DeltaTime` gives the frame time; never more than half the frame),
+the streak at most 1.8% of the screen; the sky, sub-pixel motion and a
+still camera cost nothing, and cuts (`ResetMotion`, the first frame, a
+turn over 30° or a zoom in one frame, points jumping a quarter of the
+screen) are left sharp. Only the camera's motion is seen. About 0.05–0.09
+ms at 1600×900 on an RTX 5060 Ti (`TestPostMotionBlur*`; `GFX_POST_BENCH=1`
+for the timing).
 
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with

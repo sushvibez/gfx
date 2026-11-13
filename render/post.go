@@ -90,6 +90,12 @@ type PostSettings struct {
 	// (FrameSettings.Temporal). It needs the camera: Post.Projection and
 	// Post.View.
 	Temporal float32
+	// MotionBlur is the camera's motion blur (post_motion.go): 0 is off, 1
+	// a shutter open 1/190 s (never more than half the frame), so the
+	// streak is the camera's motion over that time, at most 1.8% of the
+	// screen. It needs Post.View and Post.Projection every frame, and
+	// DeltaTime for the right length at frame rates other than 60.
+	MotionBlur float32
 }
 
 // DefaultPostSettings is a gentle filmic look: mild bloom, eye
@@ -131,6 +137,10 @@ type Post struct {
 	// passes (shafts, haze, rain, reflections); Projection's x and y
 	// scales are still needed.
 	LogDepth float32
+	// DeltaTime is the time the frame covers, in seconds (0 = 1/60): motion
+	// blur's shutter is open a fixed time, so its share of the frame's
+	// motion depends on it.
+	DeltaTime float32
 
 	device *gpu.Device
 	queue  *gpu.Queue
@@ -216,6 +226,8 @@ type Post struct {
 	bgVol, bgAtmos                         *gpu.BindGroup
 	bgVolBlur                              [2]*gpu.BindGroup
 	bgAOBlur                               [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
+
+	motion postMotion // camera motion blur (post_motion.go)
 }
 
 type postTex struct {
@@ -273,6 +285,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.temporalPipelines(mk)
 	p.bouncePipelines(mk)
 	p.reflectPipelines(mk)
+	p.motionPipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -392,8 +405,15 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		rp.Draw(3, 1, 0, 0)
 		rp.End()
 	}
-	p.bounceRender(enc)   // the light this frame's surfaces bounce, for the next frame
-	p.atmosRender(enc)    // the air and the sky: p.lit is what the camera sees
+	p.bounceRender(enc) // the light this frame's surfaces bounce, for the next frame
+	// The air and the sky, then the camera's motion, then the average over
+	// the frames before: p.lit is what the camera sees.
+	lit, blur := p.motionSetup()
+	p.atmosRender(enc, lit)
+	if blur {
+		p.motionRender(enc)
+	}
+	p.motionRemember()
 	p.temporalRender(enc) // averaged over the frames before, when asked
 	if p.AfterLight != nil {
 		p.AfterLight(enc, p.lit.view, p.depthView)
@@ -494,6 +514,7 @@ func (p *Post) releaseTargets() {
 	p.temporalReleaseTargets()
 	p.bounceReleaseTargets()
 	p.reflectReleaseTargets()
+	p.motionReleaseTargets()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -522,6 +543,7 @@ func (p *Post) Release() {
 	p.adapt[0].release()
 	p.adapt[1].release()
 	p.atmosRelease()
+	p.motionRelease()
 	for _, pl := range []**gpu.RenderPipeline{&p.plDownFirst, &p.plDown, &p.plUp, &p.plAdapt, &p.plComposite, &p.plFinal, &p.plAO, &p.plAOBlurH, &p.plAOBlurV} {
 		if *pl != nil {
 			(*pl).Release()

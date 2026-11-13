@@ -212,9 +212,9 @@ func (p *Post) atmosBind() {
 	p.reflDirty = true // its own group reads the same views
 }
 
-// atmosRender records the shafts and the combine pass; the result is
-// p.lit, which everything after reads.
-func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
+// atmosRender records the shafts and the combine pass into dst (p.lit,
+// which everything after reads, or motion blur's input).
+func (p *Post) atmosRender(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 	p.atmosBind()
 	a := p.Atmosphere
 	inv, ok := p.View.Inverse()
@@ -295,7 +295,7 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 		pass(p.vol[0].view, p.plVolBlurV, p.bgVolBlur[1], clear)
 	}
 	p.reflectRender(enc) // the mirrors' traced reflections, for the combine
-	pass(p.lit.view, p.plAtmos, p.bgAtmos, gpu.Color{})
+	pass(dst, p.plAtmos, p.bgAtmos, gpu.Color{})
 }
 
 func (p *Post) atmosReleaseBinds() {

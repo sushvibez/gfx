@@ -12,16 +12,25 @@ import (
 
 // logDepthWGSL draws flat grey geometry with logarithmic depth, the way a
 // planet-scale renderer writes it: z_ndc = log2(1 + w) · C (with C = 0,
-// ordinary perspective depth).
+// ordinary perspective depth). With c.y set the surfaces are a checker
+// (for the motion blur tests, which need something to smear).
 const logDepthWGSL = `
 struct U { vp : mat4x4f, c : vec4f };
 @group(0) @binding(0) var<uniform> u : U;
-@vertex fn vs(@location(0) p : vec3f) -> @builtin(position) vec4f {
+struct V { @builtin(position) pos : vec4f, @location(0) world : vec3f };
+@vertex fn vs(@location(0) p : vec3f) -> V {
     var clip = u.vp * vec4f(p, 1.0);
     if (u.c.x > 0.0) { clip.z = log2(max(1e-6, 1.0 + clip.w)) * u.c.x * clip.w; }
-    return clip;
+    return V(clip, p);
 }
-@fragment fn fs() -> @location(0) vec4f { return vec4f(0.35, 0.35, 0.35, 1.0); }
+@fragment fn fs(in : V) -> @location(0) vec4f {
+    if (u.c.y > 0.0) {
+        let k = floor(in.world * 2.0 + 0.001);
+        let g = select(0.08, 0.6, (i32(k.x + k.y + k.z) & 1) == 0);
+        return vec4f(g, g, g, 1.0);
+    }
+    return vec4f(0.35, 0.35, 0.35, 1.0);
+}
 `
 
 // logDepthAOScene is aoScene's floor and box drawn with logarithmic depth
@@ -35,6 +44,18 @@ func logDepthAOScene(t *testing.T, w, h int, ao float32) []byte {
 // Post.LogDepth set) or with perspective depth, and shows it through Post
 // after setup has adjusted it (AO is off unless setup turns it on).
 func logDepthScene(t *testing.T, w, h int, logDepth bool, setup func(*Post)) []byte {
+	t.Helper()
+	return logDepthFrames(t, w, h, logDepth, false, setup, []core.Mat4{logDepthView})
+}
+
+// logDepthView is logDepthScene's camera.
+var logDepthView = core.Mat4LookAt(core.V3(0, 5, 9), core.V3(0, 0.5, 0), core.V3(0, 1, 0))
+
+// logDepthFrames draws logDepthScene's floor and box once from each view
+// in turn (checkered when checker is set), through one Post, calling
+// setup before the first frame and frame (when set) before each, and
+// returns the last frame.
+func logDepthFrames(t *testing.T, w, h int, logDepth, checker bool, setup func(*Post), views []core.Mat4, frame ...func(*Post, int)) []byte {
 	t.Helper()
 	dev, q := headlessDevice(t)
 	mod, err := dev.CreateShaderModuleWGSL("logdepth", logDepthWGSL)
@@ -65,11 +86,8 @@ func logDepthScene(t *testing.T, w, h int, logDepth bool, setup func(*Post)) []b
 	post.Resize(w, h)
 
 	const far = 100.0
-	eye := core.V3(0, 5, 9)
 	proj := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.1, far)
-	vp := proj.Mul(core.Mat4LookAt(eye, core.V3(0, 0.5, 0), core.V3(0, 1, 0)))
 	post.Projection = proj
-	post.View = core.Mat4LookAt(eye, core.V3(0, 0.5, 0), core.V3(0, 1, 0))
 	if logDepth {
 		post.LogDepth = float32(1 / math.Log2(far+1))
 	}
@@ -108,7 +126,10 @@ func logDepthScene(t *testing.T, w, h int, logDepth bool, setup func(*Post)) []b
 	q.WriteBuffer(vb, 0, floatBytes(v))
 	ub := dev.CreateBuffer(gpu.BufferUniform|gpu.BufferCopyDst, 80)
 	defer ub.Release()
-	q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, 0, 0, 0)))
+	check := float32(0)
+	if checker {
+		check = 1
+	}
 	lay := pl.BindGroupLayout(0)
 	bg := dev.CreateBindGroup(lay, gpu.BindGroupEntry{Binding: 0, Buffer: ub})
 	lay.Release()
@@ -117,15 +138,23 @@ func logDepthScene(t *testing.T, w, h int, logDepth bool, setup func(*Post)) []b
 	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
 	view := target.CreateView()
 	defer func() { view.Release(); target.Release() }()
-	enc := dev.CreateCommandEncoder()
-	pass := enc.BeginRenderPassDepthStore(post.SceneView(), post.DepthView(), gpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1}) // Post reads the depth
-	pass.SetPipeline(pl)
-	pass.SetBindGroup(0, bg)
-	pass.SetVertexBuffer(0, vb)
-	pass.Draw(len(v)/3, 1, 0, 0)
-	pass.End()
-	post.Render(enc, view)
-	q.Submit(enc.Finish())
+	for i, cam := range views {
+		post.View = cam
+		for _, f := range frame {
+			f(post, i)
+		}
+		vp := proj.Mul(cam)
+		q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, check, 0, 0)))
+		enc := dev.CreateCommandEncoder()
+		pass := enc.BeginRenderPassDepthStore(post.SceneView(), post.DepthView(), gpu.Color{R: 0.2, G: 0.2, B: 0.2, A: 1}) // Post reads the depth
+		pass.SetPipeline(pl)
+		pass.SetBindGroup(0, bg)
+		pass.SetVertexBuffer(0, vb)
+		pass.Draw(len(v)/3, 1, 0, 0)
+		pass.End()
+		post.Render(enc, view)
+		q.Submit(enc.Finish())
+	}
 	pix, err := dev.ReadTexture(q, target, w, h)
 	if err != nil {
 		t.Fatal(err)
