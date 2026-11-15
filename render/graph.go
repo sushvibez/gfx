@@ -21,6 +21,8 @@ type Graph struct {
 	device *gpu.Device
 	queue  *gpu.Queue
 	pool   map[texKey][]*gpu.Texture // transient textures reused frame to frame
+	used   map[texKey]int            // the frame each size was last drawn into
+	frame  int                       // Execute calls so far
 	texes  []*GraphTexture
 	passes []*graphPass
 }
@@ -55,7 +57,7 @@ type graphPass struct {
 }
 
 func NewGraph(device *gpu.Device, queue *gpu.Queue) *Graph {
-	return &Graph{device: device, queue: queue, pool: map[texKey][]*gpu.Texture{}}
+	return &Graph{device: device, queue: queue, pool: map[texKey][]*gpu.Texture{}, used: map[texKey]int{}}
 }
 
 // Reset clears the frame's declarations; call once per frame before
@@ -157,15 +159,18 @@ func (g *Graph) Execute(view *gpu.TextureView) error {
 		}
 		t.view = t.tex.CreateView()
 	}
+	g.frame++
 	defer func() {
 		for _, t := range g.texes {
 			if t.tex != nil {
 				t.view.Release()
 				t.view = nil
 				g.pool[t.key] = append(g.pool[t.key], t.tex) // recycle
+				g.used[t.key] = g.frame
 				t.tex = nil
 			}
 		}
+		g.evict()
 	}()
 
 	enc := g.device.CreateCommandEncoder()
@@ -183,6 +188,25 @@ func (g *Graph) Execute(view *gpu.TextureView) error {
 	return nil
 }
 
+// PoolKeepFrames is how many frames a size of transient texture stays
+// pooled after it was last drawn into. A window dragged through a hundred
+// sizes would otherwise keep a full set of targets for each until Release.
+const PoolKeepFrames = 120
+
+// evict releases the pooled textures of sizes no frame has used lately.
+func (g *Graph) evict() {
+	for key, list := range g.pool {
+		if g.frame-g.used[key] <= PoolKeepFrames {
+			continue
+		}
+		for _, t := range list {
+			t.Release()
+		}
+		delete(g.pool, key)
+		delete(g.used, key)
+	}
+}
+
 // Release frees the pooled transient textures.
 func (g *Graph) Release() {
 	for _, list := range g.pool {
@@ -191,6 +215,7 @@ func (g *Graph) Release() {
 		}
 	}
 	g.pool = map[texKey][]*gpu.Texture{}
+	g.used = map[texKey]int{}
 }
 
 func countTrue(b []bool) int {

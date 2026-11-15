@@ -106,3 +106,43 @@ func BenchmarkUpdateBroad10k(b *testing.B) {
 		tr.Update()
 	}
 }
+
+// After the ancestors of a deep chain are despawned, what is left costs
+// what it is: the survivors' depths are corrected, so Update no longer
+// walks thousands of empty levels for them.
+func TestDepthShrinksAfterAncestorsGo(t *testing.T) {
+	tr := NewTree()
+	var chain []Node
+	parent := Node{}
+	for range 2000 {
+		parent = tr.Spawn(parent)
+		tr.SetLocal(parent, core.V3(1, 0, 0), core.QuatIdentity(), core.V3(1, 1, 1))
+		chain = append(chain, parent)
+	}
+	tr.Update()
+	if len(tr.levels) < 2000 {
+		t.Fatalf("the chain has %d levels", len(tr.levels))
+	}
+	// Everything goes but the last two: a new root and its child.
+	for _, n := range chain[:1998] {
+		tr.World.Despawn(n)
+	}
+	tr.Update() // this one still sees the old depths, and corrects them
+	tr.Update()
+	if len(tr.levels) > 3 {
+		t.Fatalf("two live nodes still take %d levels", len(tr.levels))
+	}
+	if got := tr.WorldMatrix(chain[1998]).MulPoint(core.Vec3{}); !vecNear(got, core.V3(1, 0, 0)) {
+		t.Errorf("the new root is at %v, want its local (1,0,0)", got)
+	}
+	if got := tr.WorldMatrix(chain[1999]).MulPoint(core.Vec3{}); !vecNear(got, core.V3(2, 0, 0)) {
+		t.Errorf("its child is at %v, want (2,0,0)", got)
+	}
+	// A node spawned under the survivor lands at the right depth.
+	c := tr.Spawn(chain[1999])
+	tr.SetLocal(c, core.V3(1, 0, 0), core.QuatIdentity(), core.V3(1, 1, 1))
+	tr.Update()
+	if got := tr.WorldMatrix(c).MulPoint(core.Vec3{}); !vecNear(got, core.V3(3, 0, 0)) {
+		t.Errorf("a new grandchild is at %v, want (3,0,0)", got)
+	}
+}

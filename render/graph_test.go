@@ -117,3 +117,40 @@ func TestGraphCycleError(t *testing.T) {
 		t.Fatal("expected cycle error")
 	}
 }
+
+// A size of transient texture no frame has drawn into for a while leaves
+// the pool; the sizes in use stay.
+func TestGraphPoolEvictsIdleSizes(t *testing.T) {
+	device, queue := headlessDevice(t)
+	final := device.CreateRenderTexture(32, 32, gpu.FormatRGBA8Unorm)
+	defer final.Release()
+	finalView := final.CreateView()
+	defer finalView.Release()
+	g := NewGraph(device, queue)
+	defer g.Release()
+	frame := func(w, h int) {
+		g.Reset()
+		off := g.Texture("off", w, h)
+		g.Pass("off", off, gpu.Color{}, func(*gpu.RenderPass) {})
+		g.PassToTarget("final", gpu.Color{}, func(*gpu.RenderPass) {}, off)
+		if err := g.Execute(finalView); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A window dragged through many sizes, then left at one.
+	for i := 0; i < 40; i++ {
+		frame(64+i, 48)
+	}
+	if len(g.pool) != 40 {
+		t.Fatalf("%d sizes pooled after 40 sizes, want 40 (none is old yet)", len(g.pool))
+	}
+	for i := 0; i < PoolKeepFrames+2; i++ {
+		frame(200, 100)
+	}
+	if len(g.pool) != 1 {
+		t.Fatalf("%d sizes still pooled after %d frames at one size", len(g.pool), PoolKeepFrames+2)
+	}
+	if n := len(g.pool[texKey{200, 100, gpu.FormatRGBA8Unorm}]); n != 1 {
+		t.Fatalf("the size in use has %d pooled textures, want 1", n)
+	}
+}

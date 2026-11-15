@@ -89,7 +89,9 @@ func (t *Tree) WorldMatrix(n Node) core.Mat4 {
 // order is rebuilt on every call (a counting sort by depth, linear in the
 // node count): rows move when nodes are despawned, so no order survives
 // between calls. A node whose parent is gone, or has lost its transform,
-// takes its local matrix as its world matrix.
+// takes its local matrix as its world matrix, and from the next call on
+// counts as a root (stored depths are corrected as the pass goes, so the
+// work stays linear in the live nodes after ancestors are despawned).
 func (t *Tree) Update() {
 	col := t.transforms.Column()
 	t.rowLinks = t.rowLinks[:0]
@@ -121,10 +123,29 @@ func (t *Tree) Update() {
 	for _, i := range t.order {
 		local := trs(&col[i])
 		l := &t.rowLinks[i]
-		if parent := t.transforms.Get(l.parent); l.depth > 0 && parent != nil {
+		parent := t.transforms.Get(l.parent)
+		if l.depth > 0 && parent != nil {
 			col[i].world = parent.world.Mul(local)
 		} else {
 			col[i].world = local
+		}
+		// Keep the stored depth true: a node whose parent is gone is a root
+		// now, and one below it sits one under wherever its parent now is
+		// (parents come first in this order, so theirs is already right).
+		// Without this the last survivor of a deep chain kept its old depth
+		// and every Update walked that many empty levels for it.
+		if l.depth > 0 {
+			want := l.depth
+			if parent == nil {
+				want = 0
+			} else if pl := t.links.Get(l.parent); pl != nil {
+				want = pl.depth + 1
+			}
+			if want != l.depth {
+				if own := t.links.Get(t.transforms.EntityAt(int(i))); own != nil {
+					own.depth = want
+				}
+			}
 		}
 	}
 }
