@@ -26,6 +26,9 @@ const (
 type TraceInstance struct {
 	Model core.Mat4
 	Shape TraceShape
+	// Color is the shape's diffuse colour (linear), for the light it
+	// bounces (FrameSettings.TracedBounce). Zero bounces none.
+	Color [3]float32
 }
 
 // traceNode is a BVH node as the shader reads it (32 bytes): a box, and
@@ -42,7 +45,7 @@ type traceNode struct {
 // matrix that takes the world into its unit space, and its shape.
 type traceInst struct {
 	rows [3][4]float32
-	meta [4]float32 // x shape
+	meta [4]float32 // x shape, yzw its diffuse colour
 }
 
 type traceBounds struct{ min, max core.Vec3 }
@@ -71,7 +74,7 @@ func buildTrace(insts []TraceInstance) ([]traceNode, []traceInst) {
 		for r := 0; r < 3; r++ {
 			g.rows[r] = [4]float32{inv[r], inv[4+r], inv[8+r], inv[12+r]}
 		}
-		g.meta[0] = float32(in.Shape)
+		g.meta = [4]float32{float32(in.Shape), in.Color[0], in.Color[1], in.Color[2]}
 		// The world box of the unit shape's own box.
 		hx := float32(0.5)
 		if in.Shape == TraceCylinder {
@@ -226,6 +229,100 @@ fn trace_shape(it : TraceInst, ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -
         }
     }
     return span.x <= span.y;
+}
+// The nearest thing on a ray: where (t, or -1 for nothing before tmax), the
+// surface's normal there, and its colour. The same intervals as trace_any,
+// remembering which face each ray came in through.
+struct TraceSpan { a : f32, b : f32, n : vec3f }
+struct TraceHit { t : f32, n : vec3f, color : vec3f }
+fn trace_cut(lo : vec3f, ld : vec3f, n : vec3f, d : f32, s : TraceSpan) -> TraceSpan {
+    var o = s;
+    let denom = dot(n, ld);
+    let dist = d - dot(n, lo);
+    if (abs(denom) < 1e-9) {
+        if (dist < 0.0) { o.b = -1e30; }
+        return o;
+    }
+    let t = dist / denom;
+    if (denom > 0.0) {
+        o.b = min(o.b, t);
+    } else if (t > o.a) {
+        o.a = t;
+        o.n = n;
+    }
+    return o;
+}
+fn trace_enter(it : TraceInst, ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> TraceSpan {
+    let lo = vec3f(dot(it.r0.xyz, ro) + it.r0.w, dot(it.r1.xyz, ro) + it.r1.w, dot(it.r2.xyz, ro) + it.r2.w);
+    let ld = vec3f(dot(it.r0.xyz, rd), dot(it.r1.xyz, rd), dot(it.r2.xyz, rd));
+    var s = TraceSpan(tmin, tmax, vec3f(0.0));
+    let shape = u32(it.info.x);
+    s = trace_cut(lo, ld, vec3f(0.0, 1.0, 0.0), 0.5, s);
+    s = trace_cut(lo, ld, vec3f(0.0, -1.0, 0.0), 0.5, s);
+    if (shape == 1u) {
+        let a = ld.x * ld.x + ld.z * ld.z;
+        let b = lo.x * ld.x + lo.z * ld.z;
+        let c = lo.x * lo.x + lo.z * lo.z - 1.0;
+        if (a < 1e-12) {
+            if (c > 0.0) { s.b = -1e30; }
+        } else {
+            let disc = b * b - a * c;
+            if (disc < 0.0) {
+                s.b = -1e30;
+            } else {
+                let q = sqrt(disc);
+                let t0 = (-b - q) / a;
+                if (t0 > s.a) {
+                    s.a = t0;
+                    let p = lo + ld * t0;
+                    s.n = vec3f(p.x, 0.0, p.z);
+                }
+                s.b = min(s.b, (-b + q) / a);
+            }
+        }
+    } else {
+        s = trace_cut(lo, ld, vec3f(-1.0, 0.0, 0.0), 0.5, s);
+        if (shape == 2u) {
+            s = trace_cut(lo, ld, vec3f(0.4472136, 0.0, 0.8944272), 0.2236068, s);
+            s = trace_cut(lo, ld, vec3f(0.4472136, 0.0, -0.8944272), 0.2236068, s);
+        } else {
+            s = trace_cut(lo, ld, vec3f(1.0, 0.0, 0.0), 0.5, s);
+            s = trace_cut(lo, ld, vec3f(0.0, 0.0, 1.0), 0.5, s);
+            s = trace_cut(lo, ld, vec3f(0.0, 0.0, -1.0), 0.5, s);
+        }
+    }
+    return s;
+}
+fn trace_nearest(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> TraceHit {
+    var hit = TraceHit(-1.0, vec3f(0.0), vec3f(0.0));
+    var best = tmax;
+    let inv = 1.0 / rd;
+    var stack : array<u32, 32>;
+    stack[0] = 0u;
+    var sp = 1;
+    while (sp > 0) {
+        sp -= 1;
+        let nd = trace_nodes[stack[sp]];
+        if (!trace_slab(ro, inv, nd.mn, nd.mx, tmin, best)) { continue; }
+        if (nd.count > 0u) {
+            for (var k = 0u; k < nd.count; k++) {
+                let it = trace_insts[nd.left + k];
+                let s = trace_enter(it, ro, rd, tmin, best);
+                // A ray that starts inside a shape came in through no face.
+                if (s.a <= s.b && dot(s.n, s.n) > 0.0) {
+                    best = s.a;
+                    hit.t = s.a;
+                    hit.n = normalize(it.r0.xyz * s.n.x + it.r1.xyz * s.n.y + it.r2.xyz * s.n.z);
+                    hit.color = it.info.yzw;
+                }
+            }
+        } else if (sp < 30) {
+            stack[sp] = nd.left;
+            stack[sp + 1] = nd.left + 1u;
+            sp += 2;
+        }
+    }
+    return hit;
 }
 // Whether anything stands on the ray between tmin and tmax.
 fn trace_any(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> bool {

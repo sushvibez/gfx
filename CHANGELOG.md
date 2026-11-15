@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Traced lighting, step 5 (experimental): `FrameSettings.TracedBounce` adds one bounce of the sun's light, with `TraceInstance.Color` and a nearest-hit traversal. It works in small scenes and has lost the GPU device in a large one on Intel integrated graphics; see `docs/notes/raytracing.md` before turning it on.
+
 - Fixed: switching the temporal filter on showed a cross-hatch for a second. A young history is now a running mean (the n-th frame counts 1/n), and traced rays draw white noise per frame in place of the lattice dither.
 
 - Traced lighting, step 4: `FrameSettings.TracedLightShadows` gives every point and spot light a traced shadow (a ray from the surface to each light that reaches it), not only the `MaxSpotShadows` with a map.

@@ -724,6 +724,37 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
 
     var c = albedo * frame.ambient.rgb * ao + lo;
+    // One bounce: what a ray into the hemisphere meets, lit by the sun (its
+    // own shadow ray) and the sky, comes back as light here. It is the
+    // dearest traced term (a nearest-hit ray and a shadow ray), so with a
+    // temporal filter one pixel in four traces each frame, at four times
+    // the weight, a different one of each 2×2 block every frame.
+    if ((u32(frame.rt.x) & 4u) != 0u) {
+        var share = 1.0;
+        if (frame.cam_pos.w > 0.0) {
+            let turn = u32(frame.cam_pos.w);
+            let mine = (u32(in.pos.x) & 1u) == (turn & 1u) && (u32(in.pos.y) & 1u) == ((turn >> 1u) & 1u);
+            share = select(0.0, 4.0, mine);
+        }
+        if (share > 0.0) {
+            let a = tr_rand(in.pos.xy, 40.0) * 6.2831853;
+            let z = tr_rand(in.pos.xy, 41.0) * 2.0 - 1.0;
+            let rr = sqrt(max(1.0 - z * z, 0.0));
+            let dir = normalize(n + vec3f(rr * cos(a), rr * sin(a), z) * 0.98);
+            let start = in.world + n * 0.03;
+            let h = trace_nearest(start, dir, 0.01, 40.0);
+            if (h.t > 0.0) {
+                let hp = start + dir * h.t;
+                let hl = max(dot(h.n, l), 0.0);
+                var vis = 0.0;
+                if (hl > 0.0) {
+                    vis = select(1.0, 0.0, trace_any(hp + h.n * 0.03, l, 0.01, 2000.0));
+                }
+                let back = h.color * (sun * hl * vis * 0.3183099 + frame.ambient.rgb * 0.5);
+                c = c + albedo * back * share * (1.0 - metallic);
+            }
+        }
+    }
     var mirror = 0.0; // how much of a sharp reflection this pixel shows
     // The sky reflected: what the surface mirrors of the environment, by
     // Fresnel (strong at grazing angles and on metal), sharp when glossy

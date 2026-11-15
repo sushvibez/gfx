@@ -831,6 +831,9 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		if fs.TracedLightShadows {
 			traced += 2
 		}
+		if fs.TracedBounce {
+			traced += 4
+		}
 		tracedAO = min(max(fs.TracedAO, 0), 1)
 	}
 	aoReach := fs.TracedAORadius
