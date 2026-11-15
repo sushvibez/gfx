@@ -44,6 +44,16 @@ func TestJSParity(t *testing.T) {
 		{`"éxéx".lastIndexOf("x")`, 3.0},
 		{`"abcabc".lastIndexOf("a", 2)`, 0.0},
 		{`"abc".lastIndexOf("z")`, -1.0},
+		{`"abc".includes("a",1)`, false},
+		{`"abc".includes("c",2)`, true},
+		{`"abc".startsWith("b",1)`, true},
+		{`"abc".startsWith("a",1)`, false},
+		{`"abc".endsWith("b",2)`, true},
+		{`"abc".endsWith("c",2)`, false},
+		{`"abc".endsWith("c")`, true},
+		{`"7".padStart(3, "0")`, "007"},
+		{`"7".padEnd(4, "ab")`, "7aba"},
+		{`"x".padStart(4, "é")`, "éééx"},
 		// Strict equality does not coerce between kinds.
 		{`1 === "1"`, false},
 		{`1 !== "1"`, true},
@@ -146,6 +156,21 @@ func TestRegExpFlags(t *testing.T) {
 	for _, bad := range []string{"y", "d", "v", "gg", "x", "giy"} {
 		if _, err := newRegExp("a+", bad); err == nil {
 			t.Errorf("flags %q were accepted", bad)
+		}
+	}
+}
+
+// A negative repeat count is an error (a RangeError in JS), and padding
+// with long characters stays under the byte limit.
+func TestJSStringErrors(t *testing.T) {
+	if d, err := LoadString(`Item { property var result: "a".repeat(-1) }`, NewEnv()); err == nil && d.Property("result") != nil {
+		t.Errorf(`"a".repeat(-1) = %#v, want an error`, d.Property("result"))
+	}
+	// Four bytes a character: half the limit in characters is twice it in bytes.
+	expr := fmt.Sprintf(`"a".padEnd(%d, "\u{1D11E}")`, maxStringBytes/2)
+	if d, err := LoadString("Item { property var result: "+expr+" }", NewEnv()); err == nil {
+		if s, ok := d.Property("result").(string); ok && len(s) > maxStringBytes {
+			t.Errorf("padEnd built %d bytes, over the limit of %d", len(s), maxStringBytes)
 		}
 	}
 }

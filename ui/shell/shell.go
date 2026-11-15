@@ -146,7 +146,8 @@ func RunUI(o Options, view func() ui.Element) error {
 	return Run(o, Hooks{Init: func(*App) (func() ui.Element, error) { return view, nil }})
 }
 
-// Run opens a window and drives the app until the window closes.
+// Run opens a window and drives the app until the window closes. An error
+// from a frame (Encode3D, or drawing the UI) ends the run and is returned.
 func Run(o Options, hooks Hooks) error {
 	o = o.withDefaults()
 	// GFX_CPUPROFILE profiles a LIVE window too, not just a capture: what
@@ -205,23 +206,38 @@ func Run(o Options, hooks Hooks) error {
 	}
 	defer win.Destroy()
 
+	// What the shell makes it releases, in reverse, however Run ends (a
+	// failed step of start-up included). Not in the browser, where Run
+	// returns while the page's frames go on.
+	var owned releases
+	defer func() {
+		if runtime.GOOS != "js" {
+			owned.run()
+		}
+	}()
 	inst, err := gpu.NewInstance(plat.LibPaths()...)
 	if err != nil {
 		return err
 	}
+	owned.add(inst.Release)
 	surface, err := plat.NewSurface(inst, win)
 	if err != nil {
 		return err
 	}
+	owned.add(surface.Release)
 	adapter, err := inst.RequestAdapter(surface)
 	if err != nil {
 		return err
 	}
+	owned.add(adapter.Release)
 	device, err := adapter.RequestDevice()
 	if err != nil {
 		return err
 	}
+	owned.add(device.Release)
 	queue := device.Queue()
+	owned.add(queue.Release)
+	owned.add(device.WaitIdle) // first: nothing released below is still in a frame
 	format := surface.PreferredFormat(adapter)
 	if o.Transparent {
 		surface.SetTransparent(adapter)
@@ -252,10 +268,19 @@ func Run(o Options, hooks Hooks) error {
 			return err
 		}
 	}
+	// The targets are remade on a resize: released as they stand at the end.
+	owned.add(func() {
+		if msaaView != nil {
+			msaaView.Release()
+			msaaTex.Release()
+		}
+		r.Release()
+	})
 	font, err := newFont(r, o)
 	if err != nil {
 		return err
 	}
+	owned.add(font.Release)
 	a := &App{Win: win, Device: device, Queue: queue, Format: format, R2: r, Font: font, W: w, H: h,
 		host: &childHost{inst: inst, device: device, format: format, msaa: msaa}}
 	view, err := hooks.Init(a)
@@ -277,6 +302,14 @@ func Run(o Options, hooks Hooks) error {
 		depth = device.CreateDepthTexture(w, h)
 		depthView = depth.CreateView()
 	}
+	owned.add(func() {
+		if depthView != nil {
+			depthView.Release()
+			depth.Release()
+		}
+	})
+	// frameErr is the error that ended the frames, for Run to return.
+	var frameErr error
 
 	clear := o.clearColor()
 	var drag WindowDrag
@@ -602,7 +635,9 @@ func Run(o Options, hooks Hooks) error {
 		enc := device.CreateCommandEncoder()
 		if hooks.Encode3D != nil {
 			if err := hooks.Encode3D(a, enc, view, depthView); err != nil {
-				fmt.Fprintln(os.Stderr, "shell:", err)
+				frameErr = err
+				view.Release()
+				tex.Release()
 				return false
 			}
 		}
@@ -649,7 +684,10 @@ func Run(o Options, hooks Hooks) error {
 		r.ClearDamage()
 		lap(&tFlush)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "shell:", err)
+			frameErr = err
+			pass.End()
+			view.Release()
+			tex.Release()
 			return false
 		}
 		pass.End()
@@ -687,7 +725,20 @@ func Run(o Options, hooks Hooks) error {
 		device.WaitIdle() // nothing the hook releases is still in a frame
 		hooks.Close(a)
 	}
-	return nil
+	return frameErr
+}
+
+// releases is what a run made and must release, in the order it was made.
+type releases []func()
+
+func (r *releases) add(f func()) { *r = append(*r, f) }
+
+// run releases everything, last made first.
+func (r *releases) run() {
+	for i := len(*r) - 1; i >= 0; i-- {
+		(*r)[i]()
+	}
+	*r = nil
 }
 
 // newFont loads the preferred font files, then the platform defaults, and

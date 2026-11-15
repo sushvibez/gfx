@@ -1752,11 +1752,20 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			}
 			return float64(runeLastIndex(recv, strArgs(args, 0), from)), true, nil
 		case "includes":
-			return strings.Contains(recv, strArgs(args, 0)), true, nil
+			return runeIndex(recv, strArgs(args, 0), argInt(args, 1)) >= 0, true, nil
 		case "startsWith":
-			return strings.HasPrefix(recv, strArgs(args, 0)), true, nil
+			// From a position (0 when not given).
+			rs := []rune(recv)
+			from := max(0, min(argInt(args, 1), len(rs)))
+			return strings.HasPrefix(string(rs[from:]), strArgs(args, 0)), true, nil
 		case "endsWith":
-			return strings.HasSuffix(recv, strArgs(args, 0)), true, nil
+			// As if the string ended at a position (its length when not given).
+			rs := []rune(recv)
+			end := len(rs)
+			if len(args) > 1 && args[1] != nil {
+				end = max(0, min(argInt(args, 1), len(rs)))
+			}
+			return strings.HasSuffix(string(rs[:end]), strArgs(args, 0)), true, nil
 		case "substring", "slice", "substr":
 			rs := []rune(recv)
 			start, end := sliceBounds(name, len(rs), args)
@@ -1776,7 +1785,7 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 		case "repeat":
 			n := argInt(args, 0)
 			if n < 0 {
-				n = 0
+				return nil, true, fmt.Errorf("repeat: a count of %d is out of range", n) // JS: RangeError
 			}
 			if n > 0 && len(recv) > maxStringBytes/n {
 				return nil, true, fmt.Errorf("repeat: a string of %d bytes times %d is too long", len(recv), n)
@@ -1794,15 +1803,30 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			if len(args) > 1 {
 				fill = str(args[1])
 			}
-			cur := len([]rune(recv))
+			cur := utf8.RuneCountInString(recv)
 			if fill == "" || target <= cur {
 				return recv, true, nil
 			}
-			pad := []rune(strings.Repeat(fill, (target-cur)/len([]rune(fill))+1))[:target-cur]
-			if name == "padStart" {
-				return string(pad) + recv, true, nil
+			// Only the characters needed are written, and the bytes are
+			// counted as they go: a fill of long characters cannot build
+			// more than the limit, in the result or on the way to it.
+			var pad strings.Builder
+			for need := target - cur; need > 0; {
+				for _, c := range fill {
+					if need == 0 {
+						break
+					}
+					pad.WriteRune(c)
+					need--
+				}
+				if pad.Len()+len(recv) > maxStringBytes {
+					return nil, true, fmt.Errorf("%s: the padded string is too long", name)
+				}
 			}
-			return recv + string(pad), true, nil
+			if name == "padStart" {
+				return pad.String() + recv, true, nil
+			}
+			return recv + pad.String(), true, nil
 		case "toString", "valueOf":
 			return recv, true, nil
 		}

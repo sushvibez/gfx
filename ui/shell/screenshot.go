@@ -65,22 +65,32 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 	// later than the reference it is compared against.
 	core.SetVirtualClock(true)
 	defer core.SetVirtualClock(false)
+	// What the capture makes it releases, in reverse, however it ends, so
+	// a process can take any number of captures.
+	var owned releases
+	defer owned.run()
 	inst, err := gpu.NewInstance(plat.LibPaths()...)
 	if err != nil {
 		return err
 	}
+	owned.add(inst.Release)
 	adapter, err := inst.RequestAdapter(nil)
 	if err != nil {
 		return err
 	}
+	owned.add(adapter.Release)
 	device, err := adapter.RequestDevice()
 	if err != nil {
 		return err
 	}
+	owned.add(device.Release)
 	queue := device.Queue()
+	owned.add(queue.Release)
+	owned.add(device.WaitIdle) // first: nothing released below is still in a frame
 
 	target := device.CreateRenderTexture(o.Width, o.Height, gpu.FormatRGBA8Unorm)
 	texView := target.CreateView()
+	owned.add(func() { texView.Release(); target.Release() })
 
 	msaa := 0
 	if hooks.Encode3D == nil || hooks.Offscreen3D {
@@ -95,16 +105,19 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 		}
 		msaaTex := device.CreateMSAATexture(o.Width, o.Height, gpu.FormatRGBA8Unorm, msaa)
 		msaaView = msaaTex.CreateView()
+		owned.add(func() { msaaView.Release(); msaaTex.Release() })
 	} else {
 		r, err = render.New2D(device, queue, gpu.FormatRGBA8Unorm)
 		if err != nil {
 			return err
 		}
 	}
+	owned.add(r.Release)
 	font, err := newFont(r, o)
 	if err != nil {
 		return err
 	}
+	owned.add(font.Release)
 	a := &App{Device: device, Queue: queue, Format: gpu.FormatRGBA8Unorm,
 		R2: r, Font: font, W: o.Width, H: o.Height}
 	view, err := hooks.Init(a)
@@ -122,7 +135,9 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 
 	var depthView *gpu.TextureView
 	if hooks.Encode3D != nil {
-		depthView = device.CreateDepthTexture(o.Width, o.Height).CreateView()
+		depthTex := device.CreateDepthTexture(o.Width, o.Height)
+		depthView = depthTex.CreateView()
+		owned.add(func() { depthView.Release(); depthTex.Release() })
 	}
 	clear := gpu.Color{
 		R: float64(o.ClearHex>>16&0xff) / 255,
