@@ -100,6 +100,11 @@ type modelItem struct {
 
 // BuildModel uploads a parsed glTF document.
 func (r *Renderer3D) BuildModel(doc *gltf.Document) (*Model, error) {
+	// The walks of the hierarchy recurse, so the hierarchy must be a finite tree: a
+	// Document built by hand has not been through Parse's check. Checked before anything is uploaded.
+	if err := doc.CheckHierarchy(); err != nil {
+		return nil, err
+	}
 	m := &Model{}
 
 	upload := func(im *image.RGBA) *Image3D {

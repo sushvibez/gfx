@@ -63,14 +63,25 @@ func (s *Signal[T]) remove(id uint64) {
 
 // Emit calls every connected slot with v. Slots connected during an emit do
 // not run until the next emit; slots disconnected during an emit are skipped.
+// A slot that panics stops the emit (later slots do not run) and the panic
+// reaches the caller; the signal itself stays usable.
 func (s *Signal[T]) Emit(v T) {
 	s.emitting++
+	// Deferred so a slot that panics still ends the emit: a caller that
+	// recovers would otherwise hold a signal that believes it is emitting
+	// for good, and never compacts again.
+	defer s.endEmit()
 	n := len(s.slots) // snapshot: late connections wait for the next emit
 	for i := range n {
 		if fn := s.slots[i].fn; fn != nil {
 			fn(v)
 		}
 	}
+}
+
+// endEmit closes one emit and, when it was the outermost, drops the slots
+// disconnected while it ran.
+func (s *Signal[T]) endEmit() {
 	s.emitting--
 	if s.emitting == 0 && s.dead > 0 {
 		live := s.slots[:0]

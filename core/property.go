@@ -58,12 +58,28 @@ func (p *Property[T]) Set(v T) {
 
 // Bind makes the property derive its value from fn, re-evaluating whenever
 // any property fn reads changes. The binding is evaluated once immediately.
+// If that evaluation panics, the panic reaches the caller, the property
+// keeps the value it had and stays bound, and fn is tried again by the next
+// Get or FlushBindings.
 func (p *Property[T]) Bind(fn func() T) {
 	p.unbind()
 	b := &binding{ownerSubs: &p.subs}
 	b.run = func() { p.store(fn()) }
 	p.binding = b
+	done := false
+	defer func() {
+		if !done {
+			// fn panicked on its first run. The binding stays, waiting, so
+			// a caller that recovers has it retried by the next Get or
+			// flush, like any binding that panics later. The revision moves
+			// so no read-set goes on answering from before it was waiting.
+			b.setDirty(true)
+			dirtyQueue = append(dirtyQueue, b)
+			revision++
+		}
+	}()
 	b.eval()
+	done = true
 }
 
 // Changed returns the signal emitted with the new value whenever the

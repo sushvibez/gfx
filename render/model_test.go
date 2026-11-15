@@ -153,3 +153,23 @@ func TestModelHeight(t *testing.T) {
 		t.Fatalf("Height = %v, want 180", h)
 	}
 }
+
+// A Document built by hand can hold a hierarchy Parse would have refused;
+// BuildModel refuses it too, and does not walk it.
+func TestBuildModelRejectsCyclicHierarchy(t *testing.T) {
+	device, queue := headlessDevice(t)
+	r, err := New3D(device, queue, gpu.FormatRGBA8Unorm)
+	if err != nil {
+		t.Fatalf("New3D: %v", err)
+	}
+	defer r.Release()
+	for name, doc := range map[string]*gltf.Document{
+		"self child":     {Nodes: []gltf.Node{{Children: []int{0}}}, Roots: []int{0}},
+		"two-node cycle": {Nodes: []gltf.Node{{Children: []int{1}}, {Children: []int{0}}}, Roots: []int{0}},
+		"root nowhere":   {Nodes: []gltf.Node{{}}, Roots: []int{4}},
+	} {
+		if _, err := r.BuildModel(doc); err == nil {
+			t.Errorf("%s: BuildModel accepted it", name)
+		}
+	}
+}

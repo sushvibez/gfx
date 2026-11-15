@@ -49,6 +49,12 @@ func (l *Loop) Frame() *Signal[time.Duration] { return &l.frame }
 // layout/paint observe a consistent world. Work posted while the step runs
 // (by a posted callback, a Frame slot or another goroutine) waits for the
 // next step, so callbacks that keep posting cannot hold a frame up.
+//
+// A callback that panics ends the step there, and the panic reaches the
+// caller. It is not run again; the callbacks queued behind it are kept, in
+// order, and run first in the next Step, so a driver that recovers loses
+// no posted work. The rest of that step (animations, Frame, bindings) is
+// skipped.
 // (ui/shell runs its own frame loop and ticks the animations itself; it
 // does not call Step.)
 func (l *Loop) Step(dt time.Duration) {
@@ -58,8 +64,20 @@ func (l *Loop) Step(dt time.Duration) {
 	// by a panic leaves no slice that is both queue and batch.
 	l.posted, l.running = l.running[:0], nil
 	l.mu.Unlock()
-	for i, fn := range batch {
-		batch[i] = nil // run once, and do not keep the closure alive
+	next := 0
+	defer func() {
+		if next < len(batch) {
+			// A callback panicked. The ones behind it go back to the front
+			// of the queue, ahead of anything posted meanwhile.
+			l.mu.Lock()
+			l.posted = append(append([]func(){}, batch[next:]...), l.posted...)
+			l.mu.Unlock()
+		}
+	}()
+	for next < len(batch) {
+		fn := batch[next]
+		batch[next] = nil // run once, and do not keep the closure alive
+		next++
 		fn()
 	}
 	l.running = batch

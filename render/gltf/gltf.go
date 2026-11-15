@@ -671,10 +671,19 @@ func (p *parser) document() (*Document, error) {
 	if p.j.Scene != nil {
 		sceneIdx = *p.j.Scene
 	}
+	// A scene the file names must exist. A file that names none uses its
+	// first, and one with no scenes at all has no roots (a library of
+	// meshes, which glTF allows).
+	if p.j.Scene != nil && (sceneIdx < 0 || sceneIdx >= len(p.j.Scenes)) {
+		return nil, fmt.Errorf("gltf: scene %d out of range (%d scenes)", sceneIdx, len(p.j.Scenes))
+	}
 	if sceneIdx < len(p.j.Scenes) {
 		sc := p.j.Scenes[sceneIdx]
 		doc.Roots = sc.Nodes
 		doc.SceneName, doc.SceneExtras = sc.Name, sc.Extras
+	}
+	if err := doc.CheckHierarchy(); err != nil {
+		return nil, err
 	}
 	a := p.j.Asset
 	doc.Asset = Asset{Generator: a.Generator, Version: a.Version, Copyright: a.Copyright, Extras: a.Extras}
