@@ -113,3 +113,39 @@ func FuzzStringCuts(f *testing.F) {
 		_ = fmt.Sprint(runeLastIndex(s, "x", int(max(min(b, 1e9), -1e9))))
 	})
 }
+
+// A function that calls itself without end is an error from the page, not
+// a stack overflow that takes the host down.
+func TestJSRunawayRecursionIsAnError(t *testing.T) {
+	d, err := LoadString(`Item {
+    function f(n) { return f(n + 1) }
+    function fact(n) { return n <= 1 ? 1 : n * fact(n - 1) }
+    property var deep: fact(170)
+    property var result: f(0)
+}`, NewEnv())
+	if err == nil {
+		if got := d.Property("result"); got != nil {
+			t.Errorf("runaway recursion produced %v", got)
+		}
+		if got, _ := d.Property("deep").(float64); got < 7e306 || got > 8e306 {
+			t.Errorf("fact(170) = %v: ordinary recursion no longer works", d.Property("deep"))
+		}
+	}
+	if n := callDepth.Load(); n != 0 {
+		t.Errorf("the call depth is %d after the calls returned", n)
+	}
+}
+
+// Flags nothing here implements are refused, not silently ignored.
+func TestRegExpFlags(t *testing.T) {
+	for _, ok := range []string{"", "g", "gi", "ims", "u", "gimsu"} {
+		if _, err := newRegExp("a+", ok); err != nil {
+			t.Errorf("flags %q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"y", "d", "v", "gg", "x", "giy"} {
+		if _, err := newRegExp("a+", bad); err == nil {
+			t.Errorf("flags %q were accepted", bad)
+		}
+	}
+}

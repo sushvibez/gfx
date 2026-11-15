@@ -3,6 +3,7 @@ package gml
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 )
 
 // JavaScript-subset statements (phase D2): blocks, var/let, if/else,
@@ -490,7 +491,23 @@ func callAny(fn any, args []any) (any, error) {
 	return nil, fmt.Errorf("gml: value of type %T is not callable", fn)
 }
 
+// maxCallDepth is how deep a page's functions may call one another. The
+// evaluator recurses on the Go stack, and a Go stack overflow cannot be
+// recovered: a function that calls itself for ever must be an error from
+// the script, not the end of the host.
+const maxCallDepth = 1000
+
+// callDepth counts the user functions being called (the engine belongs to
+// one goroutine at a time; atomic so a second document on another does
+// not corrupt it, only share the budget).
+var callDepth atomic.Int32
+
 func callUserFunc(fn *userFunc, args []any) (any, error) {
+	if callDepth.Add(1) > maxCallDepth {
+		callDepth.Add(-1)
+		return nil, fmt.Errorf("gml: functions nested deeper than %d calls (a function that calls itself without end?)", maxCallDepth)
+	}
+	defer callDepth.Add(-1)
 	// The call scope is pooled when nothing in the body can keep a
 	// reference to it — no arrow function that would close over it. The
 	// corpus calls `Style.resize(x)` (an identity function) for nearly

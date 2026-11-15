@@ -17,9 +17,20 @@ type jsRegExp struct {
 }
 
 // newRegExp compiles a JS pattern with its flags: i, m and s map onto RE2's
-// own; g (global) changes what replace, match and exec do; the rest are
-// accepted.
+// own; g (global) changes what replace, match and exec do; u is accepted
+// (patterns are Unicode here anyway). Any other flag is an error: y, d
+// and v change what a match means in JS, and nothing here implements
+// them, so accepting them would run a different expression from the one
+// written. So is a flag given twice, as in JS.
 func newRegExp(source, flags string) (*jsRegExp, error) {
+	for i, f := range flags {
+		if !strings.ContainsRune("gimsu", f) {
+			return nil, fmt.Errorf("regex /%s/%s: flag %q is not supported", source, flags, string(f))
+		}
+		if strings.ContainsRune(flags[:i], f) {
+			return nil, fmt.Errorf("regex /%s/%s: flag %q given twice", source, flags, string(f))
+		}
+	}
 	prefix := ""
 	for _, f := range "ims" {
 		if strings.ContainsRune(flags, f) {
