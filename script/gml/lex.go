@@ -225,12 +225,15 @@ func lex(src string) ([]token, error) {
 		case strings.ContainsRune("{}[]():;,", c):
 			l.emit(tokPunct, string(c))
 			l.pos++
-		case strings.ContainsRune("+-*/%!<>=&|.", c):
+		case strings.ContainsRune("+-*/%!<>=&|.^~", c):
 			two := string(c) + string(l.peek(1))
 			three := two + string(l.peek(2))
 			switch {
 			case three == "...":
 				l.emit(tokPunct, "...")
+				l.pos += 3
+			case three == ">>>":
+				l.emit(tokPunct, three)
 				l.pos += 3
 			case three == "===" || three == "!==":
 				// JS strict (in)equality: its own operator (no coercion

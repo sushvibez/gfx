@@ -1304,7 +1304,7 @@ func (x *unaryExpr) eval(env *Env) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return float64(^int64(f)), nil
+		return float64(^toInt32(f)), nil
 	case "!":
 		b, err := toBool(v)
 		if err != nil {
@@ -1440,6 +1440,8 @@ func (x *binExpr) eval(env *Env) (any, error) {
 		return float64(toInt32(lf) << (uint32(toInt32(rf)) & 31)), nil
 	case ">>":
 		return float64(toInt32(lf) >> (uint32(toInt32(rf)) & 31)), nil
+	case ">>>":
+		return float64(uint32(toInt32(lf)) >> (uint32(toInt32(rf)) & 31)), nil
 	case "|":
 		return float64(toInt32(lf) | toInt32(rf)), nil
 	case "&":
