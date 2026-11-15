@@ -89,6 +89,14 @@ type FrameSettings struct {
 	// is off screen or hidden is not reflected). Opaque material draws
 	// carry their mirror strength in the HDR target's alpha.
 	SceneReflection float32
+	// TracedShadows makes the sun's shadow a traced ray instead of a shadow
+	// map lookup: each shaded point asks the trace scene (SetTraceScene)
+	// whether anything stands between it and the sun, so shadows are exact
+	// to the shapes at any distance. SunSoftness still softens them (the
+	// ray is jittered across the sun's disc, one ray a pixel, so the
+	// penumbra is grainy until something filters it). Material draws only;
+	// see docs/notes/raytracing.md.
+	TracedShadows bool
 	// Wetness (0…1) wets every material surface open to the sky: damp
 	// surfaces darken and gloss over, and standing water gathers in puddles
 	// on level ground (placed by a noise over world x and z, more of them as

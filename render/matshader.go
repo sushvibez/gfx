@@ -28,10 +28,11 @@ struct Frame {
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
     env : vec4f,         // x sky reflection strength, y time in seconds
+    rt : vec4f,          // x 1 when the sun's shadow is traced, w its jitter's half-angle
 }
 `
 
-const shaderMaterial = frameWGSL + `
+const shaderMaterial = frameWGSL + traceWGSL + `
 struct MDraw {
     model : mat4x4f,
     color : vec4f,
@@ -218,6 +219,18 @@ fn rain_drops(p : vec2f, t : f32) -> vec3f {
 // instead of a slope bias from screen derivatives (which a branchy
 // fragment stage may not take).
 fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
+    if (frame.rt.x > 0.5) {
+        // Traced: one ray toward the sun, from just off the surface. With a
+        // soft sun the ray goes to a point of its disc chosen per pixel.
+        if (n_dot_l <= 0.0) { return 0.0; }
+        var l = normalize(-frame.light_dir.xyz);
+        if (frame.rt.w > 0.0) {
+            let side = normalize(cross(l, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(l.y) > 0.9)));
+            let o = sh_vogel(i32(sh_ign(frag) * 16.0), 16, sh_ign(frag.yx + 7.0) * 6.2831853) * frame.rt.w;
+            l = normalize(l + side * o.x + cross(l, side) * o.y);
+        }
+        return select(1.0, 0.0, trace_any(world + n * 0.03, l, 0.01, 2000.0));
+    }
     let soft = frame.misc.z;
     let texel_w = frame.misc.w;
     let wp = world + n * texel_w * (1.2 + 2.0 * (1.0 - n_dot_l)) * select(0.0, 1.0, soft > 0.0);

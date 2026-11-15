@@ -113,6 +113,9 @@ type Renderer3D struct {
 	skyFrame *gpu.Buffer
 	skyBind  *gpu.BindGroup
 	skyOn    bool
+	// The trace scene (trace.go): the BVH and its shapes, for traced light.
+	traceNodes, traceInsts *gpu.Buffer
+	traceShapes            int
 	// The rain pass (rain.go), built the first time it rains.
 	rainPL     *gpu.RenderPipeline
 	rainBind   *gpu.BindGroup
@@ -261,6 +264,7 @@ type frameUniforms struct {
 	Misc       core.Vec4 // tonemap mode, light count
 	Sun        core.Vec4 // rgb the sun's radiance (colour times energy)
 	Env        core.Vec4 // sky reflection strength, time in seconds
+	RT         core.Vec4 // x 1 when the sun's shadow is traced, w the jitter's half-angle
 }
 
 // sunIntensity is the directional light's radiance, matching the constant
@@ -532,6 +536,7 @@ func (r *Renderer3D) initMaterialPass(format gpu.TextureFormat) error {
 		r.spotViews[i] = r.spotMaps[i].CreateView()
 		r.spotFrames[i] = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
 	}
+	r.SetTraceScene(nil) // the empty scene: the buffers the shader binds
 	r.skyMap = r.device.CreateShadowMap(skyMapSize)
 	r.skyView = r.skyMap.CreateView()
 	r.skyFrame = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
@@ -604,7 +609,9 @@ func (r *Renderer3D) matFrameEntries() []gpu.BindGroupEntry {
 	for i, v := range r.spotViews {
 		e = append(e, gpu.BindGroupEntry{Binding: 5 + i, TextureView: v})
 	}
-	return append(e, gpu.BindGroupEntry{Binding: 9, TextureView: r.skyView})
+	return append(e, gpu.BindGroupEntry{Binding: 9, TextureView: r.skyView},
+		gpu.BindGroupEntry{Binding: 10, Buffer: r.traceNodes},
+		gpu.BindGroupEntry{Binding: 11, Buffer: r.traceInsts})
 }
 
 func (r *Renderer3D) growDraws(size int) {
@@ -679,6 +686,8 @@ func (r *Renderer3D) Release() {
 	rel(r.mdraws)
 	rel(r.matShadowBind)
 	r.releaseRain()
+	rel(r.traceNodes)
+	rel(r.traceInsts)
 	rel(r.skyBind)
 	rel(r.skyFrame)
 	rel(r.skyView)
@@ -807,6 +816,10 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		fogOn = 1
 	}
 	r.lastLightVP = lightProj.Mul(lightView)
+	traced := float32(0)
+	if fs.TracedShadows && r.traceShapes > 0 {
+		traced = 1
+	}
 	u := frameUniforms{
 		ViewProj:   viewProj,
 		LightVP:    lightProj.Mul(lightView),
@@ -820,6 +833,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/shadowMapSize),
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, fs.Rain),
 		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, fs.Wetness),
+		RT:         core.V4(traced, 0, 0, fs.SunSoftness*0.6),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	// Each shadow-casting spot renders its map through the same depth-only

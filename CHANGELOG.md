@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Traced lighting, step 1 (`docs/notes/raytracing.md` is the roadmap): `Renderer3D.SetTraceScene` takes boxes, cylinders and wedges and builds a BVH over them; with `FrameSettings.TracedShadows` the material shader traces the sun's shadow ray through it instead of reading the shadow map. Plain WGSL, so it runs in browsers too.
+
 - Fixed: resizing `Post` (which `View3D.RenderScale` does whenever it changes) threw away the eye-adaptation history, so the exposure flashed to its maximum for a moment.
 
 - Performance: `View3D.RenderScale` renders the scene and Post at a fraction of the view's pixels and stretches the result; triplanar sampling skips planes with no weight (a face square to an axis reads one projection, not three) and the emissive map when a material has none; soft sun shadows return early deep in the umbra; the haze reads lamps on every other step. `shell.ScreenshotScript` has its js stub.
