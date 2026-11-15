@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Traced lighting, step 2: `FrameSettings.TracedAO` (and `TracedAORadius`) dims ambient light by three short rays a pixel through the trace scene, in place of `PostSettings.AO`.
+
 - Traced lighting, step 1 (`docs/notes/raytracing.md` is the roadmap): `Renderer3D.SetTraceScene` takes boxes, cylinders and wedges and builds a BVH over them; with `FrameSettings.TracedShadows` the material shader traces the sun's shadow ray through it instead of reading the shadow map. Plain WGSL, so it runs in browsers too.
 
 - Fixed: resizing `Post` (which `View3D.RenderScale` does whenever it changes) threw away the eye-adaptation history, so the exposure flashed to its maximum for a moment.

@@ -97,6 +97,14 @@ type FrameSettings struct {
 	// penumbra is grainy until something filters it). Material draws only;
 	// see docs/notes/raytracing.md.
 	TracedShadows bool
+	// TracedAO (0…1) is ambient occlusion from rays: each shaded point
+	// sends three short rays into the hemisphere over it and the ambient
+	// light dims by how many are stopped, so corners and the ground under
+	// things darken by the real geometry around them, on screen or not.
+	// TracedAORadius is how far the rays reach, in world units (zero = 3).
+	// Use it in place of PostSettings.AO, not with it. It needs the trace
+	// scene (SetTraceScene); three rays a pixel leave a fine grain.
+	TracedAO, TracedAORadius float32
 	// Wetness (0…1) wets every material surface open to the sky: damp
 	// surfaces darken and gloss over, and standing water gathers in puddles
 	// on level ground (placed by a noise over world x and z, more of them as

@@ -264,7 +264,7 @@ type frameUniforms struct {
 	Misc       core.Vec4 // tonemap mode, light count
 	Sun        core.Vec4 // rgb the sun's radiance (colour times energy)
 	Env        core.Vec4 // sky reflection strength, time in seconds
-	RT         core.Vec4 // x 1 when the sun's shadow is traced, w the jitter's half-angle
+	RT         core.Vec4 // x 1 when the sun's shadow is traced, y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 
 // sunIntensity is the directional light's radiance, matching the constant
@@ -816,9 +816,16 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		fogOn = 1
 	}
 	r.lastLightVP = lightProj.Mul(lightView)
-	traced := float32(0)
-	if fs.TracedShadows && r.traceShapes > 0 {
-		traced = 1
+	traced, tracedAO := float32(0), float32(0)
+	if r.traceShapes > 0 {
+		if fs.TracedShadows {
+			traced = 1
+		}
+		tracedAO = min(max(fs.TracedAO, 0), 1)
+	}
+	aoReach := fs.TracedAORadius
+	if aoReach <= 0 {
+		aoReach = 3
 	}
 	u := frameUniforms{
 		ViewProj:   viewProj,
@@ -833,7 +840,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/shadowMapSize),
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, fs.Rain),
 		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, fs.Wetness),
-		RT:         core.V4(traced, 0, 0, fs.SunSoftness*0.6),
+		RT:         core.V4(traced, tracedAO, aoReach, fs.SunSoftness*0.6),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	// Each shadow-casting spot renders its map through the same depth-only

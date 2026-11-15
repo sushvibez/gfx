@@ -117,3 +117,69 @@ func TestTraceBuild(t *testing.T) {
 		t.Fatalf("the root does not enclose the scene: %v … %v", r.min, r.max)
 	}
 }
+
+// Traced occlusion: under ambient light alone, the floor at the foot of a
+// tall block is darker than the open floor with FrameSettings.TracedAO,
+// and the same without it.
+func TestTracedAO(t *testing.T) {
+	shot := func(ao float32) func(x, z float32) float64 {
+		const w, h = 320, 320
+		dev, q := headlessDevice(t)
+		r3, err := New3D(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r3.Release()
+		fs := DefaultFrameSettings()
+		fs.Tonemap = 0
+		fs.Sun = RGBA{R: 1e-4, G: 1e-4, B: 1e-4, A: 1}
+		fs.Ambient = RGBA{R: 0.6, G: 0.6, B: 0.6, A: 1}
+		fs.TracedAO = ao
+		r3.SetFrameSettings(fs)
+		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+		view := target.CreateView()
+		depth := dev.CreateDepthTexture(w, h)
+		dview := depth.CreateView()
+		defer func() { dview.Release(); depth.Release(); view.Release(); target.Release() }()
+		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60)))
+		block := core.Mat4Translate(core.V3(0, 4, 0)).Mul(core.Mat4Scale(core.V3(4, 8, 4)))
+		r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: block}})
+		eye := core.V3(0, 60, 0)
+		vp := core.Mat4Perspective(0.5, 1, 1, 200).Mul(core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 0, -1)))
+		grey := &Material{Color: RGBA{R: 0.8, G: 0.8, B: 0.8, A: 1}, Roughness: 1}
+		r3.Begin(vp, core.V3(0, -1, 0), eye)
+		r3.DrawMaterial(r3.CubeMesh(), floor, grey)
+		r3.DrawMaterial(r3.CubeMesh(), block, grey)
+		enc := dev.CreateCommandEncoder()
+		if err := r3.Render(enc, view, dview, gpu.Color{A: 1}); err != nil {
+			t.Fatal(err)
+		}
+		q.Submit(enc.Finish())
+		pix, err := dev.ReadTexture(q, target, w, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The mean over a small patch: three rays a pixel are grainy.
+		return func(x, z float32) float64 {
+			c := vp.MulVec4(core.V4(x, 0, z, 1))
+			px, py := int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h)
+			s := 0.0
+			for dy := -3; dy <= 3; dy++ {
+				for dx := -3; dx <= 3; dx++ {
+					s += lumAt(pix, w, px+dx, py+dy)
+				}
+			}
+			return s / 49
+		}
+	}
+	plain, traced := shot(0), shot(1)
+	if foot, open := traced(2.5, 0), traced(12, 0); foot > open*0.85 {
+		t.Fatalf("no occlusion at the block's foot: %.0f there, %.0f in the open", foot, open)
+	}
+	if a, b := traced(12, 0), plain(12, 0); a < b*0.93 {
+		t.Fatalf("the open floor darkened: %.0f traced, %.0f without", a, b)
+	}
+	if foot, open := plain(2.5, 0), plain(12, 0); foot < open*0.95 {
+		t.Fatalf("occlusion without TracedAO: %.0f at the foot, %.0f in the open", foot, open)
+	}
+}

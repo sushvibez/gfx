@@ -28,7 +28,7 @@ struct Frame {
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
     env : vec4f,         // x sky reflection strength, y time in seconds
-    rt : vec4f,          // x 1 when the sun's shadow is traced, w its jitter's half-angle
+    rt : vec4f,          // x 1 when the sun's shadow is traced, y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 `
 
@@ -597,6 +597,20 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     } else if ((flags & F_ROUGH) != 0u) {
         let ch = u32(d.p1.w);
         rough_tex = select(select(arm.r, arm.g, ch == 1u), arm.b, ch == 2u);
+    }
+    // Traced occlusion: three short rays into the hemisphere over the
+    // surface (cosine-weighted, turned per pixel); the ambient light dims by
+    // the share of them that something stops.
+    if (frame.rt.y > 0.0) {
+        var open = 0.0;
+        for (var k = 0; k < 3; k++) {
+            let a = sh_ign(in.pos.xy + vec2f(f32(k) * 17.0, f32(k) * 5.0)) * 6.2831853;
+            let z = sh_ign(in.pos.yx + vec2f(f32(k) * 3.0, 11.0)) * 2.0 - 1.0;
+            let rr = sqrt(max(1.0 - z * z, 0.0));
+            let dir = normalize(n + vec3f(rr * cos(a), rr * sin(a), z) * 0.98);
+            open += select(1.0, 0.0, trace_any(in.world + n * 0.03, dir, 0.01, frame.rt.z));
+        }
+        ao = ao * mix(1.0, open / 3.0, frame.rt.y);
     }
     var metallic = clamp(d.p0.x * metal_tex, 0.0, 1.0);
     var roughness = clamp(d.p0.y * rough_tex, 0.05, 1.0);
