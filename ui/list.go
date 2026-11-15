@@ -60,7 +60,7 @@ func (e *ListEl) Heights(heights []float32) *ListEl {
 	return e
 }
 
-// rowH_ is row i's height: the one given by Heights, the one measured when
+// rowHeightAt is row i's height: the one given by Heights, the one measured when
 // the row was last built, else the uniform estimate.
 func (e *ListEl) rowHeightAt(i int) float32 {
 	if i < len(e.heights) {
@@ -313,14 +313,27 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 	if e.header != nil {
 		e.place(ctx, e.header, r, off, 0, e.headSz)
 	}
+	// Rows of differing sizes sit on a running sum carried from the first
+	// built row: asking rowTop for each one walked every row ahead of it
+	// again, once per visible row.
+	variable := e.heights != nil || e.measure_
+	var top float32
+	if variable {
+		top, _ = e.rowTop(first)
+	}
 	for k, row := range built {
 		i := first + k
-		top, h := e.rowTop(i)
-		if e.heights == nil && !e.measure_ {
-			h = e.rowH
+		h := e.rowH
+		if variable {
+			h = e.rowHeightAt(i)
+		} else {
+			top, _ = e.rowTop(i)
 		}
 		e.place(ctx, row, r, off, e.headSz+top, h)
 		e.rows = append(e.rows, row)
+		if variable {
+			top += h + e.gap
+		}
 	}
 	if e.footer != nil {
 		e.place(ctx, e.footer, r, off, e.headSz+rowsLen, e.footSz)

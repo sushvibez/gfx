@@ -4,7 +4,7 @@ package gltf
 // clips; Apply samples every channel at a time and writes the targeted
 // nodes' decomposed pose (T/R/S), recomputing their Local matrices —
 // render.AnimationPlayer drives this against a Model's node copy.
-// Skinning (joint matrices to the vertex shader) is the next stage.
+// skin.go carries the joint sets the animated nodes deform.
 
 import (
 	"fmt"
@@ -145,6 +145,9 @@ func (p *parser) parseAnimations() ([]Animation, error) {
 			}
 			if len(vals) < len(times)*comps {
 				return nil, fmt.Errorf("gltf: animation %d: %d values for %d keys", ai, len(vals)/comps, len(times))
+			}
+			if len(times) == 0 {
+				continue // no keys: nothing to play, and no last key to time
 			}
 			c := AnimChannel{
 				Node:  ch.Target.Node,

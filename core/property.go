@@ -154,7 +154,7 @@ func (b *binding) eval() {
 			if b.flushEvals == maxFlushEvals+1 {
 				fmt.Fprintln(os.Stderr, "core: binding loop detected (oscillating bindings); keeping previous value")
 			}
-			b.dirty = false // stop the ping-pong; next external Set retries
+			b.setDirty(false) // stop the ping-pong; next external Set retries
 			return
 		}
 	}
@@ -162,10 +162,27 @@ func (b *binding) eval() {
 	b.clearSources()
 	prev := current
 	current = b
+	// Deferred so a closure that panics does not leave this binding as the
+	// one being evaluated: a caller that recovers would otherwise have
+	// every later read recorded as its dependency, and the binding itself
+	// reported as a loop for good. It stays dirty and is retried by the
+	// next Get or flush.
+	defer func() {
+		current = prev
+		b.evaluating = false
+	}()
 	b.run()
-	current = prev
-	b.evaluating = false
-	b.dirty = false
+	b.setDirty(false)
+}
+
+// setDirty keeps the owner property's pending mark in step with dirty, so
+// a read-set can tell a value waiting to be recomputed without reaching
+// for the binding. A dropped binding no longer speaks for the property.
+func (b *binding) setDirty(v bool) {
+	b.dirty = v
+	if !b.dropped {
+		b.ownerSubs.pending = v
+	}
 }
 
 func (b *binding) addSource(d *depSet) {
@@ -184,6 +201,7 @@ func (b *binding) clearSources() {
 func (b *binding) drop() {
 	b.clearSources()
 	b.dropped = true
+	b.ownerSubs.pending = false // the property keeps the value it has
 }
 
 // invalidate marks the binding dirty and cascades to everything that depends
@@ -193,7 +211,7 @@ func (b *binding) invalidate() {
 	if b.dirty || b.dropped {
 		return
 	}
-	b.dirty = true
+	b.setDirty(true)
 	dirtyQueue = append(dirtyQueue, b)
 	b.ownerSubs.invalidate()
 }
@@ -210,15 +228,26 @@ var (
 // order is dependency order: a binding whose sources are themselves dirty
 // pulls them first through Get. Oscillating binding loops are detected,
 // reported to stderr, and broken by keeping the previous value.
+//
+// A binding that panics takes the flush down with it, and the panic reaches
+// the caller; the bindings not yet evaluated, the panicking one first, go
+// back on the queue for the next flush.
 func FlushBindings() {
 	flushGen++
 	inFlush = true
-	defer func() { inFlush = false }()
+	var q []*binding
+	next := 0
+	defer func() {
+		inFlush = false
+		if next < len(q) {
+			dirtyQueue = append(q[next:], dirtyQueue...)
+		}
+	}()
 	for len(dirtyQueue) > 0 {
-		q := dirtyQueue
+		q, next = dirtyQueue, 0
 		dirtyQueue = nil
-		for _, b := range q {
-			if b.dirty && !b.dropped {
+		for ; next < len(q); next++ {
+			if b := q[next]; b.dirty && !b.dropped {
 				b.eval()
 			}
 		}
@@ -264,8 +293,13 @@ func TrackReads(fn func()) *ReadSet {
 	rs := &ReadSet{}
 	prev := tracker
 	tracker = rs
-	fn()
-	tracker = prev
+	// Deferred so a computation that panics still closes its scope: a
+	// caller that recovers goes on recording into its own set, not into
+	// one nobody holds.
+	func() {
+		defer func() { tracker = prev }()
+		fn()
+	}()
 	rs.snap = revision
 	// A computation depends on everything its NESTED computations read: a
 	// parent subtree embeds its children's results, so a child that goes
@@ -283,13 +317,14 @@ func TrackReads(fn func()) *ReadSet {
 // OwnStale reports whether something the computation itself read has
 // changed — its nested computations aside. A parent whose own reads are
 // fresh while a child's are stale can keep its result and have just that
-// child recomputed (see script/gml's subtree patching).
+// child recomputed (see script/gml's subtree patching). A bound property
+// waiting to re-evaluate counts as changed, as in Stale.
 func (rs *ReadSet) OwnStale() bool {
 	if rs.untracked {
 		return true
 	}
 	for _, d := range rs.deps {
-		if d.stamp > rs.snap {
+		if d.stamp > rs.snap || d.pending {
 			return true
 		}
 	}
@@ -409,6 +444,12 @@ func (rs *ReadSet) record(d *depSet) {
 
 // Stale reports whether any recorded property changed since the set was
 // captured (or the computation read untracked state, which is always stale).
+//
+// A bound property whose sources changed counts as changed until its
+// binding has re-evaluated: its next Get may return a new value, so a
+// result computed from the old one cannot be proven fresh. No flush is
+// needed first. Once the binding has run, only a value that really
+// differs keeps the set stale.
 func (rs *ReadSet) Stale() bool {
 	if rs.untracked {
 		return true
@@ -419,29 +460,44 @@ func (rs *ReadSet) Stale() bool {
 	if rs.memoValid && rs.memoRev == revision {
 		return rs.memoStale
 	}
-	stale := rs.staleNow()
-	rs.memoRev, rs.memoStale, rs.memoValid = revision, stale, true
+	stale, settled := rs.staleNow()
+	// An answer that rests on a binding yet to run is not remembered: the
+	// binding settles without a write when it re-evaluates to the value
+	// it had.
+	rs.memoRev, rs.memoStale, rs.memoValid = revision, stale, settled
 	return stale
 }
 
-func (rs *ReadSet) staleNow() bool {
+// staleNow checks the set and its nested sets. settled is false when the
+// only evidence of staleness is a binding waiting to re-evaluate.
+func (rs *ReadSet) staleNow() (stale, settled bool) {
+	pending := false
 	for _, sub := range rs.subs {
 		if sub.Stale() {
-			return true
+			if sub.untracked || sub.memoValid {
+				return true, true
+			}
+			pending = true
 		}
 	}
 	for _, d := range rs.deps {
 		if d.stamp > rs.snap {
-			return true
+			return true, true
+		}
+		if d.pending {
+			pending = true
 		}
 	}
-	return false
+	return pending, !pending
 }
 
 // depSet is the set of bindings depending on one property.
 type depSet struct {
 	bindings []*binding
 	stamp    uint64 // revision of the owning property's last real change
+	// pending marks a bound owner whose binding is waiting to re-evaluate:
+	// its value may change with no write so far (see binding.setDirty).
+	pending bool
 }
 
 func (d *depSet) add(b *binding) {

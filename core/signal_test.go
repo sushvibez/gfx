@@ -63,3 +63,59 @@ func TestSignalConnectDuringEmit(t *testing.T) {
 		t.Fatalf("n = %d, want 102", n)
 	}
 }
+
+// Disconnecting a slot twice while the signal emits counts it once: Len
+// keeps reporting the slots that are still connected.
+func TestSignalRepeatedDisconnectDuringEmit(t *testing.T) {
+	var s Signal[int]
+	var first Connection
+	inside := -1
+	first = s.Connect(func(int) {})
+	s.Connect(func(int) {
+		first.Disconnect()
+		first.Disconnect()
+		inside = s.Len()
+	})
+	s.Emit(0)
+	if inside != 1 {
+		t.Errorf("Len inside the emit = %d, want 1", inside)
+	}
+	if s.Len() != 1 {
+		t.Errorf("Len after the emit = %d, want 1", s.Len())
+	}
+}
+
+// The same holds through a nested emit, and a slot disconnected before its
+// turn does not run.
+func TestSignalDisconnectUpcomingSlotInNestedEmit(t *testing.T) {
+	var s Signal[int]
+	var last Connection
+	ran, depth := 0, 0
+	lens := []int{}
+	s.Connect(func(int) {
+		depth++
+		if depth == 1 {
+			s.Emit(0) // the nested emit disconnects below
+		}
+		depth--
+	})
+	s.Connect(func(int) {
+		last.Disconnect()
+		last.Disconnect()
+		lens = append(lens, s.Len())
+	})
+	last = s.Connect(func(int) { ran++ })
+	s.Emit(0)
+	if ran != 0 {
+		t.Errorf("a slot disconnected before its turn ran %d times", ran)
+	}
+	for _, n := range lens {
+		if n != 2 {
+			t.Errorf("Len during the emits = %v, want 2 each time", lens)
+			break
+		}
+	}
+	if s.Len() != 2 {
+		t.Errorf("Len after the emits = %d, want 2", s.Len())
+	}
+}

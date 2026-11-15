@@ -203,8 +203,9 @@ lines of work; fix them as they are touched.
   `KHR_texture_transform`, emissive strength, Draco); morph targets,
   cameras and lights are not loaded. ASCII FBX is unsupported; FBX
   materials are diffuse + shininess only.
-- **`scene`**: `Tree.Update` rescans the whole column per depth level
-  rather than dirty subtrees.
+- **`scene`**: `Tree.Update` recomputes every node in one depth-ordered
+  pass (2026-11-15; it rescanned the column once per depth level) rather
+  than dirty subtrees only.
 - **`physics/p3`**: dynamic bodies are spheres and boxes only (no GJK/EPA,
   dynamic capsules or hulls); the BVH rebuilds on every mutation instead
   of refitting; tower stacking wanders laterally (no block solver or

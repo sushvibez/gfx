@@ -6,6 +6,8 @@ package p3
 // simple and fast enough; incremental refit arrives with dynamics.
 
 import (
+	"slices"
+
 	"github.com/chewxy/math32"
 
 	"github.com/sushvibez/gfx/core"
@@ -168,6 +170,14 @@ func (b *body) toWorld(p core.Vec3) core.Vec3 { return b.rot.Rotate(p).Add(b.pos
 type worldBVH struct {
 	nodes []meshNode // reuse the node layout (start/n index w.order)
 	order []int32    // body indices
+	keys  []bvhKey   // buildBVH's sort scratch, kept between rebuilds
+}
+
+// bvhKey is one body of a span being split: its centre on the split axis
+// and where it stood in the span before sorting.
+type bvhKey struct {
+	key       float32
+	pos, body int32
 }
 
 // refresh rebuilds the BVH if bodies changed.
@@ -224,16 +234,27 @@ func (w *World) buildBVH(start, n int32) int32 {
 		}
 		return b.bmin.Z + b.bmax.Z
 	}
-	for i := 1; i < len(span); i++ {
-		v := span[i]
-		k := key(v)
-		j := i - 1
-		for j >= 0 && key(span[j]) > k {
-			span[j+1] = span[j]
-			j--
-		}
-		span[j+1] = v
+	// Sorted through keys computed once, with the position in the span as
+	// the tie-break: bodies level on the axis keep their order, so the tree
+	// (and with it the order queries visit bodies in) is the one the
+	// insertion sort this replaced built, without its quadratic cost.
+	keys := w.bvh.keys[:0]
+	for i, bi := range span {
+		keys = append(keys, bvhKey{key(bi), int32(i), bi})
 	}
+	slices.SortFunc(keys, func(a, b bvhKey) int {
+		switch {
+		case a.key < b.key:
+			return -1
+		case a.key > b.key:
+			return 1
+		}
+		return int(a.pos - b.pos)
+	})
+	for i := range keys {
+		span[i] = keys[i].body
+	}
+	w.bvh.keys = keys
 	half := n / 2
 	l := w.buildBVH(start, half)
 	r := w.buildBVH(start+half, n-half)

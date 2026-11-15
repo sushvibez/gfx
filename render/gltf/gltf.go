@@ -4,10 +4,14 @@
 // The render package turns a Document into GPU meshes; this package only
 // parses.
 //
-// v0 scope: triangle primitives, position/normal/texcoord attributes,
-// uint16/uint32 indices, PBR base color (factor + texture), PNG/JPEG
-// images, node TRS or matrix transforms. Skins, animations and the rest
-// of the spec come later.
+// Scope: triangle primitives with position/normal/texcoord/tangent
+// attributes and uint16/uint32 indices, the metallic-roughness material
+// with its maps (PNG/JPEG), node TRS or matrix transforms, skins (skin.go)
+// and keyframed TRS animations (anim.go). Morph targets, cameras, lights
+// and sparse accessors are not read.
+//
+// An asset is untrusted input: every index and byte range it names is
+// checked before use, and a malformed one is an error from Parse.
 package gltf
 
 import (
@@ -257,7 +261,9 @@ type jsonDoc struct {
 }
 
 const (
+	compInt8   = 5120
 	compUint8  = 5121
+	compInt16  = 5122
 	compUint16 = 5123
 	compUint32 = 5125
 	compFloat  = 5126
@@ -328,7 +334,7 @@ func parseGLB(data []byte) (jsonChunk, binChunk []byte, err error) {
 		clen := int(binary.LittleEndian.Uint32(data[off:]))
 		ctype := string(data[off+4 : off+8])
 		off += 8
-		if off+clen > len(data) {
+		if clen < 0 || clen > len(data)-off {
 			return nil, nil, fmt.Errorf("gltf: truncated GLB chunk")
 		}
 		switch ctype {
@@ -351,8 +357,32 @@ type parser struct {
 	resolve func(string) ([]byte, error)
 }
 
-// view returns the raw bytes of accessor i plus its element stride.
+// viewBytes returns the bytes of buffer view i, with the view's range
+// checked against its buffer.
+func (p *parser) viewBytes(i int) (data []byte, stride int, err error) {
+	if i < 0 || i >= len(p.j.BufferViews) {
+		return nil, 0, fmt.Errorf("gltf: buffer view %d out of range", i)
+	}
+	bv := p.j.BufferViews[i]
+	if bv.Buffer < 0 || bv.Buffer >= len(p.buffers) {
+		return nil, 0, fmt.Errorf("gltf: buffer view %d: buffer %d out of range", i, bv.Buffer)
+	}
+	buf := p.buffers[bv.Buffer]
+	// Compared by subtraction, so a huge offset or length cannot wrap.
+	if bv.ByteOffset < 0 || bv.ByteLength < 0 || bv.ByteStride < 0 ||
+		bv.ByteOffset > len(buf) || bv.ByteLength > len(buf)-bv.ByteOffset {
+		return nil, 0, fmt.Errorf("gltf: buffer view %d overruns buffer %d", i, bv.Buffer)
+	}
+	return buf[bv.ByteOffset : bv.ByteOffset+bv.ByteLength], bv.ByteStride, nil
+}
+
+// accessor returns the raw bytes of accessor i plus its element stride.
+// Element e starts at e*stride and the bytes hold count whole elements, so
+// readers index without further checks.
 func (p *parser) accessor(i int) (data []byte, stride, count, compType int, typ string, err error) {
+	fail := func(format string, args ...any) ([]byte, int, int, int, string, error) {
+		return nil, 0, 0, 0, "", fmt.Errorf("gltf: accessor %d: %s", i, fmt.Sprintf(format, args...))
+	}
 	if i < 0 || i >= len(p.j.Accessors) {
 		return nil, 0, 0, 0, "", fmt.Errorf("gltf: accessor %d out of range", i)
 	}
@@ -360,31 +390,49 @@ func (p *parser) accessor(i int) (data []byte, stride, count, compType int, typ 
 	if a.BufferView == nil {
 		return nil, 0, 0, 0, "", fmt.Errorf("gltf: sparse accessors not supported")
 	}
-	bv := p.j.BufferViews[*a.BufferView]
-	buf := p.buffers[bv.Buffer]
+	view, stride, err := p.viewBytes(*a.BufferView)
+	if err != nil {
+		return fail("%v", err)
+	}
 	elem := componentSize(a.ComponentType) * typeComponents(a.Type)
-	stride = bv.ByteStride
+	if elem == 0 {
+		return fail("unsupported type %s/%d", a.Type, a.ComponentType)
+	}
 	if stride == 0 {
 		stride = elem
 	}
-	start := bv.ByteOffset + a.ByteOffset
-	end := start + (a.Count-1)*stride + elem
-	if end > len(buf) {
-		return nil, 0, 0, 0, "", fmt.Errorf("gltf: accessor %d overruns buffer", i)
+	if a.Count < 0 || a.ByteOffset < 0 || a.ByteOffset > len(view) {
+		return fail("count %d at offset %d is outside its buffer view", a.Count, a.ByteOffset)
 	}
-	return buf[start:end], stride, a.Count, a.ComponentType, a.Type, nil
+	if a.Count == 0 {
+		return nil, stride, 0, a.ComponentType, a.Type, nil
+	}
+	// The last element needs elem bytes, the ones before it a stride each;
+	// divided rather than multiplied, so a huge count cannot wrap.
+	room := len(view) - a.ByteOffset
+	if room < elem || a.Count-1 > (room-elem)/stride {
+		return fail("%d elements overrun its buffer view", a.Count)
+	}
+	end := a.ByteOffset + (a.Count-1)*stride + elem
+	return view[a.ByteOffset:end], stride, a.Count, a.ComponentType, a.Type, nil
 }
 
+// componentSize is the byte size of a glTF component type, 0 for one the
+// format does not define.
 func componentSize(t int) int {
 	switch t {
-	case compUint16:
+	case compInt8, compUint8:
+		return 1
+	case compInt16, compUint16:
 		return 2
 	case compUint32, compFloat:
 		return 4
 	}
-	return 1
+	return 0
 }
 
+// typeComponents is the component count of a glTF accessor type, 0 for
+// one the format does not define.
 func typeComponents(t string) int {
 	switch t {
 	case "SCALAR":
@@ -393,12 +441,14 @@ func typeComponents(t string) int {
 		return 2
 	case "VEC3":
 		return 3
-	case "VEC4":
+	case "VEC4", "MAT2":
 		return 4
+	case "MAT3":
+		return 9
 	case "MAT4":
 		return 16
 	}
-	return 1
+	return 0
 }
 
 func (p *parser) floats(i, comps int) ([]float32, error) {
@@ -672,12 +722,19 @@ func (p *parser) textureImage(texIdx int) (*image.RGBA, error) {
 	if texIdx < 0 || texIdx >= len(p.j.Textures) || p.j.Textures[texIdx].Source == nil {
 		return nil, fmt.Errorf("gltf: texture %d has no source", texIdx)
 	}
-	img := p.j.Images[*p.j.Textures[texIdx].Source]
+	src := *p.j.Textures[texIdx].Source
+	if src < 0 || src >= len(p.j.Images) {
+		return nil, fmt.Errorf("gltf: texture %d: image %d out of range", texIdx, src)
+	}
+	img := p.j.Images[src]
 	var raw []byte
 	switch {
 	case img.BufferView != nil:
-		bv := p.j.BufferViews[*img.BufferView]
-		raw = p.buffers[bv.Buffer][bv.ByteOffset : bv.ByteOffset+bv.ByteLength]
+		view, _, err := p.viewBytes(*img.BufferView)
+		if err != nil {
+			return nil, err
+		}
+		raw = view
 	case img.URI != "":
 		if p.resolve == nil {
 			return nil, fmt.Errorf("gltf: image %q needs a resolver", img.URI)

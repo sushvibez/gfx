@@ -2,8 +2,8 @@ package audio
 
 // WAV (RIFF) decoding: PCM 8/16-bit and IEEE float32, mono or stereo, any
 // rate — normalized to the mixer's stereo float32 at SampleRate with linear
-// resampling. The format every asset pipeline can emit; compressed formats
-// (ogg/mp3) come later if the games need them.
+// resampling. The format every asset pipeline can emit; decode.go reads the
+// compressed ones (Ogg Vorbis, MP3).
 
 import (
 	"encoding/binary"
@@ -11,7 +11,9 @@ import (
 	"math"
 )
 
-// LoadWAV decodes a WAV file into a device-rate Sound.
+// LoadWAV decodes a WAV file into a device-rate Sound. A data chunk cut
+// short keeps its whole frames, and an empty one loads as a sound of no
+// frames, which plays as nothing (see Voice.mixInto).
 func (d *Device) LoadWAV(data []byte) (*Sound, error) {
 	if len(data) < 44 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WAVE" {
 		return nil, fmt.Errorf("audio: not a WAV file")
@@ -79,6 +81,7 @@ func (d *Device) LoadWAV(data []byte) (*Sound, error) {
 		}
 		frames = st
 	}
+	frames = frames[:len(frames)&^1] // a left sample without its right is no frame
 	// Resample to the device rate (linear interpolation).
 	if rate != SampleRate {
 		frames = resampleStereo(frames, rate, SampleRate)

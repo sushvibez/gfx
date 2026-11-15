@@ -37,6 +37,14 @@ type backend interface {
 	close()
 }
 
+// interrupter is a backend whose write can wait on the device for longer
+// than a chunk: interrupt makes a write in progress, and every later one,
+// return an error. Close calls it so a device that stopped taking audio
+// cannot hold the mixer, and Close with it, forever.
+type interrupter interface {
+	interrupt()
+}
+
 // Device owns the backend and the mix goroutine.
 type Device struct {
 	mu     sync.Mutex
@@ -45,6 +53,7 @@ type Device struct {
 	be     backend
 	stop   chan struct{}
 	done   chan struct{}
+	closed sync.Once
 }
 
 // Open starts the platform audio device (falling back to a silent null
@@ -66,11 +75,18 @@ func (d *Device) SetVolume(v float32) {
 	d.mu.Unlock()
 }
 
-// Close stops the mixer and releases the device.
+// Close stops the mixer and releases the device. The backend is closed
+// only once the mixer has left it, so nothing is written to a closed
+// device. Closing twice is harmless.
 func (d *Device) Close() {
-	close(d.stop)
-	<-d.done
-	d.be.close()
+	d.closed.Do(func() {
+		close(d.stop)
+		if in, ok := d.be.(interrupter); ok {
+			in.interrupt()
+		}
+		<-d.done
+		d.be.close()
+	})
 }
 
 // Sound is a decoded, device-rate PCM buffer (interleaved stereo float32),
@@ -157,6 +173,9 @@ func (d *Device) mixLoop() {
 				live = append(live, v)
 			}
 		}
+		// The slots past the live voices still point at finished ones, and
+		// through them at their sounds' PCM.
+		clear(d.voices[len(live):])
 		d.voices = live
 		d.mu.Unlock()
 		for i, s := range mix {
@@ -177,10 +196,17 @@ func (d *Device) mixLoop() {
 
 // mixInto adds the voice's next chunk into mix (interleaved stereo),
 // advancing the cursor; a non-looping voice that reaches the end stops.
+// Only whole frames play, and a sound without one has nothing to loop
+// over: its voice stops at once, looping or not.
 func (v *Voice) mixInto(mix []float32) {
 	src := v.snd.samples
+	frames := len(src) / 2
+	if frames == 0 {
+		v.stop = true
+		return
+	}
 	for i := 0; i < len(mix); i += 2 {
-		if v.pos*2 >= len(src) {
+		if v.pos >= frames {
 			if !v.loop {
 				v.stop = true
 				return

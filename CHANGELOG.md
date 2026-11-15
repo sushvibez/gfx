@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixes from a code review (`review.md`, 2026-11-15), each reproduced by a test first:
+  - `audio` on Windows never played: `waveOutPrepareHeader` cleared the flag that marked a buffer free, so the first write waited for ever (and `Device.Close` with it). Teardown now resets the device, unprepares and closes with checked results; `Device.Close` is repeatable.
+  - A looping voice on an empty WAV, or a WAV with half a stereo frame, crashed the mixer; finished voices were kept alive by the mixer's slice tail.
+  - Malformed glTF (bad accessor, buffer-view or image references, truncated GLB, keyless animation samplers) returned panics, now errors; fuzzed.
+  - `scene.Tree`: a live parent that is not a node of the tree crashed `Update` (the child is now a root); `Update` is one pass in depth order (a 2000-deep chain: 8.5 ms to 0.12 ms).
+  - `core`: `ReadSet.Stale` missed a binding waiting to re-evaluate; `Loop.Post` could deadlock when called from the loop with a full queue (it no longer blocks, and `Step` runs the batch queued when it began); a repeated `Signal` disconnect during an emit miscounted `Len`; a recovered panic in a binding or in `TrackReads` left dependency tracking corrupted.
+  - `physics/p3`: the BVH rebuild sorted by insertion (20,000 bodies: 235 ms to 18 ms, same tree). `ui` lists with per-row heights no longer recompute a prefix sum per visible row.
+
 - Traced lighting, step 6: `FrameSettings.TracedReflections`. A half-resolution Post pass traces mirror pixels' reflected rays through the trace scene, and the combine uses the result where the screen-space reflection found nothing (off screen or hidden).
 - Fixed: a reflection whose ray pointed near the sun could turn its pixel black (the sky removed was brighter than the sky the material had added). The sky is now taken out with a floor at zero before what was met is added.
 

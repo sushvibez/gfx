@@ -47,8 +47,12 @@ func (s *Signal[T]) remove(id uint64) {
 	for i := range s.slots {
 		if s.slots[i].id == id {
 			if s.emitting > 0 {
-				s.slots[i].fn = nil // tombstone; compacted after emit
-				s.dead++
+				// Tombstone, compacted after the emit. A slot disconnected
+				// again before then is already counted.
+				if s.slots[i].fn != nil {
+					s.slots[i].fn = nil
+					s.dead++
+				}
 			} else {
 				s.slots = append(s.slots[:i], s.slots[i+1:]...)
 			}
