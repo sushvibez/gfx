@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Traced lighting, step 6: `FrameSettings.TracedReflections`. A half-resolution Post pass traces mirror pixels' reflected rays through the trace scene, and the combine uses the result where the screen-space reflection found nothing (off screen or hidden).
+- Fixed: a reflection whose ray pointed near the sun could turn its pixel black (the sky removed was brighter than the sky the material had added). The sky is now taken out with a floor at zero before what was met is added.
+
 - Traced lighting, step 5 reworked: the bounce is now Post's own pass (`post_bounce.go`, quarter resolution, read by the material shader a frame later through `Renderer3D.SetBounceLight`), which is stable where the in-shader version lost the device. Lamps too faint at a point to show against the ambient light no longer get a shadow ray.
 - Rain: drawn after the temporal filter (`Renderer3D.DeferRain`, `RenderRain`, `Post.AfterLight`), so the filter no longer averages falling drops away, and its streaks keep a pixel's width at any render resolution (`Renderer3D.SetRenderSize`, which View3D calls). `gpu.CommandEncoder.BeginRenderPassOver` keeps both colour and depth.
 

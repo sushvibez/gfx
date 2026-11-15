@@ -111,6 +111,13 @@ type FrameSettings struct {
 	// of a small disc at the light, for a soft edge. A light must stand
 	// clear of the shapes round it, or they shadow everything it lights.
 	TracedLightShadows bool
+	// TracedReflections lets mirror-like surfaces reflect what the
+	// screen-space reflection (SceneReflection, which this adds to) cannot
+	// see: where the mirrored ray leaves the screen or goes behind
+	// something, Post traces it through the trace scene and shows the shape
+	// it meets in its plain colour (TraceInstance.Color), lit by the sun and
+	// the sky. Half resolution, mirror pixels only.
+	TracedReflections bool
 	// TracedBounce adds one bounce of the sun's light: for each surface on
 	// screen one ray goes into the hemisphere over it, and if it meets a
 	// shape the sun (or the sky) lights, that shape's colour times that

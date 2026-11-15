@@ -168,6 +168,12 @@ type Post struct {
 	bounceOn, bounceDirty  bool
 	bframe                 int
 
+	// The traced reflection pass (post_reflect.go).
+	plReflect                *gpu.RenderPipeline
+	refl                     postTex
+	bgReflect                *gpu.BindGroup
+	reflectTraced, reflDirty bool
+
 	// AfterLight, when set, is called once the lit picture is finished
 	// (the air added, the frames averaged) and before the camera's passes
 	// (bloom, exposure, the tone curve): it may draw over color, linear
@@ -252,6 +258,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.atmosPipelines(mk)
 	p.temporalPipelines(mk)
 	p.bouncePipelines(mk)
+	p.reflectPipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -308,6 +315,7 @@ func (p *Post) Resize(w, h int) {
 	p.ldr = tex(w, h, gpu.FormatRGBA8Unorm)
 	hw, hh := max(w/2, 1), max(h/2, 1)
 	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
+	p.reflectTargets(tex, w, h)
 	p.atmosTargets(tex, w, h)
 	p.temporalTargets(tex, w, h)
 	p.bounceTargets(tex, w, h)
@@ -471,6 +479,7 @@ func (p *Post) releaseTargets() {
 	p.atmosReleaseTargets()
 	p.temporalReleaseTargets()
 	p.bounceReleaseTargets()
+	p.reflectReleaseTargets()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -495,6 +504,7 @@ func (p *Post) Release() {
 	p.releaseTargets()
 	p.temporalRelease()
 	p.bounceRelease()
+	p.reflectRelease()
 	p.adapt[0].release()
 	p.adapt[1].release()
 	p.atmosRelease()

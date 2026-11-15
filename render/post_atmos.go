@@ -69,7 +69,7 @@ type atmosUniforms struct {
 	Horizon core.Vec4 // rgb, w max march distance
 	Proj    core.Vec4 // projection x and y scales, depth terms
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
-	Rain    core.Vec4 // x how hard it rains, y time in seconds
+	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced
 	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
 }
 
@@ -83,7 +83,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		}
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
 		p.skyView, p.rainVP = nil, core.Mat4{}
-		p.traceNodes, p.traceInsts, p.bounceOn = nil, nil, false
+		p.traceNodes, p.traceInsts, p.bounceOn, p.reflectTraced = nil, nil, false, false
 		p.spotViews = [MaxSpotShadows]*gpu.TextureView{}
 		return
 	}
@@ -94,9 +94,11 @@ func (p *Post) UseShadow(r *Renderer3D) {
 	p.rainVP = r.lastRainVP
 	if p.traceNodes != r.traceNodes || p.traceInsts != r.traceInsts {
 		p.traceNodes, p.traceInsts = r.traceNodes, r.traceInsts
-		p.bounceDirty = true
+		p.bounceDirty, p.reflDirty = true, true
 	}
 	p.bounceOn = r.settings.TracedBounce && r.traceShapes > 0
+	p.reflectTraced = r.settings.TracedReflections && r.traceShapes > 0 &&
+		r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
 	p.lightVP = r.lastLightVP
 	p.lightCount = r.lastLightCount
 	p.reflect = r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
@@ -172,7 +174,8 @@ func (p *Post) atmosBind() {
 	if skyMap == nil {
 		skyMap = p.noShadow.view
 	}
-	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3), tex(4, skyMap))
+	p.bgAtmos = group(p.plAtmos, tex(0, p.depthView), tex(1, p.sceneView), tex(2, p.vol[0].view), uni(3), tex(4, skyMap), tex(5, p.refl.view))
+	p.reflDirty = true // its own group reads the same views
 }
 
 // atmosRender records the shafts and the combine pass; the result is
@@ -219,6 +222,9 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 		u.Lamps.Z = 1
 	}
 	u.Rain = core.V4(0, p.time, 0, 0)
+	if p.reflectTraced && ok && p.Projection[0] != 0 {
+		u.Rain.Z = 1 // the combine reads the traced reflections
+	}
 	if p.skyView != nil {
 		u.RainVP = p.rainVP
 	}
@@ -240,6 +246,7 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 		pass(p.vol[1].view, p.plVolBlurH, p.bgVolBlur[0], clear)
 		pass(p.vol[0].view, p.plVolBlurV, p.bgVolBlur[1], clear)
 	}
+	p.reflectRender(enc) // the mirrors' traced reflections, for the combine
 	pass(p.lit.view, p.plAtmos, p.bgAtmos, gpu.Color{})
 }
 
@@ -294,7 +301,7 @@ struct AtmU {
     horizon : vec4f,   // rgb, w max march distance
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
-    rain : vec4f,      // x how hard it rains, y time
+    rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced
     rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
@@ -496,6 +503,7 @@ const postAtmosWGSL = `
 @group(0) @binding(2) var vol : texture_2d<f32>;
 @group(0) @binding(3) var<uniform> A : AtmU;
 @group(0) @binding(4) var sky_map : texture_depth_2d;
+@group(0) @binding(5) var refl : texture_2d<f32>;
 ` + postAtmosCommonWGSL + `
 // Whether the air at a world point is open to the sky (1) or has a roof
 // over it (0), by the renderer's sky map; open where there is no map.
@@ -537,7 +545,8 @@ fn view_pos(t : vec2i, dims : vec2f) -> vec3f {
 // bisection to the surface) and return what it meets with a confidence in
 // w: zero when it leaves the screen, goes behind something, or comes back
 // toward the camera.
-fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
+struct ReflHit { c : vec4f, sky : vec3f }   // rgb what the ray met and w how surely; the sky that way
+fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> ReflHit {
     let dmax = vec2i(dims) - 1;
     let p = view_pos(c, dims);
     // The surface normal from the depth buffer: on each axis, the neighbour
@@ -569,8 +578,9 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
         n = normalize(n + transpose(rot) * vec3f(g.x, 0.0, g.y));
     }
     let r = reflect(v, n);
+    let sky = sky_color(world_dir(r)); // what the material mirrored there, roughly
     if (r.z > 0.15) {
-        return vec4f(0.0); // back toward the camera: nothing on screen to meet
+        return ReflHit(vec4f(0.0), sky); // back toward the camera: nothing on screen to meet
     }
     let dist = -p.z;
     var stride = max(0.08, dist * 0.02) * (0.6 + 0.8 * ign(vec2f(c)));
@@ -595,7 +605,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
         stride *= 1.14;
     }
     if (!found) {
-        return vec4f(0.0);
+        return ReflHit(vec4f(0.0), sky);
     }
     for (var i = 0; i < 5; i++) {
         let tm = 0.5 * (t0 + t1);
@@ -610,7 +620,7 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
     // Fade toward the screen's edges and for rays turning back at the camera.
     let e = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     let conf = smoothstep(0.0, 0.08, e) * (1.0 - smoothstep(-0.1, 0.15, r.z));
-    return vec4f(hit - sky_color(world_dir(r)), conf);
+    return ReflHit(vec4f(hit, conf), sky);
 }
 
 @fragment fn fs(in : VOut) -> @location(0) vec4f {
@@ -624,7 +634,20 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool) -> vec4f {
     // scene, swap the sky for what it meets.
     if (A.lamps.z > 0.5 && !is_sky && abs(sc.a) < 0.995) {
         let hit = trace_reflection(c, vec2f(textureDimensions(depth)), sc.a < 0.0);
-        col = max(col + hit.rgb * hit.w * (1.0 - abs(sc.a)), vec3f(0.0));
+        var seen = hit.c.rgb * hit.c.w;
+        var sure = hit.c.w;
+        if (A.rain.z > 0.5) {
+            // Where the picture has no answer (off screen, or hidden), the
+            // trace scene's: half resolution, the nearest texel.
+            let rmax = vec2i(textureDimensions(refl)) - 1;
+            let tr = textureLoad(refl, min(c / 2, rmax), 0);
+            seen += tr.rgb * tr.a * (1.0 - hit.c.w);
+            sure += tr.a * (1.0 - hit.c.w);
+        }
+        // Take the sky's reflection out (never below nothing: this sky is an
+        // estimate of what the material put in) and put what was met in.
+        let m = 1.0 - abs(sc.a);
+        col = max(col - hit.sky * sure * m, vec3f(0.0)) + seen * m;
     }
     if (is_sky && A.zenith.w > 0.5) {
         let dims = vec2f(textureDimensions(depth));

@@ -437,3 +437,84 @@ func TestTracedBounce(t *testing.T) {
 		t.Fatalf("no red bounce at the wall's foot: rgb %.0f,·,%.0f with the bounce, %.0f,·,%.0f without", r1, b1, r0, b0)
 	}
 }
+
+// Traced reflections: a mirror floor seen from steeply above reflects a red
+// block that hangs overhead, out of the picture, with
+// FrameSettings.TracedReflections; the screen-space reflection alone
+// cannot see it.
+func TestTracedReflection(t *testing.T) {
+	shot := func(traced bool) (r, g float64) {
+		const w, h = 320, 240
+		dev, q := headlessDevice(t)
+		r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r3.Release()
+		fs := DefaultFrameSettings()
+		fs.Tonemap = TonemapHDR
+		fs.SkyReflection, fs.SceneReflection, fs.TracedReflections = 1, 1, traced
+		fs.SkyTop, fs.SkyHorizon = RGBA{R: 0.02, G: 0.02, B: 0.03, A: 1}, RGBA{R: 0.03, G: 0.03, B: 0.03, A: 1}
+		fs.Sun = RGBA{R: 2, G: 2, B: 2, A: 1}
+		fs.Ambient = RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}
+		r3.SetFrameSettings(fs)
+		r3.KeepDepth = true
+		post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer post.Release()
+		s := &post.Settings
+		s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen, s.AO = 0, 0, 0, 0, 0, 0, 0
+		s.Lift = [3]float32{}
+		s.FXAA = false
+		post.Resize(w, h)
+		r3.SetRenderSize(w, h)
+		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+		tview := target.CreateView()
+		defer func() { tview.Release(); target.Release() }()
+		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60)))
+		// Overhead and beyond the top of the picture: the ray mirrored at
+		// the floor's origin from this camera passes through it.
+		block := core.Mat4Translate(core.V3(0, 7, -3.5)).Mul(core.Mat4Scale(core.V3(5, 1, 5)))
+		r3.SetTraceScene([]TraceInstance{
+			{Model: floor, Color: [3]float32{0.5, 0.5, 0.5}},
+			{Model: block, Color: [3]float32{0.9, 0.05, 0.05}},
+		})
+		eye := core.V3(0, 6, 3)
+		proj := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.1, 300)
+		view := core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 1, 0))
+		sun := core.V3(0, -1, 0.3)
+		post.Projection, post.View = proj, view
+		post.Atmosphere = Atmosphere{SunDir: sun, Sun: [3]float32{2, 2, 2}, Ambient: [3]float32{0.5, 0.5, 0.5},
+			Zenith: [3]float32{0.02, 0.02, 0.03}, Horizon: [3]float32{0.03, 0.03, 0.03}}
+		mirror := &Material{Color: RGBA{R: 0.5, G: 0.5, B: 0.5, A: 1}, Roughness: 0.05, Metallic: 1}
+		red := &Material{Color: RGBA{R: 0.9, G: 0.05, B: 0.05, A: 1}, Roughness: 1}
+		r3.Begin(proj.Mul(view), sun, eye)
+		r3.DrawMaterial(r3.CubeMesh(), floor, mirror)
+		r3.DrawMaterial(r3.CubeMesh(), block, red)
+		post.UseShadow(r3)
+		enc := dev.CreateCommandEncoder()
+		if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{A: 1}); err != nil {
+			t.Fatal(err)
+		}
+		post.Render(enc, tview)
+		q.Submit(enc.Finish())
+		pix, err := dev.ReadTexture(q, target, w, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The floor at the origin is the centre of the picture.
+		i := ((h/2)*w + w/2) * 4
+		return float64(pix[i]), float64(pix[i+1])
+	}
+	r0, g0 := shot(false)
+	r1, g1 := shot(true)
+	// Without tracing the floor mirrors the grey sky there; with it, the red block.
+	if r0 > 1.3*g0+10 {
+		t.Fatalf("the floor is red without tracing: rgb %.0f, %.0f", r0, g0)
+	}
+	if r1 < 60 || r1 < 3*g1 {
+		t.Fatalf("the floor does not mirror the block overhead: red %.0f, green %.0f traced (%.0f, %.0f without)", r1, g1, r0, g0)
+	}
+}
