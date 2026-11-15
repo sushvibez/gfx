@@ -35,6 +35,10 @@ type View3D struct {
 	// lever for slow GPUs; change it freely (the targets are rebuilt when it
 	// changes).
 	RenderScale float32
+	// Reference, when set, draws the renderer's trace scene with the
+	// reference path tracer in place of everything else (the draws and
+	// Post are not used). Set its camera and light each frame. Not owned.
+	Reference *PathTracer
 
 	device *gpu.Device
 	r2     *Renderer2D
@@ -117,6 +121,10 @@ func (v *View3D) PixelSize() (int, int) { return v.pw, v.ph }
 func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 	if v.colorView == nil {
 		return nil // not yet sized
+	}
+	if v.Reference != nil {
+		v.Reference.Render(enc, r3, v.colorView, v.pw, v.ph)
+		return nil
 	}
 	if v.Post != nil {
 		// The scene and every pass over it run at RenderScale of the view's

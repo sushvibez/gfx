@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Traced lighting, step 9: `render.PathTracer`, the reference path tracer over the trace scene (progressive: one path a pixel a frame, averaged while nothing moves), and `View3D.Reference` to show it in place of the rasterised picture. Plain matt shapes under the sun and sky only.
 - Traced lighting, step 8: `FrameSettings.TracedHaze`. The light shafts and lamp beams ask the trace scene, not the shadow maps, what shades a point of air. It is the dearest traced term (Harbor golden: 20 ms a frame more on integrated graphics), so it is a setting of its own.
 - Fixed: the GPU device lost on the first run of a new build with traced bounce or reflections on (Intel integrated graphics, D3D12). The tracer's walks of the hierarchy are now bounded (`TRACE_STEPS`, `TRACE_LEAF`); the unbounded nearest-hit walk hung the GPU the first time a newly built shader ran. `docs/notes/raytracing.md` has the account.
 - Traced lighting, step 7: triangle meshes in the trace scene (`TraceMesh`, `TraceInstance.Mesh`): a BVH per distinct mesh under the instance BVH, so models cast traced shadows, occlude and are met by bounce and reflection rays.
