@@ -545,3 +545,71 @@ func TestTracedReflection(t *testing.T) {
 		t.Fatalf("the floor does not mirror the block overhead: red %.0f, green %.0f traced (%.0f, %.0f without)", r1, g1, r0, g0)
 	}
 }
+
+// Traced haze: a roof that is only in the trace scene (no shadow map sees
+// it) darkens the air under it.
+func TestTracedHaze(t *testing.T) {
+	shot := func(traced bool) float64 {
+		const w, h = 320, 240
+		dev, q := headlessDevice(t)
+		r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r3.Release()
+		fs := DefaultFrameSettings()
+		fs.Tonemap = TonemapHDR
+		fs.TracedHaze = traced
+		fs.Sun = RGBA{R: 2, G: 2, B: 2, A: 1}
+		fs.Ambient = RGBA{R: 0.1, G: 0.1, B: 0.1, A: 1}
+		r3.SetFrameSettings(fs)
+		r3.KeepDepth = true
+		post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer post.Release()
+		s := &post.Settings
+		s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen, s.AO = 0, 0, 0, 0, 0, 0, 0
+		s.Lift = [3]float32{}
+		s.FXAA = false
+		post.Resize(w, h)
+		r3.SetRenderSize(w, h)
+		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+		tview := target.CreateView()
+		defer func() { tview.Release(); target.Release() }()
+		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(200, 1, 200)))
+		roof := core.Mat4Translate(core.V3(0, 12, -30)).Mul(core.Mat4Scale(core.V3(80, 1, 80)))
+		r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: roof}})
+		eye := core.V3(0, 2, 0)
+		proj := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.1, 300)
+		view := core.Mat4LookAt(eye, core.V3(0, 2, -30), core.V3(0, 1, 0))
+		sun := core.V3(0.2, -1, 0.1)
+		post.Projection, post.View = proj, view
+		post.Atmosphere = Atmosphere{SunDir: sun, Sun: [3]float32{2, 2, 2}, Ambient: [3]float32{0.1, 0.1, 0.1},
+			Shafts: 0.03, MaxDistance: 60}
+		r3.Begin(proj.Mul(view), sun, eye)
+		r3.DrawMaterial(r3.CubeMesh(), floor, &Material{Color: RGBA{A: 1}, Roughness: 1})
+		post.UseShadow(r3)
+		enc := dev.CreateCommandEncoder()
+		if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{A: 1}); err != nil {
+			t.Fatal(err)
+		}
+		post.Render(enc, tview)
+		q.Submit(enc.Finish())
+		pix, err := dev.ReadTexture(q, target, w, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Just above the horizon: a long look through the air under the roof.
+		i := ((h/2-12)*w + w/2) * 4
+		return float64(pix[i]) + float64(pix[i+1]) + float64(pix[i+2])
+	}
+	open, under := shot(false), shot(true)
+	if open < 60 {
+		t.Fatalf("the haze is not lit without tracing: %.0f", open)
+	}
+	if under > 0.6*open {
+		t.Fatalf("the air under the roof is as bright traced (%.0f) as untraced (%.0f)", under, open)
+	}
+}

@@ -19,6 +19,7 @@ package render
 // View3D does it), the camera from Post.View and Post.Projection.
 
 import (
+	"strings"
 	"unsafe"
 
 	"github.com/sushvibez/gfx/core"
@@ -69,7 +70,7 @@ type atmosUniforms struct {
 	Horizon core.Vec4 // rgb, w max march distance
 	Proj    core.Vec4 // projection x and y scales, depth terms
 	Lamps   core.Vec4 // x light count, y how strongly lamps light the air, z 1 when scene reflections are traced
-	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced
+	Rain    core.Vec4 // x how hard it rains, y time in seconds, z 1 when reflections were also traced, w the march's noise frame (0: still)
 	RainVP  core.Mat4 // the renderer's sky map (all zero: none), so rain stops under roofs
 }
 
@@ -84,6 +85,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
 		p.skyView, p.rainVP = nil, core.Mat4{}
 		p.traceNodes, p.traceInsts, p.traceTris, p.bounceOn, p.reflectTraced = nil, nil, nil, false, false
+		p.hazeTraced = false
 		p.spotViews = [MaxSpotShadows]*gpu.TextureView{}
 		return
 	}
@@ -96,7 +98,9 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		p.traceNodes, p.traceInsts, p.traceTris = r.traceNodes, r.traceInsts, r.traceTris
 		p.traceMeshes = r.traceMeshes
 		p.bounceDirty, p.reflDirty = true, true
+		p.atmosDirty = true // the traced shafts bind the trace scene
 	}
+	p.hazeTraced = r.settings.TracedHaze && r.traceShapes > 0
 	p.bounceOn = r.settings.TracedBounce && r.traceShapes > 0
 	p.reflectTraced = r.settings.TracedReflections && r.traceShapes > 0 &&
 		r.settings.SceneReflection > 0 && r.settings.SkyReflection > 0
@@ -108,7 +112,8 @@ func (p *Post) UseShadow(r *Renderer3D) {
 // atmosInit builds the atmosphere's pipelines (NewPost calls it through mk).
 func (p *Post) atmosPipelines(mk func(label, body, entry string, format gpu.TextureFormat) *gpu.RenderPipeline) {
 	hdr := gpu.FormatRGBA16Float
-	p.plVol = mk("post-shafts", postVolWGSL, "fs", hdr)
+	p.plVol = mk("post-shafts", postVolSource(false), "fs", hdr)
+	p.plVolTraced = mk("post-shafts-traced", traceWGSL+postVolSource(true), "fs", hdr)
 	p.plVolBlurH = mk("post-shafts-blur-h", postVolBlurWGSL, "fs_h", hdr)
 	p.plVolBlurV = mk("post-shafts-blur-v", postVolBlurWGSL, "fs_v", hdr)
 	p.plAtmos = mk("post-atmosphere", postAtmosWGSL, "fs", hdr)
@@ -169,6 +174,13 @@ func (p *Post) atmosBind() {
 		vol = append(vol, tex(4+i, v))
 	}
 	p.bgVol = group(p.plVol, vol...)
+	if p.traceNodes != nil && p.plVolTraced != nil {
+		// The traced shafts read no shadow map: the trace scene instead.
+		p.bgVolTraced = group(p.plVolTraced, tex(0, p.depthView), uni(2), gpu.BindGroupEntry{Binding: 3, Buffer: lights},
+			gpu.BindGroupEntry{Binding: 10, Buffer: p.traceNodes},
+			gpu.BindGroupEntry{Binding: 11, Buffer: p.traceInsts},
+			gpu.BindGroupEntry{Binding: 13, Buffer: p.traceTris})
+	}
 	p.bgVolBlur[0] = group(p.plVolBlurH, tex(0, p.depthView), tex(1, p.vol[0].view), uni(2))
 	p.bgVolBlur[1] = group(p.plVolBlurV, tex(0, p.depthView), tex(1, p.vol[1].view), uni(2))
 	skyMap := p.skyView
@@ -232,6 +244,16 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 	if ok && p.Projection[0] != 0 {
 		u.Rain.X = a.Rain
 	}
+	plVol, bgVol := p.plVol, p.bgVol
+	if shafts && p.hazeTraced && p.bgVolTraced != nil {
+		plVol, bgVol = p.plVolTraced, p.bgVolTraced
+		if p.Settings.Temporal > 0 {
+			// The march's jitter changes every frame, for the temporal
+			// filter to average: the traced march takes fewer looks.
+			p.hazeFrame = p.hazeFrame%64 + 1
+			u.Rain.W = float32(p.hazeFrame)
+		}
+	}
 	p.queue.WriteBuffer(p.atmosUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 
 	pass := func(view *gpu.TextureView, pl *gpu.RenderPipeline, bg *gpu.BindGroup, clear gpu.Color) {
@@ -243,7 +265,7 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 	}
 	clear := gpu.Color{A: 1} // no in-scatter, full transmittance
 	if shafts {
-		pass(p.vol[0].view, p.plVol, p.bgVol, clear)
+		pass(p.vol[0].view, plVol, bgVol, clear)
 		pass(p.vol[1].view, p.plVolBlurH, p.bgVolBlur[0], clear)
 		pass(p.vol[0].view, p.plVolBlurV, p.bgVolBlur[1], clear)
 	}
@@ -252,7 +274,7 @@ func (p *Post) atmosRender(enc *gpu.CommandEncoder) {
 }
 
 func (p *Post) atmosReleaseBinds() {
-	for _, g := range []**gpu.BindGroup{&p.bgVol, &p.bgVolBlur[0], &p.bgVolBlur[1], &p.bgAtmos} {
+	for _, g := range []**gpu.BindGroup{&p.bgVol, &p.bgVolTraced, &p.bgVolBlur[0], &p.bgVolBlur[1], &p.bgAtmos} {
 		if *g != nil {
 			(*g).Release()
 			*g = nil
@@ -270,7 +292,7 @@ func (p *Post) atmosReleaseTargets() {
 func (p *Post) atmosRelease() {
 	p.atmosReleaseTargets()
 	p.noShadow.release()
-	for _, pl := range []**gpu.RenderPipeline{&p.plVol, &p.plVolBlurH, &p.plVolBlurV, &p.plAtmos} {
+	for _, pl := range []**gpu.RenderPipeline{&p.plVol, &p.plVolTraced, &p.plVolBlurH, &p.plVolBlurV, &p.plAtmos} {
 		if *pl != nil {
 			(*pl).Release()
 			*pl = nil
@@ -302,7 +324,7 @@ struct AtmU {
     horizon : vec4f,   // rgb, w max march distance
     proj : vec4f,      // projection x, y scales; depth terms [10], [14]
     lamps : vec4f,     // x light count, y how strongly lamps light the air, z 1 = trace reflections
-    rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced
+    rain : vec4f,      // x how hard it rains, y time, z 1 when reflections were also traced, w the march's noise frame
     rain_vp : mat4x4f, // the sky map's view-projection (zero: none)
 };
 fn view_dist(d : f32) -> f32 { return A.proj.w / (d + A.proj.z); }
@@ -338,6 +360,39 @@ fn sky_color(rd : vec3f) -> vec3f {
     return c;
 }
 `
+
+// postVolSource is the light shafts' shader: by the shadow maps, or (traced,
+// after traceWGSL) by rays through the trace scene.
+func postVolSource(traced bool) string {
+	sun, lamp := postVolSunMap, postVolLampMap
+	if traced {
+		sun, lamp = postVolSunTraced, postVolLampTraced
+	}
+	src := strings.Replace(strings.Replace(postVolWGSL, "/*SUN*/", sun, 1), "/*LAMP*/", lamp, 1)
+	step := "(i & 1) == 0"
+	if traced {
+		step = "(i + fr) % VOL_LAMP_EVERY == 0"
+	}
+	return strings.Replace(src, "/*LAMPSTEP*/", step, 1)
+}
+
+// What a point of air asks about the sun and about a lamp, in the two ways.
+// The traced march asks the sun on every other step and holds the answer
+// between (as the lamps are read): the blur after the pass, and the
+// temporal filter where it is on, hide the difference.
+const (
+	postVolSunMap    = `if (A.sun_dir.w > 0.5) { lit = sun_vis(p); }`
+	postVolSunTraced = `if ((i + fr) % VOL_SUN_EVERY == 0 && A.sun.r + A.sun.g + A.sun.b > 0.001) {
+            held = select(1.0, 0.0, trace_any(p, A.sun_dir.xyz, 0.02, 200.0));
+        }
+        lit = held;`
+	postVolLampMap = `if (att > 0.0 && li.params.y > 0.5) {
+            att = att * spot_vis(i32(li.params.y) - 1, p); // what stands under the lamp cuts its beam
+        }`
+	postVolLampTraced = `if (att > 0.002 && trace_any(p, dv / dist, 0.02, dist - 0.3)) {
+            att = 0.0; // something stands between this air and the lamp
+        }`
+)
 
 // postVolWGSL: the light shafts, at half resolution. Output: rgb the light
 // scattered toward the eye, a what is left of the light behind it.
@@ -377,6 +432,8 @@ fn spot_vis(slot : i32, p : vec3f) -> f32 {
     return step(q.z - 0.00003, d);
 }
 const VOL_STEPS = 20;
+const VOL_SUN_EVERY = 5;  // the traced march asks the sun on one step in this many
+const VOL_LAMP_EVERY = 4; // and the lamps on one in this many
 // The lamps' light reaching a point of air: the surface shader's falloff
 // and cone, scattered evenly in all directions.
 fn lamp_light(p : vec3f) -> vec3f {
@@ -397,9 +454,7 @@ fn lamp_light(p : vec3f) -> vec3f {
         if (li.color.w > 0.5) {
             att = att * smoothstep(li.dir_cos.w, li.params.x, cd);
         }
-        if (att > 0.0 && li.params.y > 0.5) {
-            att = att * spot_vis(i32(li.params.y) - 1, p); // what stands under the lamp cuts its beam
-        }
+        /*LAMP*/
         sum += li.color.rgb * att;
     }
     return sum * (A.lamps.y / 12.566371);
@@ -432,25 +487,27 @@ fn sun_vis(p : vec3f) -> f32 {
     // Two lobes: a tight forward one (the glow looking toward the sun) and
     // a broad one, so shafts seen from the side still read.
     let ph = min(hg(mu, 0.76) * 0.6 + hg(mu, 0.2) * 0.4, 1.2);
-    let jitter = ign(in.pos.xy);
+    let jitter = fract(ign(in.pos.xy) + A.rain.w * 0.61803399);
     var acc = vec3f(0.0);
     var T = 1.0;
     var t0 = 0.0;
     var lamp = vec3f(0.0);
+    var held = 1.0; // the last answer about the sun (the traced march)
+    let fr = i32(A.rain.w);
     for (var i = 0; i < VOL_STEPS; i++) {
         let f = (f32(i) + 1.0) / f32(VOL_STEPS);
         let t1 = march * f * (0.3 + 0.7 * f);    // denser steps near the eye
         let ds = t1 - t0;
         let p = A.cam.xyz + rd * (t0 + ds * jitter);
         var lit = 1.0;
-        if (A.sun_dir.w > 0.5) { lit = sun_vis(p); }
+        /*SUN*/
         let ext = sigma * shape(p.y);
         let Ti = exp(-ext * ds);
         var src = A.sun.rgb * (ph * lit) + A.amb.rgb * (0.35 + 0.65 * lit);
         // The lamps are the march's dearest term (every light, every step):
         // they are read on every other step and held for the one between,
         // which the blur after this pass hides.
-        if (A.lamps.x > 0.5 && (i & 1) == 0) { lamp = lamp_light(p); }
+        if (A.lamps.x > 0.5 && /*LAMPSTEP*/) { lamp = lamp_light(p); }
         src += lamp;
         acc += T * src * (1.0 - Ti);
         T *= Ti;

@@ -118,6 +118,12 @@ type FrameSettings struct {
 	// it meets in its plain colour (TraceInstance.Color), lit by the sun and
 	// the sky. Half resolution, mirror pixels only.
 	TracedReflections bool
+	// TracedHaze makes the light shafts and the lamps' beams in the haze
+	// (Atmosphere.Shafts, Atmosphere.Lamps) ask the trace scene, not the
+	// shadow maps, what stands between a point of air and its light: shafts
+	// at any distance (the sun's map covers only the ground near the eye),
+	// and a beam cut for every lamp, not only the MaxSpotShadows with a map.
+	TracedHaze bool
 	// TracedBounce adds one bounce of the sun's light: for each surface on
 	// screen one ray goes into the hemisphere over it, and if it meets a
 	// shape the sun (or the sky) lights, that shape's colour times that

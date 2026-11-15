@@ -201,6 +201,10 @@ type Post struct {
 	noShadow                               postTex
 	atmosUni                               *gpu.Buffer
 	plVol, plVolBlurH, plVolBlurV, plAtmos *gpu.RenderPipeline
+	plVolTraced                            *gpu.RenderPipeline // the shafts by rays (FrameSettings.TracedHaze)
+	bgVolTraced                            *gpu.BindGroup
+	hazeTraced                             bool
+	hazeFrame                              int
 	bgVol, bgAtmos                         *gpu.BindGroup
 	bgVolBlur                              [2]*gpu.BindGroup
 	bgAOBlur                               [2]*gpu.BindGroup // H: ao[0]→ao[1], V: ao[1]→ao[0]
