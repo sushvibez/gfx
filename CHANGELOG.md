@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed: switching the temporal filter on showed a cross-hatch for a second. A young history is now a running mean (the n-th frame counts 1/n), and traced rays draw white noise per frame in place of the lattice dither.
+
 - Traced lighting, step 4: `FrameSettings.TracedLightShadows` gives every point and spot light a traced shadow (a ray from the surface to each light that reaches it), not only the `MaxSpotShadows` with a map.
 
 - Traced lighting, step 3: a temporal filter. `PostSettings.Temporal` averages the lit picture over the frames before it (depth reprojection, clamped to the pixel's neighbourhood), and `FrameSettings.Temporal` makes the renderer's per-pixel noise change every frame so there is something to average; traced occlusion then sends one ray a pixel.

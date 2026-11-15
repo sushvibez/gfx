@@ -120,6 +120,15 @@ func (p *Post) temporalRender(enc *gpu.CommandEncoder) {
 		return
 	}
 	p.temporalBind()
+	// A young history is a plain running mean: the n-th frame counts for
+	// 1/n, so the grain falls as fast as it can from the first frame on
+	// (the full weight from the start would hold the first, noisiest frame
+	// for twenty more).
+	if !p.histValid {
+		p.histAge = 0
+	}
+	weight = min(weight, float32(p.histAge)/float32(p.histAge+1))
+	p.histAge++
 	u := temporalUniforms{Reproj: p.prevVP.Mul(inv), P: core.V4(weight, 0, 0, 0)}
 	if p.histValid {
 		u.P.Y = 1

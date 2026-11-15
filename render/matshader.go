@@ -124,6 +124,20 @@ fn sh_ign(p : vec2f) -> f32 {
     let q = p + 5.588238 * frame.cam_pos.w;
     return fract(52.9829189 * fract(dot(q, vec2f(0.06711056, 0.00583715))));
 }
+// A random number for a traced ray: with a temporal filter behind it, white
+// noise that is new every frame (a lattice pattern would show as a
+// cross-hatch until the filter had seen enough frames; this shows as fine
+// grain); without one, the still dither pattern.
+fn tr_rand(p : vec2f, k : f32) -> f32 {
+    if (frame.cam_pos.w <= 0.0) {
+        return sh_ign(p + vec2f(k * 17.0, k * 5.0));
+    }
+    var x = u32(p.x) * 1973u + u32(p.y) * 9277u + u32(k) * 26699u + u32(frame.cam_pos.w) * 7919u;
+    x = (x ^ (x >> 15u)) * 2246822519u;
+    x = (x ^ (x >> 13u)) * 3266489917u;
+    x = x ^ (x >> 16u);
+    return f32(x) / 4294967296.0;
+}
 // Vogel disc: n points spread evenly over the unit disc, rotated by phi.
 fn sh_vogel(i : i32, n : i32, phi : f32) -> vec2f {
     let r = sqrt((f32(i) + 0.5) / f32(n));
@@ -231,7 +245,7 @@ fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
         var l = normalize(-frame.light_dir.xyz);
         if (frame.rt.w > 0.0) {
             let side = normalize(cross(l, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(l.y) > 0.9)));
-            let o = sh_vogel(i32(sh_ign(frag) * 16.0), 16, sh_ign(frag.yx + 7.0) * 6.2831853) * frame.rt.w;
+            let o = sh_vogel(i32(tr_rand(frag, 1.0) * 16.0), 16, tr_rand(frag, 2.0) * 6.2831853) * frame.rt.w;
             l = normalize(l + side * o.x + cross(l, side) * o.y);
         }
         return select(1.0, 0.0, trace_any(world + n * 0.03, l, 0.01, 2000.0));
@@ -611,8 +625,8 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         // One ray when a temporal filter will average the frames, else three.
         let rays = select(3, 1, frame.cam_pos.w > 0.0);
         for (var k = 0; k < rays; k++) {
-            let a = sh_ign(in.pos.xy + vec2f(f32(k) * 17.0, f32(k) * 5.0)) * 6.2831853;
-            let z = sh_ign(in.pos.yx + vec2f(f32(k) * 3.0, 11.0)) * 2.0 - 1.0;
+            let a = tr_rand(in.pos.xy, f32(k) * 2.0 + 3.0) * 6.2831853;
+            let z = tr_rand(in.pos.xy, f32(k) * 2.0 + 4.0) * 2.0 - 1.0;
             let rr = sqrt(max(1.0 - z * z, 0.0));
             let dir = normalize(n + vec3f(rr * cos(a), rr * sin(a), z) * 0.98);
             open += select(1.0, 0.0, trace_any(in.world + n * 0.03, dir, 0.01, frame.rt.z));
@@ -695,7 +709,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
                 var to = dv;
                 if (frame.cam_pos.w > 0.0) {
                     let side = normalize(cross(ld, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(ld.y) > 0.9)));
-                    let o = sh_vogel(i32(sh_ign(in.pos.xy + f32(i) * 3.0) * 16.0), 16, sh_ign(in.pos.yx + 9.0) * 6.2831853) * 0.15;
+                    let o = sh_vogel(i32(tr_rand(in.pos.xy, f32(i) * 2.0 + 20.0) * 16.0), 16, tr_rand(in.pos.xy, f32(i) * 2.0 + 21.0) * 6.2831853) * 0.15;
                     to = dv + side * o.x + cross(ld, side) * o.y;
                 }
                 let tl = length(to);

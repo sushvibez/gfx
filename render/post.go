@@ -166,6 +166,7 @@ type Post struct {
 	temporalUni                            *gpu.Buffer
 	prevVP                                 core.Mat4
 	histValid                              bool
+	histAge                                int // frames averaged since the history began
 	temporalDirty                          bool
 	tframe                                 int
 	rainVP                                 core.Mat4

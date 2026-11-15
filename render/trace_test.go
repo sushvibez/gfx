@@ -257,10 +257,15 @@ func TestPostTemporalSettlesGrain(t *testing.T) {
 		return mean, math.Sqrt(max(sq/n-mean*mean, 0))
 	}
 	_, g1 := shot(1)
+	_, g4 := shot(4)
 	m24, g24 := shot(24)
 	m96, _ := shot(96)
 	if g1 < 6 {
 		t.Fatalf("one frame is not grainy (deviation %.1f): the test measures nothing", g1)
+	}
+	// The first frames count equally, so four already halve the grain.
+	if g4 > g1*0.62 {
+		t.Fatalf("the grain lingers: deviation %.1f after 4 frames, %.1f after one", g4, g1)
 	}
 	if g24 > g1*0.5 {
 		t.Fatalf("the grain did not settle: deviation %.1f after 24 frames, %.1f after one", g24, g1)
