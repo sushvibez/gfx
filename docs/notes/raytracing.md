@@ -42,12 +42,38 @@ triangle meshes are not measured yet.
 | [x] | 4. Traced shadows for the lamps: `FrameSettings.TracedLightShadows` sends a ray to every point and spot light that reaches a surface (to a small disc at the light when the temporal filter is on) | every light shadowed, not four | `TestTracedLightShadow`; Harbor night at 1600×900 in one run: raster 58 ms, traced 76 ms (38 and 67 at 65 % scale) |
 | [x] | 5. One bounce of diffuse light: `FrameSettings.TracedBounce`. Post's bounce pass (`post_bounce.go`) traces it at a quarter of the resolution from the depth buffer (`trace_nearest`, `TraceInstance.Color`); the material shader adds it a frame later. It was first written as rays in the material shader, where in Harbor's scene on Intel integrated graphics (D3D12) it lost the GPU device most runs: bisected to the nearest-hit traversal in that shader (with `trace_any` standing in the same frames ran clean; fewer rays did not help, so not load); cause not found. As its own pass it has not lost the device in any run | colour bleeding, light under overhangs | `TestTracedBounce`; Harbor golden at 1334×750 (the traced pixel budget): 32 ms a frame with it, 31 ms without |
 | [x] | 6. Traced reflections: `FrameSettings.TracedReflections`. Post's reflection pass (`post_reflect.go`, half resolution, mirror pixels only) traces the mirrored ray through the trace scene; the combine uses it wherever the screen-space ray found nothing (off screen, hidden). What it shows is the shape's plain colour under the sun and sky, not its material or the lamps. The combine now takes the sky's reflection out with a floor at zero and adds what was met, for both kinds of reflection | puddles and water that mirror what is off screen | `TestTracedReflection`; Harbor traced rain and golden-by-the-ship ran without device loss |
-| [ ] | 7. Triangle meshes in the trace scene (a BVH per mesh under the instance BVH) | models and characters cast and receive | measured rays a second |
+| [x] | 7. Triangle meshes in the trace scene: `TraceMesh` and `TraceInstance.Mesh`. Each distinct mesh gets its own BVH over its triangles (built once however many instances use it), reached from the instance's leaf in the mesh's own space; triangles are two-sided. The passes that need the nearest hit are built twice, with and without the mesh traversal, and the scene picks | models and characters cast and receive | `TestTracedMeshShadow`, `TestTraceBuild`. Harbor has no meshes and costs the same with the code in (golden traced at 1334×750: 33 ms a frame). Rays a second through a real model: not measured yet |
 | [ ] | 8. Traced haze: light shafts and lamp beams from rays, not shadow maps | shafts at any distance | Harbor golden |
 | [ ] | 9. A reference path tracer: progressive, everything traced | ground truth to compare the rest against | converged picture |
 | [ ] | 10. Hardware ray queries on native, when wgpu-native exposes them | the same picture, several times the rays | measured |
 
+## The device lost on a first run (2026-11-15, found and fixed)
+
+The device losses recorded in rows 5 and 6 had one cause. On Intel
+integrated graphics (D3D12), the first run of a newly built shader that
+walked the hierarchy for the nearest hit (`trace_nearest`: the bounce and
+reflection passes, and before them the material shader) hung the GPU:
+Windows logged `LiveKernelEvent 141` (a GPU engine that stopped answering),
+reset the driver, and the device was gone by the third frame. The second
+run of the same build never failed, which is why it looked like chance.
+Making a shader new to the driver (changing any constant in it) reproduced
+it every time, at any resolution, with any one of the passes on.
+
+What did not help: tiny first frames, waiting for each early frame, a
+pause, shorter rays, leaving the mesh code out. What did: bounding the
+walk. `trace_nearest`, `trace_any` and `trace_mesh` now stop after
+`TRACE_STEPS` nodes and read at most `TRACE_LEAF` entries of a leaf, bounds
+a walk over a well-formed hierarchy never reaches. Five cold runs in a row
+then survived (golden, night, rain; with and without reflections) where
+every one before had not. Why the unbounded loop ran away only on a first
+run is not known: the same shader on the same data ends on every later
+run, so the driver's first compilation of it is the suspect, and that is
+a guess.
+
 ## Rules
+
+- A loop in a shader has a bound that does not depend on the data it
+  reads (see above).
 
 - Each row lands with its own test and a measured cost in this note.
 - A traced term replaces its rasterised twin only when switched on; both

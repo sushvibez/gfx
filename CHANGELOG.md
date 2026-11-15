@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed: the GPU device lost on the first run of a new build with traced bounce or reflections on (Intel integrated graphics, D3D12). The tracer's walks of the hierarchy are now bounded (`TRACE_STEPS`, `TRACE_LEAF`); the unbounded nearest-hit walk hung the GPU the first time a newly built shader ran. `docs/notes/raytracing.md` has the account.
+- Traced lighting, step 7: triangle meshes in the trace scene (`TraceMesh`, `TraceInstance.Mesh`): a BVH per distinct mesh under the instance BVH, so models cast traced shadows, occlude and are met by bounce and reflection rays.
+- Second pass over the code review (`review.md`):
+  - glTF: a scene index out of range (negative included) and a node hierarchy that is not a finite tree (a cycle, a node with two parents, a child or root that names no node, deeper than `gltf.MaxNodeDepth`) are errors from `Parse`; `Document.CheckHierarchy` is the check, and `Renderer3D.BuildModel` runs it on documents built by hand.
+  - `core`: a binding that panics on its first evaluation stays bound and is retried by the next `Get` or flush; `Signal.Emit` ends its emit when a slot panics; `Loop.Step` keeps the callbacks queued behind one that panics, for the next step.
+
 - Fixes from a code review (`review.md`, 2026-11-15), each reproduced by a test first:
   - `audio` on Windows never played: `waveOutPrepareHeader` cleared the flag that marked a buffer free, so the first write waited for ever (and `Device.Close` with it). Teardown now resets the device, unprepares and closes with checked results; `Device.Close` is repeatable.
   - A looping voice on an empty WAV, or a WAV with half a stereo frame, crashed the mixer; finished voices were kept alive by the mixer's slice tail.

@@ -83,7 +83,7 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		}
 		p.shadowView, p.lightBuf, p.lightCount, p.reflect = nil, nil, 0, false
 		p.skyView, p.rainVP = nil, core.Mat4{}
-		p.traceNodes, p.traceInsts, p.bounceOn, p.reflectTraced = nil, nil, false, false
+		p.traceNodes, p.traceInsts, p.traceTris, p.bounceOn, p.reflectTraced = nil, nil, nil, false, false
 		p.spotViews = [MaxSpotShadows]*gpu.TextureView{}
 		return
 	}
@@ -92,8 +92,9 @@ func (p *Post) UseShadow(r *Renderer3D) {
 		p.atmosDirty = true
 	}
 	p.rainVP = r.lastRainVP
-	if p.traceNodes != r.traceNodes || p.traceInsts != r.traceInsts {
-		p.traceNodes, p.traceInsts = r.traceNodes, r.traceInsts
+	if p.traceNodes != r.traceNodes || p.traceInsts != r.traceInsts || p.traceTris != r.traceTris {
+		p.traceNodes, p.traceInsts, p.traceTris = r.traceNodes, r.traceInsts, r.traceTris
+		p.traceMeshes = r.traceMeshes
 		p.bounceDirty, p.reflDirty = true, true
 	}
 	p.bounceOn = r.settings.TracedBounce && r.traceShapes > 0

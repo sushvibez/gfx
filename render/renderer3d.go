@@ -118,6 +118,8 @@ type Renderer3D struct {
 	skyOn    bool
 	// The trace scene (trace.go): the BVH and its shapes, for traced light.
 	traceNodes, traceInsts *gpu.Buffer
+	traceTris              *gpu.Buffer // the trace scene's mesh triangles
+	traceMeshes            bool        // the trace scene holds meshes
 	traceShapes            int
 	noiseFrame             int              // FrameSettings.Temporal's counter
 	renderW, renderH       int              // the target's size, when told (SetRenderSize)
@@ -623,7 +625,8 @@ func (r *Renderer3D) matFrameEntries() []gpu.BindGroupEntry {
 	return append(e, gpu.BindGroupEntry{Binding: 9, TextureView: r.skyView},
 		gpu.BindGroupEntry{Binding: 10, Buffer: r.traceNodes},
 		gpu.BindGroupEntry{Binding: 11, Buffer: r.traceInsts},
-		gpu.BindGroupEntry{Binding: 12, TextureView: bounce})
+		gpu.BindGroupEntry{Binding: 12, TextureView: bounce},
+		gpu.BindGroupEntry{Binding: 13, Buffer: r.traceTris})
 }
 
 func (r *Renderer3D) growDraws(size int) {
@@ -700,6 +703,7 @@ func (r *Renderer3D) Release() {
 	r.releaseRain()
 	rel(r.traceNodes)
 	rel(r.traceInsts)
+	rel(r.traceTris)
 	rel(r.skyBind)
 	rel(r.skyFrame)
 	rel(r.skyView)

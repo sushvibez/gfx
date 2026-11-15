@@ -2,6 +2,7 @@ package render
 
 import (
 	"sort"
+	"strings"
 	"unsafe"
 
 	"github.com/sushvibez/gfx/core"
@@ -9,9 +10,12 @@ import (
 )
 
 // Traced lighting (docs/notes/raytracing.md). The scene a ray can hit is a
-// list of simple shapes under a bounding volume hierarchy, built here on
-// the CPU and read by the shaders from two storage buffers; the traversal
-// itself is WGSL (traceWGSL), so it runs wherever the material shader does.
+// list of shapes under a bounding volume hierarchy, built here on the CPU
+// and read by the shaders from storage buffers; the traversal itself is
+// WGSL (traceWGSL), so it runs wherever the material shader does. A shape
+// is a simple solid (a box, a cylinder, a wedge: exact, and the cheapest
+// there is) or a triangle mesh, which has a hierarchy of its own over its
+// triangles, shared by every instance of it.
 
 // TraceShape is what a trace instance is: the unit shape its Model places.
 type TraceShape int
@@ -20,6 +24,7 @@ const (
 	TraceBox      TraceShape = iota // the unit cube, -0.5…0.5 (CubeMesh)
 	TraceCylinder                   // radius 1, height 1 about the origin, axis Y (CylinderMesh)
 	TraceWedge                      // the unit cube cut to a prism: full width in Z at x = -0.5, a point at x = +0.5
+	TraceMesh                       // the triangles of TraceInstance.Mesh
 )
 
 // TraceInstance is one shape rays can hit.
@@ -29,11 +34,15 @@ type TraceInstance struct {
 	// Color is the shape's diffuse colour (linear), for the light it
 	// bounces (FrameSettings.TracedBounce). Zero bounces none.
 	Color [3]float32
+	// Mesh is the geometry of a TraceMesh shape, in the space Model places
+	// (the mesh a draw of it would use). Triangles are two-sided to a ray.
+	Mesh *Mesh
 }
 
 // traceNode is a BVH node as the shader reads it (32 bytes): a box, and
 // either two children (count 0: left is the first, the second follows it)
-// or a run of instances (left is the first, count how many).
+// or a run of leaves (left is the first, count how many): instances in the
+// scene's hierarchy, triangles in a mesh's.
 type traceNode struct {
 	min   [3]float32
 	left  uint32
@@ -41,11 +50,19 @@ type traceNode struct {
 	count uint32
 }
 
-// traceInst is a shape as the shader reads it (64 bytes): the rows of the
-// matrix that takes the world into its unit space, and its shape.
+// traceInst is a shape as the shader reads it (80 bytes): the rows of the
+// matrix that takes the world into its own space, its shape and colour,
+// and for a mesh the root of its hierarchy.
 type traceInst struct {
 	rows [3][4]float32
 	meta [4]float32 // x shape, yzw its diffuse colour
+	mesh [4]float32 // x the mesh hierarchy's root node
+}
+
+// traceTri is a triangle as the shader reads it (48 bytes): a corner and
+// the two edges from it.
+type traceTri struct {
+	v0, e1, e2 [4]float32
 }
 
 type traceBounds struct{ min, max core.Vec3 }
@@ -59,43 +76,17 @@ func (b traceBounds) grow(p core.Vec3) traceBounds {
 
 var traceEmpty = traceBounds{core.V3(1e30, 1e30, 1e30), core.V3(-1e30, -1e30, -1e30)}
 
-// buildTrace turns instances into the shader's two arrays: the BVH (split
-// at the median of the longest axis of the centres until four or fewer
-// shapes are left) and the instances in leaf order.
-func buildTrace(insts []TraceInstance) ([]traceNode, []traceInst) {
-	var gi []traceInst
-	var bs []traceBounds
-	for _, in := range insts {
-		inv, ok := in.Model.Inverse()
-		if !ok {
-			continue // a shape with no volume
-		}
-		var g traceInst
-		for r := 0; r < 3; r++ {
-			g.rows[r] = [4]float32{inv[r], inv[4+r], inv[8+r], inv[12+r]}
-		}
-		g.meta = [4]float32{float32(in.Shape), in.Color[0], in.Color[1], in.Color[2]}
-		// The world box of the unit shape's own box.
-		hx := float32(0.5)
-		if in.Shape == TraceCylinder {
-			hx = 1
-		}
-		b := traceEmpty
-		for c := 0; c < 8; c++ {
-			b = b.grow(in.Model.MulPoint(core.V3((float32(c&1)*2-1)*hx, float32(c>>1&1)-0.5, (float32(c>>2&1)*2-1)*hx)))
-		}
-		gi = append(gi, g)
-		bs = append(bs, b)
-	}
-	if len(gi) == 0 {
-		return nil, nil
-	}
-	order := make([]int, len(gi))
+// traceBVH builds a hierarchy over boxes: split at the median of the
+// longest axis of the centres until four or fewer are left. It returns the
+// nodes (the root first; indices are into this slice, and a leaf's left is
+// a position in order) and the order the leaves must be stored in.
+func traceBVH(bs []traceBounds) ([]traceNode, []int) {
+	order := make([]int, len(bs))
 	for i := range order {
 		order[i] = i
 	}
 	centre := func(i int) core.Vec3 { return bs[i].min.Add(bs[i].max).Scale(0.5) }
-	nodes := make([]traceNode, 1, 2*len(gi))
+	nodes := make([]traceNode, 1, 2*len(bs)+1)
 	var rec func(n, lo, hi int)
 	rec = func(n, lo, hi int) {
 		bb, cb := traceEmpty, traceEmpty
@@ -127,36 +118,145 @@ func buildTrace(insts []TraceInstance) ([]traceNode, []traceInst) {
 		rec(l, lo, mid)
 		rec(l+1, mid, hi)
 	}
-	rec(0, 0, len(gi))
+	rec(0, 0, len(bs))
+	return nodes, order
+}
+
+// buildTrace turns instances into the shader's arrays: the scene's
+// hierarchy first, then each distinct mesh's hierarchy after it in the same
+// node array; the instances in leaf order; and the meshes' triangles in
+// their leaf order.
+func buildTrace(insts []TraceInstance) ([]traceNode, []traceInst, []traceTri) {
+	var gi []traceInst
+	var bs []traceBounds
+	var meshOf []*Mesh // per kept instance: its mesh, or nil
+	for _, in := range insts {
+		inv, ok := in.Model.Inverse()
+		if !ok {
+			continue // a shape with no volume
+		}
+		// The shape's own box, to place in the world.
+		lo, hi := core.V3(-0.5, -0.5, -0.5), core.V3(0.5, 0.5, 0.5)
+		var mesh *Mesh
+		switch in.Shape {
+		case TraceCylinder:
+			lo, hi = core.V3(-1, -0.5, -1), core.V3(1, 0.5, 1)
+		case TraceMesh:
+			if in.Mesh == nil || in.Mesh.lines || len(in.Mesh.idx) < 3 {
+				continue // nothing a ray can hit
+			}
+			mesh = in.Mesh
+			lo, hi = mesh.bmin, mesh.bmax
+		}
+		var g traceInst
+		for r := 0; r < 3; r++ {
+			g.rows[r] = [4]float32{inv[r], inv[4+r], inv[8+r], inv[12+r]}
+		}
+		g.meta = [4]float32{float32(in.Shape), in.Color[0], in.Color[1], in.Color[2]}
+		b := traceEmpty
+		for c := 0; c < 8; c++ {
+			p := core.V3(lo.X, lo.Y, lo.Z)
+			if c&1 != 0 {
+				p.X = hi.X
+			}
+			if c&2 != 0 {
+				p.Y = hi.Y
+			}
+			if c&4 != 0 {
+				p.Z = hi.Z
+			}
+			b = b.grow(in.Model.MulPoint(p))
+		}
+		gi = append(gi, g)
+		bs = append(bs, b)
+		meshOf = append(meshOf, mesh)
+	}
+	if len(gi) == 0 {
+		return nil, nil, nil
+	}
+	nodes, order := traceBVH(bs)
+	// Each mesh once: its triangles and its hierarchy, placed after what is
+	// already there (child and triangle indices shifted to match).
+	var tris []traceTri
+	roots := map[*Mesh]uint32{}
+	for _, m := range meshOf {
+		if m == nil {
+			continue
+		}
+		if _, done := roots[m]; done {
+			continue
+		}
+		n := len(m.idx) / 3
+		tb := make([]traceBounds, n)
+		for t := 0; t < n; t++ {
+			b := traceEmpty
+			for k := 0; k < 3; k++ {
+				b = b.grow(m.verts[m.idx[t*3+k]].Pos)
+			}
+			tb[t] = b
+		}
+		mn, mo := traceBVH(tb)
+		nodeBase, triBase := uint32(len(nodes)), uint32(len(tris))
+		for i := range mn {
+			if mn[i].count > 0 {
+				mn[i].left += triBase
+			} else {
+				mn[i].left += nodeBase
+			}
+		}
+		roots[m] = nodeBase
+		nodes = append(nodes, mn...)
+		for _, t := range mo {
+			a, b, c := m.verts[m.idx[t*3]].Pos, m.verts[m.idx[t*3+1]].Pos, m.verts[m.idx[t*3+2]].Pos
+			e1, e2 := b.Sub(a), c.Sub(a)
+			tris = append(tris, traceTri{
+				v0: [4]float32{a.X, a.Y, a.Z, 0},
+				e1: [4]float32{e1.X, e1.Y, e1.Z, 0},
+				e2: [4]float32{e2.X, e2.Y, e2.Z, 0},
+			})
+		}
+	}
 	sorted := make([]traceInst, len(gi))
 	for k, i := range order {
 		sorted[k] = gi[i]
+		if m := meshOf[i]; m != nil {
+			sorted[k].mesh[0] = float32(roots[m])
+		}
 	}
-	return nodes, sorted
+	return nodes, sorted, tris
 }
 
 // SetTraceScene gives the renderer the shapes rays can hit: what casts the
-// traced shadows FrameSettings.TracedShadows asks for. The hierarchy is
-// built here and now, so call it when the scene is made and again when it
-// changes, not every frame; nil or empty clears it (nothing is then in
-// shadow). The shapes need not be the ones drawn: a stand-in box for a
-// detailed model is the usual trade.
+// traced shadows FrameSettings.TracedShadows asks for, and what the other
+// traced terms meet. The hierarchy is built here and now, so call it when
+// the scene is made and again when it changes, not every frame; nil or
+// empty clears it (nothing is then in shadow). The shapes need not be the
+// ones drawn: a stand-in box for a detailed model is the usual trade, and
+// far cheaper to trace than its triangles.
 func (r *Renderer3D) SetTraceScene(insts []TraceInstance) {
-	nodes, gi := buildTrace(insts)
+	nodes, gi, tris := buildTrace(insts)
 	if len(nodes) == 0 {
 		// A root no ray can enter (its box is inside out).
 		nodes = []traceNode{{min: [3]float32{1, 1, 1}, max: [3]float32{-1, -1, -1}, count: 1}}
 		gi = []traceInst{{}}
 	}
+	if len(tris) == 0 {
+		tris = []traceTri{{}} // a buffer to bind
+	}
 	rel(r.traceNodes)
 	rel(r.traceInsts)
+	rel(r.traceTris)
 	nb := unsafe.Slice((*byte)(unsafe.Pointer(&nodes[0])), len(nodes)*int(unsafe.Sizeof(nodes[0])))
 	ib := unsafe.Slice((*byte)(unsafe.Pointer(&gi[0])), len(gi)*int(unsafe.Sizeof(gi[0])))
+	tb := unsafe.Slice((*byte)(unsafe.Pointer(&tris[0])), len(tris)*int(unsafe.Sizeof(tris[0])))
 	r.traceNodes = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, len(nb))
 	r.traceInsts = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, len(ib))
+	r.traceTris = r.device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, len(tb))
 	r.queue.WriteBuffer(r.traceNodes, 0, nb)
 	r.queue.WriteBuffer(r.traceInsts, 0, ib)
+	r.queue.WriteBuffer(r.traceTris, 0, tb)
 	r.traceShapes = len(insts)
+	r.traceMeshes = len(tris) > 1 || tris[0] != (traceTri{})
 	if r.mdraws != nil {
 		r.growMDraws(r.mdraws.Size()) // the material bind groups hold the buffers
 	}
@@ -165,16 +265,28 @@ func (r *Renderer3D) SetTraceScene(insts []TraceInstance) {
 // TraceShapes reports how many shapes the trace scene holds.
 func (r *Renderer3D) TraceShapes() int { return r.traceShapes }
 
-// traceWGSL is the tracer the material shader carries: the two buffers
-// (bound at group 0, bindings 10 and 11) and trace_any, which says whether
+// traceWGSL is the tracer the material shader carries, and the first half
+// of what the tracing passes carry (traceNearestWGSL is the rest): the
+// three buffers (bound at group 0, bindings 10, 11 and 13) and trace_any, which says whether
 // anything stands on a ray between tmin and tmax. Every shape is convex, so
 // a hit is an interval of the ray that is not empty: the shape's own
 // interval, in its unit space, where the ray keeps its parameter.
 const traceWGSL = `
+// Every walk of the hierarchy is bounded: by nodes visited, and by shapes
+// or triangles in a leaf. A walk that ends by its own logic never reaches
+// either bound (a ray visits tens of nodes, and the builder's leaves are
+// small), but a GPU must not be handed a loop only the data ends: on Intel
+// integrated graphics (D3D12) the unbounded nearest-hit walk hung the GPU
+// on the first run of a newly built shader, every time, until the driver
+// was reset and the device lost (docs/notes/raytracing.md).
+const TRACE_STEPS = 1024;
+const TRACE_LEAF = 64u;
 struct TraceNode { mn : vec3f, left : u32, mx : vec3f, count : u32 }
-struct TraceInst { r0 : vec4f, r1 : vec4f, r2 : vec4f, info : vec4f }
+struct TraceInst { r0 : vec4f, r1 : vec4f, r2 : vec4f, info : vec4f, mesh : vec4f }
+struct TraceTri { v0 : vec4f, e1 : vec4f, e2 : vec4f }
 @group(0) @binding(10) var<storage, read> trace_nodes : array<TraceNode>;
 @group(0) @binding(11) var<storage, read> trace_insts : array<TraceInst>;
+@group(0) @binding(13) var<storage, read> trace_tris : array<TraceTri>;
 
 fn trace_slab(ro : vec3f, inv : vec3f, mn : vec3f, mx : vec3f, tmin : f32, tmax : f32) -> bool {
     let a = (mn - ro) * inv;
@@ -195,11 +307,59 @@ fn trace_clip(lo : vec3f, ld : vec3f, n : vec3f, d : f32, span : vec2f) -> vec2f
     if (denom > 0.0) { return vec2f(span.x, min(span.y, t)); }
     return vec2f(max(span.x, t), span.y);
 }
+// A ray against a mesh, in the mesh's own space (where it keeps its
+// parameter): down the mesh's hierarchy to its triangles (Möller and
+// Trumbore's test, two-sided). It returns the nearest hit's parameter in w
+// (-1 for none) and the triangle's normal in xyz; with any set it stops at
+// the first hit.
+fn trace_mesh(root : u32, lo : vec3f, ld : vec3f, tmin : f32, tmax : f32, any : bool) -> vec4f {
+    var hit = vec4f(0.0, 0.0, 0.0, -1.0);
+    var best = tmax;
+    let inv = 1.0 / ld;
+    var stack : array<u32, 24>;
+    stack[0] = root;
+    var sp = 1;
+    var steps = 0;
+    while (sp > 0 && steps < TRACE_STEPS) {
+        steps += 1;
+        sp -= 1;
+        let nd = trace_nodes[stack[sp]];
+        if (!trace_slab(lo, inv, nd.mn, nd.mx, tmin, best)) { continue; }
+        if (nd.count > 0u) {
+            for (var k = 0u; k < min(nd.count, TRACE_LEAF); k++) {
+                let tr = trace_tris[nd.left + k];
+                let pv = cross(ld, tr.e2.xyz);
+                let det = dot(tr.e1.xyz, pv);
+                if (abs(det) < 1e-12) { continue; }
+                let tv = lo - tr.v0.xyz;
+                let u = dot(tv, pv) / det;
+                if (u < 0.0 || u > 1.0) { continue; }
+                let qv = cross(tv, tr.e1.xyz);
+                let v = dot(ld, qv) / det;
+                if (v < 0.0 || u + v > 1.0) { continue; }
+                let t = dot(tr.e2.xyz, qv) / det;
+                if (t > tmin && t < best) {
+                    best = t;
+                    hit = vec4f(cross(tr.e1.xyz, tr.e2.xyz), t);
+                    if (any) { return hit; }
+                }
+            }
+        } else if (sp < 22) {
+            stack[sp] = nd.left;
+            stack[sp + 1] = nd.left + 1u;
+            sp += 2;
+        }
+    }
+    return hit;
+}
 fn trace_shape(it : TraceInst, ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> bool {
     let lo = vec3f(dot(it.r0.xyz, ro) + it.r0.w, dot(it.r1.xyz, ro) + it.r1.w, dot(it.r2.xyz, ro) + it.r2.w);
     let ld = vec3f(dot(it.r0.xyz, rd), dot(it.r1.xyz, rd), dot(it.r2.xyz, rd));
     var span = vec2f(tmin, tmax);
     let shape = u32(it.info.x);
+    if (shape == 3u) {
+        return trace_mesh(u32(it.mesh.x), lo, ld, tmin, tmax, true).w > 0.0;
+    }
     // Every shape lies between y = -0.5 and +0.5.
     span = trace_clip(lo, ld, vec3f(0.0, 1.0, 0.0), 0.5, span);
     span = trace_clip(lo, ld, vec3f(0.0, -1.0, 0.0), 0.5, span);
@@ -230,6 +390,37 @@ fn trace_shape(it : TraceInst, ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -
     }
     return span.x <= span.y;
 }
+// Whether anything stands on the ray between tmin and tmax.
+fn trace_any(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> bool {
+    let inv = 1.0 / rd;
+    var stack : array<u32, 32>;
+    stack[0] = 0u;
+    var sp = 1;
+    var steps = 0;
+    while (sp > 0 && steps < TRACE_STEPS) {
+        steps += 1;
+        sp -= 1;
+        let nd = trace_nodes[stack[sp]];
+        if (!trace_slab(ro, inv, nd.mn, nd.mx, tmin, tmax)) { continue; }
+        if (nd.count > 0u) {
+            for (var k = 0u; k < min(nd.count, TRACE_LEAF); k++) {
+                if (trace_shape(trace_insts[nd.left + k], ro, rd, tmin, tmax)) { return true; }
+            }
+        } else if (sp < 30) {
+            stack[sp] = nd.left;
+            stack[sp + 1] = nd.left + 1u;
+            sp += 2;
+        }
+    }
+    return false;
+}
+`
+
+// traceNearestBody is the nearest-hit half of the tracer, which only the
+// passes that shade what a ray meets carry (the material shader asks only
+// whether anything is in the way). /*MESH*/ stands where the mesh branch
+// goes: see traceNearestWGSL.
+const traceNearestBody = `
 // The nearest thing on a ray: where (t, or -1 for nothing before tmax), the
 // surface's normal there, and its colour. The same intervals as trace_any,
 // remembering which face each ray came in through.
@@ -257,7 +448,7 @@ fn trace_enter(it : TraceInst, ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -
     let ld = vec3f(dot(it.r0.xyz, rd), dot(it.r1.xyz, rd), dot(it.r2.xyz, rd));
     var s = TraceSpan(tmin, tmax, vec3f(0.0));
     let shape = u32(it.info.x);
-    s = trace_cut(lo, ld, vec3f(0.0, 1.0, 0.0), 0.5, s);
+/*MESH*/    s = trace_cut(lo, ld, vec3f(0.0, 1.0, 0.0), 0.5, s);
     s = trace_cut(lo, ld, vec3f(0.0, -1.0, 0.0), 0.5, s);
     if (shape == 1u) {
         let a = ld.x * ld.x + ld.z * ld.z;
@@ -300,12 +491,14 @@ fn trace_nearest(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> TraceHit {
     var stack : array<u32, 32>;
     stack[0] = 0u;
     var sp = 1;
-    while (sp > 0) {
+    var steps = 0;
+    while (sp > 0 && steps < TRACE_STEPS) {
+        steps += 1;
         sp -= 1;
         let nd = trace_nodes[stack[sp]];
         if (!trace_slab(ro, inv, nd.mn, nd.mx, tmin, best)) { continue; }
         if (nd.count > 0u) {
-            for (var k = 0u; k < nd.count; k++) {
+            for (var k = 0u; k < min(nd.count, TRACE_LEAF); k++) {
                 let it = trace_insts[nd.left + k];
                 let s = trace_enter(it, ro, rd, tmin, best);
                 // A ray that starts inside a shape came in through no face.
@@ -324,26 +517,31 @@ fn trace_nearest(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> TraceHit {
     }
     return hit;
 }
-// Whether anything stands on the ray between tmin and tmax.
-fn trace_any(ro : vec3f, rd : vec3f, tmin : f32, tmax : f32) -> bool {
-    let inv = 1.0 / rd;
-    var stack : array<u32, 32>;
-    stack[0] = 0u;
-    var sp = 1;
-    while (sp > 0) {
-        sp -= 1;
-        let nd = trace_nodes[stack[sp]];
-        if (!trace_slab(ro, inv, nd.mn, nd.mx, tmin, tmax)) { continue; }
-        if (nd.count > 0u) {
-            for (var k = 0u; k < nd.count; k++) {
-                if (trace_shape(trace_insts[nd.left + k], ro, rd, tmin, tmax)) { return true; }
-            }
-        } else if (sp < 30) {
-            stack[sp] = nd.left;
-            stack[sp + 1] = nd.left + 1u;
-            sp += 2;
-        }
-    }
-    return false;
-}
 `
+
+// traceNearestMesh is the mesh branch of trace_enter.
+const traceNearestMesh = `    if (shape == 3u) {
+        // A mesh: where the ray first meets a triangle, and that triangle's
+        // normal turned to face the ray.
+        let m = trace_mesh(u32(it.mesh.x), lo, ld, tmin, tmax, false);
+        if (m.w <= 0.0) {
+            s.b = -1e30;
+            return s;
+        }
+        s.a = m.w;
+        s.b = m.w;
+        s.n = select(m.xyz, -m.xyz, dot(m.xyz, ld) > 0.0);
+        return s;
+    }
+`
+
+// traceNearestWGSL is the nearest-hit code, with the mesh branch only when
+// the trace scene holds meshes: a scene of simple shapes should not pay for
+// a second traversal in every pixel's shader.
+func traceNearestWGSL(mesh bool) string {
+	branch := ""
+	if mesh {
+		branch = traceNearestMesh
+	}
+	return strings.Replace(traceNearestBody, "/*MESH*/", branch, 1)
+}

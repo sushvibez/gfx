@@ -30,7 +30,7 @@ type bounceUniforms struct {
 	P      core.Vec4 // x the noise's frame
 }
 
-const postBounceWGSL = traceWGSL + `
+const postBounceWGSL = `
 struct BounceU { inv_vp : mat4x4f, cam : vec4f, sun_dir : vec4f, sun : vec4f, amb : vec4f, p : vec4f }
 @group(0) @binding(0) var depth : texture_depth_2d;
 @group(0) @binding(1) var<uniform> B : BounceU;
@@ -87,7 +87,10 @@ fn bounce_rand(p : vec2i, k : u32) -> f32 {
 `
 
 func (p *Post) bouncePipelines(mk func(label, body, entry string, format gpu.TextureFormat) *gpu.RenderPipeline) {
-	p.plBounce = mk("post-bounce", postBounceWGSL, "fs", gpu.FormatRGBA16Float)
+	// Two of each tracing pass: without and with the mesh traversal.
+	for i, mesh := range []bool{false, true} {
+		p.plBounce[i] = mk("post-bounce", traceWGSL+traceNearestWGSL(mesh)+postBounceWGSL, "fs", gpu.FormatRGBA16Float)
+	}
 }
 
 // bounceTargets allocates the quarter-resolution bounce target (Resize calls it).
@@ -109,7 +112,11 @@ func (p *Post) BounceView() *gpu.TextureView { return p.bounce.view }
 func (p *Post) bounceRender(enc *gpu.CommandEncoder) {
 	vp := p.Projection.Mul(p.View)
 	inv, ok := vp.Inverse()
-	if !p.bounceOn || p.traceNodes == nil || !ok || p.Projection[0] == 0 || p.plBounce == nil {
+	pl := p.plBounce[0]
+	if p.traceMeshes {
+		pl = p.plBounce[1]
+	}
+	if !p.bounceOn || p.traceNodes == nil || !ok || p.Projection[0] == 0 || pl == nil {
 		return
 	}
 	if p.bounceDirty {
@@ -117,12 +124,13 @@ func (p *Post) bounceRender(enc *gpu.CommandEncoder) {
 		if p.bgBounce != nil {
 			p.bgBounce.Release()
 		}
-		l := p.plBounce.BindGroupLayout(0)
+		l := pl.BindGroupLayout(0)
 		p.bgBounce = p.device.CreateBindGroup(l,
 			gpu.BindGroupEntry{Binding: 0, TextureView: p.depthView},
 			gpu.BindGroupEntry{Binding: 1, Buffer: p.bounceUni},
 			gpu.BindGroupEntry{Binding: 10, Buffer: p.traceNodes},
 			gpu.BindGroupEntry{Binding: 11, Buffer: p.traceInsts},
+			gpu.BindGroupEntry{Binding: 13, Buffer: p.traceTris},
 		)
 		l.Release()
 	}
@@ -140,7 +148,7 @@ func (p *Post) bounceRender(enc *gpu.CommandEncoder) {
 	}
 	p.queue.WriteBuffer(p.bounceUni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	rp := enc.BeginRenderPass(p.bounce.view, gpu.Color{})
-	rp.SetPipeline(p.plBounce)
+	rp.SetPipeline(pl)
 	rp.SetBindGroup(0, p.bgBounce)
 	rp.Draw(3, 1, 0, 0)
 	rp.End()
@@ -155,9 +163,11 @@ func (p *Post) bounceReleaseTargets() {
 }
 
 func (p *Post) bounceRelease() {
-	if p.plBounce != nil {
-		p.plBounce.Release()
-		p.plBounce = nil
+	for i, pl := range p.plBounce {
+		if pl != nil {
+			pl.Release()
+			p.plBounce[i] = nil
+		}
 	}
 	if p.bounceUni != nil {
 		p.bounceUni.Release()

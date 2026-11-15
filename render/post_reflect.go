@@ -14,7 +14,7 @@ import "github.com/sushvibez/gfx/gpu"
 // reads the atmosphere's uniforms, and so is drawn inside the atmosphere's
 // render, after they are written and before the combine that uses it.
 
-const postReflectWGSL = traceWGSL + `
+const postReflectWGSL = `
 @group(0) @binding(0) var depth : texture_depth_2d;
 @group(0) @binding(1) var scene : texture_2d<f32>;
 @group(0) @binding(2) var<uniform> A : AtmU;
@@ -75,7 +75,9 @@ fn refl_view_pos(t : vec2i, dims : vec2f) -> vec3f {
 `
 
 func (p *Post) reflectPipelines(mk func(label, body, entry string, format gpu.TextureFormat) *gpu.RenderPipeline) {
-	p.plReflect = mk("post-reflect", postReflectWGSL, "fs", gpu.FormatRGBA16Float)
+	for i, mesh := range []bool{false, true} {
+		p.plReflect[i] = mk("post-reflect", traceWGSL+traceNearestWGSL(mesh)+postReflectWGSL, "fs", gpu.FormatRGBA16Float)
+	}
 }
 
 // reflectTargets allocates the half-resolution reflection target (Resize
@@ -88,7 +90,11 @@ func (p *Post) reflectTargets(tex func(w, h int, f gpu.TextureFormat) postTex, w
 // reflectRender traces the mirrors' reflections; atmosRender calls it once
 // the atmosphere's uniforms are written. It reports whether it drew.
 func (p *Post) reflectRender(enc *gpu.CommandEncoder) bool {
-	if !p.reflectTraced || p.traceNodes == nil || p.plReflect == nil {
+	pl := p.plReflect[0]
+	if p.traceMeshes {
+		pl = p.plReflect[1]
+	}
+	if !p.reflectTraced || p.traceNodes == nil || pl == nil {
 		return false
 	}
 	if p.reflDirty {
@@ -96,18 +102,19 @@ func (p *Post) reflectRender(enc *gpu.CommandEncoder) bool {
 		if p.bgReflect != nil {
 			p.bgReflect.Release()
 		}
-		l := p.plReflect.BindGroupLayout(0)
+		l := pl.BindGroupLayout(0)
 		p.bgReflect = p.device.CreateBindGroup(l,
 			gpu.BindGroupEntry{Binding: 0, TextureView: p.depthView},
 			gpu.BindGroupEntry{Binding: 1, TextureView: p.sceneView},
 			gpu.BindGroupEntry{Binding: 2, Buffer: p.atmosUni},
 			gpu.BindGroupEntry{Binding: 10, Buffer: p.traceNodes},
 			gpu.BindGroupEntry{Binding: 11, Buffer: p.traceInsts},
+			gpu.BindGroupEntry{Binding: 13, Buffer: p.traceTris},
 		)
 		l.Release()
 	}
 	rp := enc.BeginRenderPass(p.refl.view, gpu.Color{})
-	rp.SetPipeline(p.plReflect)
+	rp.SetPipeline(pl)
 	rp.SetBindGroup(0, p.bgReflect)
 	rp.Draw(3, 1, 0, 0)
 	rp.End()
@@ -123,8 +130,10 @@ func (p *Post) reflectReleaseTargets() {
 }
 
 func (p *Post) reflectRelease() {
-	if p.plReflect != nil {
-		p.plReflect.Release()
-		p.plReflect = nil
+	for i, pl := range p.plReflect {
+		if pl != nil {
+			pl.Release()
+			p.plReflect[i] = nil
+		}
 	}
 }

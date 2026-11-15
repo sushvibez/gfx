@@ -40,11 +40,20 @@ func tracedScene(t *testing.T, shape TraceShape, traced bool) func(x, z float32)
 	// The unit cylinder has radius 1, so half the scale across.
 	caster := core.Mat4Translate(core.V3(0, 2, 0)).Mul(core.Mat4Scale(core.V3(4, 4, 4)))
 	mesh := r3.CubeMesh()
-	if shape == TraceCylinder {
+	var hit *Mesh // the triangles a TraceMesh caster is traced by
+	switch shape {
+	case TraceCylinder:
 		caster = core.Mat4Translate(core.V3(0, 2, 0)).Mul(core.Mat4Scale(core.V3(2, 4, 2)))
 		mesh = r3.CylinderMesh()
+	case TraceMesh:
+		// A sphere of triangles, 4 across, resting on the floor.
+		mesh = r3.SphereMesh()
+		lo, hi := mesh.Bounds()
+		k := 4 / (hi.X - lo.X)
+		caster = core.Mat4Translate(core.V3(0, 2, 0)).Mul(core.Mat4Scale(core.V3(k, k, k)))
+		hit = mesh
 	}
-	r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: caster, Shape: shape}})
+	r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: caster, Shape: shape, Mesh: hit}})
 
 	eye := core.V3(0, 60, 0)
 	vp := core.Mat4Perspective(0.5, 1, 1, 200).Mul(core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 0, -1)))
@@ -97,13 +106,31 @@ func TestTracedShadow(t *testing.T) {
 	}
 }
 
+// A triangle mesh casts its own shadow: a sphere's is an ellipse, so a
+// point the box's square shadow covers, near its far corner, is lit beside
+// the sphere; straight behind it the floor is dark.
+func TestTracedMeshShadow(t *testing.T) {
+	off := tracedScene(t, TraceBox, false)
+	box := tracedScene(t, TraceBox, true)
+	ball := tracedScene(t, TraceMesh, true)
+	if lit, dark := off(3.5, 0), ball(3.5, 0); lit < 100 || dark > lit*0.35 {
+		t.Fatalf("no traced shadow behind the sphere: %v traced, %v without", dark, lit)
+	}
+	if b, s := box(4.2, 1.7), ball(4.2, 1.7); !(b < s*0.5) {
+		t.Fatalf("the sphere's shadow is the box's: floor %v under the box's shadow there, %v with the sphere", b, s)
+	}
+	if a, b := ball(9, 0), off(9, 0); a < b*0.9 {
+		t.Fatalf("the floor past the sphere's shadow is dark: %v, %v without tracing", a, b)
+	}
+}
+
 // The hierarchy holds every shape once and its root encloses them all.
 func TestTraceBuild(t *testing.T) {
 	var insts []TraceInstance
 	for i := 0; i < 100; i++ {
 		insts = append(insts, TraceInstance{Model: core.Mat4Translate(core.V3(float32(i%10)*3, 0, float32(i/10)*3))})
 	}
-	nodes, gi := buildTrace(insts)
+	nodes, gi, _ := buildTrace(insts)
 	if len(gi) != 100 {
 		t.Fatalf("%d shapes kept of 100", len(gi))
 	}

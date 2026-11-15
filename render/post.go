@@ -160,16 +160,18 @@ type Post struct {
 	skyView    *gpu.TextureView                 // the renderer's sky map (not owned)
 	spotViews  [MaxSpotShadows]*gpu.TextureView // the renderer's spot shadow maps (not owned)
 	// The bounce pass (post_bounce.go).
-	plBounce               *gpu.RenderPipeline
+	plBounce               [2]*gpu.RenderPipeline // without and with mesh traversal
 	bounce                 postTex
 	bgBounce               *gpu.BindGroup
 	bounceUni              *gpu.Buffer
 	traceNodes, traceInsts *gpu.Buffer // the renderer's trace scene (not owned)
+	traceTris              *gpu.Buffer
+	traceMeshes            bool // the trace scene holds meshes: which variant of a tracing pass to use
 	bounceOn, bounceDirty  bool
 	bframe                 int
 
 	// The traced reflection pass (post_reflect.go).
-	plReflect                *gpu.RenderPipeline
+	plReflect                [2]*gpu.RenderPipeline // without and with mesh traversal
 	refl                     postTex
 	bgReflect                *gpu.BindGroup
 	reflectTraced, reflDirty bool
