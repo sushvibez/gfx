@@ -116,6 +116,7 @@ type Renderer3D struct {
 	// The trace scene (trace.go): the BVH and its shapes, for traced light.
 	traceNodes, traceInsts *gpu.Buffer
 	traceShapes            int
+	noiseFrame             int // FrameSettings.Temporal's counter
 	// The rain pass (rain.go), built the first time it rains.
 	rainPL     *gpu.RenderPipeline
 	rainBind   *gpu.BindGroup
@@ -816,6 +817,12 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		fogOn = 1
 	}
 	r.lastLightVP = lightProj.Mul(lightView)
+	// The noise's frame: 0 holds it still, 1…64 turns it each frame.
+	noiseFrame := float32(0)
+	if fs.Temporal {
+		r.noiseFrame = r.noiseFrame%64 + 1
+		noiseFrame = float32(r.noiseFrame)
+	}
 	traced, tracedAO := float32(0), float32(0)
 	if r.traceShapes > 0 {
 		if fs.TracedShadows {
@@ -831,7 +838,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		ViewProj:   viewProj,
 		LightVP:    lightProj.Mul(lightView),
 		LightDir:   core.V4(ld.X, ld.Y, ld.Z, sunIntensity),
-		CamPos:     core.V4(camPos.X, camPos.Y, camPos.Z, 1),
+		CamPos:     core.V4(camPos.X, camPos.Y, camPos.Z, noiseFrame),
 		Ambient:    core.V4(fs.Ambient.R, fs.Ambient.G, fs.Ambient.B, fs.Exposure),
 		FogColor:   core.V4(fs.Fog.Color.R, fs.Fog.Color.G, fs.Fog.Color.B, fs.Fog.Density),
 		FogParams:  core.V4(fs.Fog.Height, fs.Fog.HeightDensity, fs.Fog.AerialPerspective, fogOn),

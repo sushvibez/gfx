@@ -19,7 +19,7 @@ struct Frame {
     view_proj : mat4x4f,
     light_vp : mat4x4f,
     light_dir : vec4f,   // xyz normalized sun direction, w sun intensity
-    cam_pos : vec4f,
+    cam_pos : vec4f,     // xyz the eye, w the noise's frame (0: held still)
     ambient : vec4f,     // rgb ambient radiance, w exposure
     fog_color : vec4f,   // rgb fog colour, w density
     fog_params : vec4f,  // x height, y height density, z aerial perspective, w enabled
@@ -118,7 +118,12 @@ fn vs_shadow(@location(0) pos : vec3f, @location(1) normal : vec3f, @location(2)
 
 // Interleaved gradient noise (Jimenez): a per-pixel rotation for the
 // shadow kernels, so undersampling shows as fine noise, not bands.
-fn sh_ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
+// With a temporal filter behind it (frame.cam_pos.w > 0) the pattern moves
+// each frame, so successive frames sample differently and average out.
+fn sh_ign(p : vec2f) -> f32 {
+    let q = p + 5.588238 * frame.cam_pos.w;
+    return fract(52.9829189 * fract(dot(q, vec2f(0.06711056, 0.00583715))));
+}
 // Vogel disc: n points spread evenly over the unit disc, rotated by phi.
 fn sh_vogel(i : i32, n : i32, phi : f32) -> vec2f {
     let r = sqrt((f32(i) + 0.5) / f32(n));
@@ -603,14 +608,16 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     // the share of them that something stops.
     if (frame.rt.y > 0.0) {
         var open = 0.0;
-        for (var k = 0; k < 3; k++) {
+        // One ray when a temporal filter will average the frames, else three.
+        let rays = select(3, 1, frame.cam_pos.w > 0.0);
+        for (var k = 0; k < rays; k++) {
             let a = sh_ign(in.pos.xy + vec2f(f32(k) * 17.0, f32(k) * 5.0)) * 6.2831853;
             let z = sh_ign(in.pos.yx + vec2f(f32(k) * 3.0, 11.0)) * 2.0 - 1.0;
             let rr = sqrt(max(1.0 - z * z, 0.0));
             let dir = normalize(n + vec3f(rr * cos(a), rr * sin(a), z) * 0.98);
             open += select(1.0, 0.0, trace_any(in.world + n * 0.03, dir, 0.01, frame.rt.z));
         }
-        ao = ao * mix(1.0, open / 3.0, frame.rt.y);
+        ao = ao * mix(1.0, open / f32(rays), frame.rt.y);
     }
     var metallic = clamp(d.p0.x * metal_tex, 0.0, 1.0);
     var roughness = clamp(d.p0.y * rough_tex, 0.05, 1.0);

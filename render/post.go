@@ -82,6 +82,14 @@ type PostSettings struct {
 	// smears on the front element that light up where a bright light falls
 	// on them.
 	LensFlare, LensStreak, LensDirt float32
+	// Temporal (0…0.97; 0 is off) is how much of each pixel is its own
+	// history: the lit picture averaged over the frames before, reprojected
+	// as the camera moves (post_temporal.go). 0.9 is about twenty frames.
+	// It takes the grain out of terms sampled with a few rays or taps a
+	// pixel, provided they change their noise each frame
+	// (FrameSettings.Temporal). It needs the camera: Post.Projection and
+	// Post.View.
+	Temporal float32
 }
 
 // DefaultPostSettings is a gentle filmic look: mild bloom, eye
@@ -145,12 +153,21 @@ type Post struct {
 	bgAO        *gpu.BindGroup
 
 	// The atmosphere (post_atmos.go).
-	shadowView                             *gpu.TextureView // the sun's shadow map (not owned)
-	lightBuf                               *gpu.Buffer      // the renderer's light list (not owned)
-	lightCount                             int
-	reflect                                bool                             // trace scene reflections (the renderer asked for them)
-	skyView                                *gpu.TextureView                 // the renderer's sky map (not owned)
-	spotViews                              [MaxSpotShadows]*gpu.TextureView // the renderer's spot shadow maps (not owned)
+	shadowView *gpu.TextureView // the sun's shadow map (not owned)
+	lightBuf   *gpu.Buffer      // the renderer's light list (not owned)
+	lightCount int
+	reflect    bool                             // trace scene reflections (the renderer asked for them)
+	skyView    *gpu.TextureView                 // the renderer's sky map (not owned)
+	spotViews  [MaxSpotShadows]*gpu.TextureView // the renderer's spot shadow maps (not owned)
+	// The temporal filter (post_temporal.go).
+	plTemporal, plCopy                     *gpu.RenderPipeline
+	hist                                   [2]postTex
+	bgTemporal, bgCopy                     [2]*gpu.BindGroup
+	temporalUni                            *gpu.Buffer
+	prevVP                                 core.Mat4
+	histValid                              bool
+	temporalDirty                          bool
+	tframe                                 int
 	rainVP                                 core.Mat4
 	noLights                               *gpu.Buffer
 	lightVP                                core.Mat4
@@ -217,6 +234,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.plAOBlurH = mk("post-ao-blur-h", postAOBlurWGSL, "fs_h", gpu.FormatRGBA8Unorm)
 	p.plAOBlurV = mk("post-ao-blur-v", postAOBlurWGSL, "fs_v", gpu.FormatRGBA8Unorm)
 	p.atmosPipelines(mk)
+	p.temporalPipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -274,6 +292,7 @@ func (p *Post) Resize(w, h int) {
 	hw, hh := max(w/2, 1), max(h/2, 1)
 	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
 	p.atmosTargets(tex, w, h)
+	p.temporalTargets(tex, w, h)
 
 	// Bind groups. Each pipeline's layout is taken, used and released (a
 	// kept layout keeps its pipeline alive).
@@ -333,7 +352,8 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		rp.Draw(3, 1, 0, 0)
 		rp.End()
 	}
-	p.atmosRender(enc) // the air and the sky: p.lit is what the camera sees
+	p.atmosRender(enc)    // the air and the sky: p.lit is what the camera sees
+	p.temporalRender(enc) // averaged over the frames before, when asked
 	for i := range p.down {
 		pl := p.plDown
 		if i == 0 {
@@ -427,6 +447,7 @@ func (p *Post) releaseTargets() {
 	p.ao[0].release()
 	p.ao[1].release()
 	p.atmosReleaseTargets()
+	p.temporalReleaseTargets()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -449,6 +470,7 @@ func (p *Post) releaseTargets() {
 // Release frees everything Post made.
 func (p *Post) Release() {
 	p.releaseTargets()
+	p.temporalRelease()
 	p.adapt[0].release()
 	p.adapt[1].release()
 	p.atmosRelease()

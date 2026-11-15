@@ -89,6 +89,12 @@ type FrameSettings struct {
 	// is off screen or hidden is not reflected). Opaque material draws
 	// carry their mirror strength in the HDR target's alpha.
 	SceneReflection float32
+	// Temporal makes every term the renderer samples with per-pixel noise
+	// (soft shadows, traced occlusion and shadows) draw new noise each
+	// frame, for PostSettings.Temporal to average; traced occlusion then
+	// sends one ray a pixel, not three. Without that filter it only makes
+	// the grain crawl, so set the two together.
+	Temporal bool
 	// TracedShadows makes the sun's shadow a traced ray instead of a shadow
 	// map lookup: each shaded point asks the trace scene (SetTraceScene)
 	// whether anything stands between it and the sun, so shadows are exact

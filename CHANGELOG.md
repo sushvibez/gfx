@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Traced lighting, step 3: a temporal filter. `PostSettings.Temporal` averages the lit picture over the frames before it (depth reprojection, clamped to the pixel's neighbourhood), and `FrameSettings.Temporal` makes the renderer's per-pixel noise change every frame so there is something to average; traced occlusion then sends one ray a pixel.
+
 - Traced lighting, step 2: `FrameSettings.TracedAO` (and `TracedAORadius`) dims ambient light by three short rays a pixel through the trace scene, in place of `PostSettings.AO`.
 
 - Traced lighting, step 1 (`docs/notes/raytracing.md` is the roadmap): `Renderer3D.SetTraceScene` takes boxes, cylinders and wedges and builds a BVH over them; with `FrameSettings.TracedShadows` the material shader traces the sun's shadow ray through it instead of reading the shadow map. Plain WGSL, so it runs in browsers too.

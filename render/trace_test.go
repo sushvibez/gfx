@@ -3,6 +3,7 @@
 package render
 
 import (
+	"math"
 	"testing"
 
 	"github.com/sushvibez/gfx/core"
@@ -181,5 +182,93 @@ func TestTracedAO(t *testing.T) {
 	}
 	if foot, open := plain(2.5, 0), plain(12, 0); foot < open*0.95 {
 		t.Fatalf("occlusion without TracedAO: %.0f at the foot, %.0f in the open", foot, open)
+	}
+}
+
+// The temporal filter: one occlusion ray a pixel is grainy in a single
+// frame, and the same picture after two dozen frames of PostSettings.
+// Temporal is smooth, and has settled (more frames do not change it).
+func TestPostTemporalSettlesGrain(t *testing.T) {
+	const w, h = 320, 320
+	shot := func(frames int) (mean, grain float64) {
+		dev, q := headlessDevice(t)
+		r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r3.Release()
+		fs := DefaultFrameSettings()
+		fs.Tonemap = TonemapHDR
+		fs.Sun = RGBA{R: 1e-4, G: 1e-4, B: 1e-4, A: 1}
+		fs.Ambient = RGBA{R: 0.6, G: 0.6, B: 0.6, A: 1}
+		fs.TracedAO, fs.Temporal = 1, true
+		r3.SetFrameSettings(fs)
+		r3.KeepDepth = true
+		post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer post.Release()
+		s := &post.Settings
+		s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen, s.AO = 0, 0, 0, 0, 0, 0, 0
+		s.FXAA = false
+		s.Temporal = 0.9
+		post.Resize(w, h)
+		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+		tview := target.CreateView()
+		defer func() { tview.Release(); target.Release() }()
+		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60)))
+		block := core.Mat4Translate(core.V3(0, 4, 0)).Mul(core.Mat4Scale(core.V3(4, 8, 4)))
+		r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: block}})
+		eye := core.V3(0, 60, 0)
+		proj := core.Mat4Perspective(0.5, 1, 1, 200)
+		view := core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 0, -1))
+		post.Projection, post.View = proj, view
+		grey := &Material{Color: RGBA{R: 0.8, G: 0.8, B: 0.8, A: 1}, Roughness: 1}
+		for i := 0; i < frames; i++ {
+			r3.Begin(proj.Mul(view), core.V3(0, -1, 0), eye)
+			r3.DrawMaterial(r3.CubeMesh(), floor, grey)
+			r3.DrawMaterial(r3.CubeMesh(), block, grey)
+			post.UseShadow(r3)
+			enc := dev.CreateCommandEncoder()
+			if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{A: 1}); err != nil {
+				t.Fatal(err)
+			}
+			post.Render(enc, tview)
+			q.Submit(enc.Finish())
+		}
+		pix, err := dev.ReadTexture(q, target, w, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A patch of floor beside the block, where about half the rays are stopped.
+		vp := proj.Mul(view)
+		c := vp.MulVec4(core.V4(2.6, 0, 0, 1))
+		px, py := int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h)
+		var sum, sq float64
+		n := 0.0
+		for dy := -6; dy <= 6; dy++ {
+			for dx := 0; dx <= 4; dx++ {
+				v := lumAt(pix, w, px+dx, py+dy)
+				sum, sq, n = sum+v, sq+v*v, n+1
+			}
+		}
+		mean = sum / n
+		return mean, math.Sqrt(max(sq/n-mean*mean, 0))
+	}
+	_, g1 := shot(1)
+	m24, g24 := shot(24)
+	m96, _ := shot(96)
+	if g1 < 6 {
+		t.Fatalf("one frame is not grainy (deviation %.1f): the test measures nothing", g1)
+	}
+	if g24 > g1*0.5 {
+		t.Fatalf("the grain did not settle: deviation %.1f after 24 frames, %.1f after one", g24, g1)
+	}
+	// Settled: four times as many frames give the same picture. (One frame's
+	// mean is no reference: its pixels are tone mapped all-or-nothing, so it
+	// reads darker than the average it is a sample of.)
+	if m24 < m96*0.95 || m24 > m96*1.05 {
+		t.Fatalf("the picture has not settled: mean %.1f after 24 frames, %.1f after 96", m24, m96)
 	}
 }
