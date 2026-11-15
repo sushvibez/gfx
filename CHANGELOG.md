@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Traced lighting, step 5 reworked: the bounce is now Post's own pass (`post_bounce.go`, quarter resolution, read by the material shader a frame later through `Renderer3D.SetBounceLight`), which is stable where the in-shader version lost the device. Lamps too faint at a point to show against the ambient light no longer get a shadow ray.
+- Rain: drawn after the temporal filter (`Renderer3D.DeferRain`, `RenderRain`, `Post.AfterLight`), so the filter no longer averages falling drops away, and its streaks keep a pixel's width at any render resolution (`Renderer3D.SetRenderSize`, which View3D calls). `gpu.CommandEncoder.BeginRenderPassOver` keeps both colour and depth.
+
 - Traced lighting, step 5 (experimental): `FrameSettings.TracedBounce` adds one bounce of the sun's light, with `TraceInstance.Color` and a nearest-hit traversal. It works in small scenes and has lost the GPU device in a large one on Intel integrated graphics; see `docs/notes/raytracing.md` before turning it on.
 
 - Fixed: switching the temporal filter on showed a cross-hatch for a second. A young history is now a running mean (the n-th frame counts 1/n), and traced rays draw white noise per frame in place of the lattice dither.

@@ -126,7 +126,14 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 		if s <= 0 || s > 1 {
 			s = 1
 		}
-		v.Post.Resize(max(int(float32(v.pw)*s+0.5), 1), max(int(float32(v.ph)*s+0.5), 1))
+		rw, rh := max(int(float32(v.pw)*s+0.5), 1), max(int(float32(v.ph)*s+0.5), 1)
+		v.Post.Resize(rw, rh)
+		r3.SetRenderSize(rw, rh)
+		r3.SetBounceLight(v.Post.BounceView()) // last frame's bounce pass
+		// The rain is drawn after the lit picture is finished, not into it.
+		r3.DeferRain = true
+		v.Post.AfterLight = r3.RenderRain
+		defer func() { r3.DeferRain, v.Post.AfterLight = false, nil }()
 		v.Post.UseShadow(r3) // the light shafts read the sun's shadow map
 		keep := r3.KeepDepth
 		r3.KeepDepth = true // Post reads the depth buffer
@@ -138,6 +145,7 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 		v.Post.Render(enc, v.colorView)
 		return nil
 	}
+	r3.SetRenderSize(v.pw, v.ph)
 	return r3.Render(enc, v.colorView, v.depthView, v.Clear)
 }
 

@@ -175,3 +175,31 @@ func (r *RenderPass) DrawIndexed(indexCount, instanceCount int) {
 func (r *RenderPass) DrawIndexedInstanced(indexCount, instanceCount, firstInstance int) {
 	wgpuRenderPassEncoderDrawIndexed(r.h, uint32(indexCount), uint32(instanceCount), 0, 0, uint32(firstInstance))
 }
+
+// BeginRenderPassOver starts a pass over what is already there: the colour
+// and the depth are both kept (and the depth stays for what comes after).
+// It is how something is drawn on top of a finished scene and still hidden
+// by it: particles added after the scene's own passes, an overlay that the
+// geometry occludes.
+func (e *CommandEncoder) BeginRenderPassOver(view, depth *TextureView) *RenderPass {
+	att := renderPassColorAttachment{
+		view:       view.h,
+		depthSlice: depthSliceUndefined,
+		loadOp:     loadOpLoad,
+		storeOp:    storeOpStore,
+	}
+	depthAtt := renderPassDepthStencilAttachment{
+		view:         depth.h,
+		depthLoadOp:  loadOpLoad,
+		depthStoreOp: storeOpStore,
+	}
+	desc := renderPassDescriptor{
+		colorAttachmentCount:   1,
+		colorAttachments:       uintptr(unsafe.Pointer(&att)),
+		depthStencilAttachment: uintptr(unsafe.Pointer(&depthAtt)),
+	}
+	h := wgpuCommandEncoderBeginRenderPass(e.h, &desc)
+	runtime.KeepAlive(&att)
+	runtime.KeepAlive(&depthAtt)
+	return &RenderPass{h}
+}

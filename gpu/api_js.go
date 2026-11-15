@@ -532,6 +532,24 @@ func (e *CommandEncoder) BeginRenderPassDepthKeep(view, depth *TextureView) *Ren
 	return &RenderPass{pass}
 }
 
+// BeginRenderPassOver starts a pass over what is already there: the colour
+// and the depth are both kept. See the native backend.
+func (e *CommandEncoder) BeginRenderPassOver(view, depth *TextureView) *RenderPass {
+	pass := e.v.Call("beginRenderPass", map[string]any{
+		"colorAttachments": []any{map[string]any{
+			"view":    view.v,
+			"loadOp":  "load",
+			"storeOp": "store",
+		}},
+		"depthStencilAttachment": map[string]any{
+			"view":         depth.v,
+			"depthLoadOp":  "load",
+			"depthStoreOp": "store",
+		},
+	})
+	return &RenderPass{pass}
+}
+
 // Buffer is GPU-resident memory.
 type Buffer struct {
 	v    js.Value

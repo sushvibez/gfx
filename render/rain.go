@@ -127,7 +127,11 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         let dist = length(rel);
         // As long as the shutter is open; as wide as a drop, or as a pixel
         // (then fainter, so far rain thins into a veil instead of wires).
-        let width = max(0.0028, dist * 0.0008);
+        // A pixel's angle, from the projection's vertical scale and the
+        // target's height (a guess at 900 lines when the size is not told).
+        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
+        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
+        let width = max(0.0028, dist * 1.7 / (fy * lines));
         let axis = normalize(vel);
         right = normalize(cross(axis, rel)) * width;
         up = axis * length(vel) * 0.022;
@@ -168,7 +172,9 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         let p = vec3f(rim.x, high - 4.9 * max(tf, 0.0) * max(tf, 0.0) - 0.03, rim.y);
         let rel = p - cam;
         let dist = length(rel);
-        let width = max(0.0045, dist * 0.0009);
+        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
+        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
+        let width = max(0.0045, dist * 2.4 / (fy * lines)); // a bead is fatter than a raindrop
         right = normalize(cross(vec3f(0.0, -1.0, 0.0), rel)) * width;
         up = vec3f(0.0, -1.0, 0.0) * max(0.02, speed * 0.02);
         centre = p;
@@ -256,6 +262,20 @@ func (r *Renderer3D) initRain() bool {
 		gpu.BindGroupEntry{Binding: 2, TextureView: r.skyView},
 	)
 	return true
+}
+
+// RenderRain draws the rain in a pass of its own over a finished picture:
+// color already holds the scene and depth its depth, both kept. It is for
+// a caller that set DeferRain so that something could come between the
+// scene and the rain (View3D does, so the temporal filter averages the
+// scene and not the falling drops).
+func (r *Renderer3D) RenderRain(enc *gpu.CommandEncoder, color, depth *gpu.TextureView) {
+	if r.settings.Rain <= 0 || !r.initRain() {
+		return
+	}
+	pass := enc.BeginRenderPassOver(color, depth)
+	r.drawRain(pass)
+	pass.End()
 }
 
 // drawRain records the drops and splashes into the main pass.

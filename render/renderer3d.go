@@ -23,6 +23,9 @@ type Renderer3D struct {
 	// it, for what reads it afterwards (Post's ambient occlusion). The
 	// depth target then needs TextureBinding; View3D sets this for its Post.
 	KeepDepth bool
+	// DeferRain leaves the rain (FrameSettings.Rain) out of Render: the
+	// caller draws it afterwards with RenderRain, over the finished picture.
+	DeferRain bool
 
 	// lastLightVP is the sun's shadow matrix as of the last Begin (Post's
 	// light shafts read the shadow map with it).
@@ -116,7 +119,9 @@ type Renderer3D struct {
 	// The trace scene (trace.go): the BVH and its shapes, for traced light.
 	traceNodes, traceInsts *gpu.Buffer
 	traceShapes            int
-	noiseFrame             int // FrameSettings.Temporal's counter
+	noiseFrame             int              // FrameSettings.Temporal's counter
+	renderW, renderH       int              // the target's size, when told (SetRenderSize)
+	bounceView             *gpu.TextureView // Post's bounce pass result (not owned)
 	// The rain pass (rain.go), built the first time it rains.
 	rainPL     *gpu.RenderPipeline
 	rainBind   *gpu.BindGroup
@@ -265,6 +270,7 @@ type frameUniforms struct {
 	Misc       core.Vec4 // tonemap mode, light count
 	Sun        core.Vec4 // rgb the sun's radiance (colour times energy)
 	Env        core.Vec4 // sky reflection strength, time in seconds
+	View       core.Vec4 // x, y the render target's size in pixels (SetRenderSize; zero when not told)
 	RT         core.Vec4 // x what is traced (1 the sun's shadow, 2 the lights' shadows, added), y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 
@@ -610,9 +616,14 @@ func (r *Renderer3D) matFrameEntries() []gpu.BindGroupEntry {
 	for i, v := range r.spotViews {
 		e = append(e, gpu.BindGroupEntry{Binding: 5 + i, TextureView: v})
 	}
+	bounce := r.bounceView
+	if bounce == nil {
+		bounce = r.black.view // no bounce pass: no bounced light
+	}
 	return append(e, gpu.BindGroupEntry{Binding: 9, TextureView: r.skyView},
 		gpu.BindGroupEntry{Binding: 10, Buffer: r.traceNodes},
-		gpu.BindGroupEntry{Binding: 11, Buffer: r.traceInsts})
+		gpu.BindGroupEntry{Binding: 11, Buffer: r.traceInsts},
+		gpu.BindGroupEntry{Binding: 12, TextureView: bounce})
 }
 
 func (r *Renderer3D) growDraws(size int) {
@@ -759,6 +770,36 @@ func (r *Renderer3D) uploadVerts(m *Mesh, verts []Vertex3D) {
 	r.queue.WriteBuffer(m.vbuf, 0, unsafe.Slice((*byte)(unsafe.Pointer(&verts[0])), len(verts)*int(unsafe.Sizeof(Vertex3D{}))))
 }
 
+// SetBounceLight gives the renderer the bounced light to add to its
+// surfaces: the result of Post's bounce pass from the frame before (nil:
+// none). With FrameSettings.TracedBounce each material pixel adds it,
+// times its own colour. View3D connects the two; the view is not owned,
+// and must be given again when Post is resized.
+func (r *Renderer3D) SetBounceLight(view *gpu.TextureView) {
+	if view == r.bounceView {
+		return
+	}
+	r.bounceView = view
+	if r.mdraws != nil {
+		r.growMDraws(r.mdraws.Size())
+	}
+}
+
+// SetRenderSize tells the renderer how many pixels the frame is drawn at.
+// What is sized in pixels needs it (rain streaks keep a pixel's width at
+// any resolution; screen-space lookups find their texel). View3D calls it;
+// call it yourself, before Begin or after, when rendering to your own
+// target.
+func (r *Renderer3D) SetRenderSize(w, h int) {
+	if w == r.renderW && h == r.renderH {
+		return
+	}
+	r.renderW, r.renderH = w, h
+	// Into the frame block as it stands, so a frame already begun sees it.
+	v := core.V4(float32(w), float32(h), 0, 0)
+	r.queue.WriteBuffer(r.frame, int(unsafe.Offsetof(frameUniforms{}.View)), unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v)))
+}
+
 // SetShadowArea centers the directional light's shadow volume; everything
 // within radius of center casts and receives shadows.
 func (r *Renderer3D) SetShadowArea(center core.Vec3, radius float32) {
@@ -831,7 +872,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		if fs.TracedLightShadows {
 			traced += 2
 		}
-		if fs.TracedBounce {
+		if fs.TracedBounce && r.bounceView != nil {
 			traced += 4
 		}
 		tracedAO = min(max(fs.TracedAO, 0), 1)
@@ -854,6 +895,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, fs.Rain),
 		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, fs.Wetness),
 		RT:         core.V4(traced, tracedAO, aoReach, fs.SunSoftness*0.6),
+		View:       core.V4(float32(r.renderW), float32(r.renderH), 0, 0),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	// Each shadow-casting spot renders its map through the same depth-only
@@ -1076,7 +1118,9 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 	if len(r.mitems) > 0 {
 		r.drawMatItems(mp, true)
 	}
-	r.drawRain(mp)
+	if !r.DeferRain {
+		r.drawRain(mp)
+	}
 	mp.End()
 	return nil
 }

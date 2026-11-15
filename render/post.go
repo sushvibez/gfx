@@ -159,6 +159,21 @@ type Post struct {
 	reflect    bool                             // trace scene reflections (the renderer asked for them)
 	skyView    *gpu.TextureView                 // the renderer's sky map (not owned)
 	spotViews  [MaxSpotShadows]*gpu.TextureView // the renderer's spot shadow maps (not owned)
+	// The bounce pass (post_bounce.go).
+	plBounce               *gpu.RenderPipeline
+	bounce                 postTex
+	bgBounce               *gpu.BindGroup
+	bounceUni              *gpu.Buffer
+	traceNodes, traceInsts *gpu.Buffer // the renderer's trace scene (not owned)
+	bounceOn, bounceDirty  bool
+	bframe                 int
+
+	// AfterLight, when set, is called once the lit picture is finished
+	// (the air added, the frames averaged) and before the camera's passes
+	// (bloom, exposure, the tone curve): it may draw over color, linear
+	// radiance, tested against depth. View3D uses it for the rain.
+	AfterLight func(enc *gpu.CommandEncoder, color, depth *gpu.TextureView)
+
 	// The temporal filter (post_temporal.go).
 	plTemporal, plCopy                     *gpu.RenderPipeline
 	hist                                   [2]postTex
@@ -236,6 +251,7 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.plAOBlurV = mk("post-ao-blur-v", postAOBlurWGSL, "fs_v", gpu.FormatRGBA8Unorm)
 	p.atmosPipelines(mk)
 	p.temporalPipelines(mk)
+	p.bouncePipelines(mk)
 	if err != nil {
 		p.Release()
 		return nil, err
@@ -294,6 +310,7 @@ func (p *Post) Resize(w, h int) {
 	p.ao[0], p.ao[1] = tex(hw, hh, gpu.FormatRGBA8Unorm), tex(hw, hh, gpu.FormatRGBA8Unorm)
 	p.atmosTargets(tex, w, h)
 	p.temporalTargets(tex, w, h)
+	p.bounceTargets(tex, w, h)
 
 	// Bind groups. Each pipeline's layout is taken, used and released (a
 	// kept layout keeps its pipeline alive).
@@ -353,8 +370,12 @@ func (p *Post) Render(enc *gpu.CommandEncoder, dst *gpu.TextureView) {
 		rp.Draw(3, 1, 0, 0)
 		rp.End()
 	}
+	p.bounceRender(enc)   // the light this frame's surfaces bounce, for the next frame
 	p.atmosRender(enc)    // the air and the sky: p.lit is what the camera sees
 	p.temporalRender(enc) // averaged over the frames before, when asked
+	if p.AfterLight != nil {
+		p.AfterLight(enc, p.lit.view, p.depthView)
+	}
 	for i := range p.down {
 		pl := p.plDown
 		if i == 0 {
@@ -449,6 +470,7 @@ func (p *Post) releaseTargets() {
 	p.ao[1].release()
 	p.atmosReleaseTargets()
 	p.temporalReleaseTargets()
+	p.bounceReleaseTargets()
 	if p.sceneView != nil {
 		p.sceneView.Release()
 		p.sceneView = nil
@@ -472,6 +494,7 @@ func (p *Post) releaseTargets() {
 func (p *Post) Release() {
 	p.releaseTargets()
 	p.temporalRelease()
+	p.bounceRelease()
 	p.adapt[0].release()
 	p.adapt[1].release()
 	p.atmosRelease()

@@ -28,6 +28,7 @@ struct Frame {
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
     env : vec4f,         // x sky reflection strength, y time in seconds
+    view : vec4f,        // x, y the render target's size in pixels (0: not told)
     rt : vec4f,          // x what is traced (1 the sun's shadow + 2 the lights'), y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 `
@@ -58,6 +59,7 @@ struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4>, rain_vp :
 @group(0) @binding(7) var spot_tex2 : texture_depth_2d;
 @group(0) @binding(8) var spot_tex3 : texture_depth_2d;
 @group(0) @binding(9) var sky_tex : texture_depth_2d;
+@group(0) @binding(12) var bounce_tex : texture_2d<f32>;
 
 @group(1) @binding(0) var samp : sampler;
 @group(1) @binding(1) var albedo_tex : texture_2d<f32>;
@@ -705,7 +707,10 @@ fn fs(in : FSIn) -> @location(0) vec4f {
             // and faces the surface. With a temporal filter behind it the
             // ray goes to a point of a small disc at the light, so the
             // shadow's edge is soft.
-            if (dot(shaded_n, ld) > 0.0 && att * max(li.color.r, max(li.color.g, li.color.b)) > 0.002) {
+            // (A light too faint here to show against the ambient light is not
+            // worth a ray: it stays unshadowed.)
+            let faint = 0.001 + 0.03 * max(frame.ambient.r, max(frame.ambient.g, frame.ambient.b));
+            if (dot(shaded_n, ld) > 0.0 && att * max(li.color.r, max(li.color.g, li.color.b)) > faint) {
                 var to = dv;
                 if (frame.cam_pos.w > 0.0) {
                     let side = normalize(cross(ld, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(ld.y) > 0.9)));
@@ -724,36 +729,11 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
 
     var c = albedo * frame.ambient.rgb * ao + lo;
-    // One bounce: what a ray into the hemisphere meets, lit by the sun (its
-    // own shadow ray) and the sky, comes back as light here. It is the
-    // dearest traced term (a nearest-hit ray and a shadow ray), so with a
-    // temporal filter one pixel in four traces each frame, at four times
-    // the weight, a different one of each 2×2 block every frame.
-    if ((u32(frame.rt.x) & 4u) != 0u) {
-        var share = 1.0;
-        if (frame.cam_pos.w > 0.0) {
-            let turn = u32(frame.cam_pos.w);
-            let mine = (u32(in.pos.x) & 1u) == (turn & 1u) && (u32(in.pos.y) & 1u) == ((turn >> 1u) & 1u);
-            share = select(0.0, 4.0, mine);
-        }
-        if (share > 0.0) {
-            let a = tr_rand(in.pos.xy, 40.0) * 6.2831853;
-            let z = tr_rand(in.pos.xy, 41.0) * 2.0 - 1.0;
-            let rr = sqrt(max(1.0 - z * z, 0.0));
-            let dir = normalize(n + vec3f(rr * cos(a), rr * sin(a), z) * 0.98);
-            let start = in.world + n * 0.03;
-            let h = trace_nearest(start, dir, 0.01, 40.0);
-            if (h.t > 0.0) {
-                let hp = start + dir * h.t;
-                let hl = max(dot(h.n, l), 0.0);
-                var vis = 0.0;
-                if (hl > 0.0) {
-                    vis = select(1.0, 0.0, trace_any(hp + h.n * 0.03, l, 0.01, 2000.0));
-                }
-                let back = h.color * (sun * hl * vis * 0.3183099 + frame.ambient.rgb * 0.5);
-                c = c + albedo * back * share * (1.0 - metallic);
-            }
-        }
+    // One bounce: the light Post's bounce pass traced for this place on
+    // screen last frame (a quarter of the resolution, read smoothly), times
+    // this surface's colour.
+    if ((u32(frame.rt.x) & 4u) != 0u && frame.view.x > 0.0) {
+        c = c + albedo * textureSampleLevel(bounce_tex, samp, in.pos.xy / frame.view.xy, 0.0).rgb * (1.0 - metallic);
     }
     var mirror = 0.0; // how much of a sharp reflection this pixel shows
     // The sky reflected: what the surface mirrors of the environment, by

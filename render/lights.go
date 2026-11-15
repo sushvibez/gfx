@@ -111,14 +111,14 @@ type FrameSettings struct {
 	// of a small disc at the light, for a soft edge. A light must stand
 	// clear of the shapes round it, or they shadow everything it lights.
 	TracedLightShadows bool
-	// TracedBounce adds one bounce of the sun's light: each shaded point
-	// looks along one ray into the hemisphere over it, and if the ray meets
-	// a shape the sun (or the sky) lights, that shape's colour times that
-	// light comes back as light on the point. A sunlit wall then lights
-	// the shade beside it, in its own colour. It needs the shapes' colours
-	// (TraceInstance.Color). One ray is very grainy alone: use it with
-	// Temporal (it then traces one pixel in four each frame, which the
-	// filter evens out).
+	// TracedBounce adds one bounce of the sun's light: for each surface on
+	// screen one ray goes into the hemisphere over it, and if it meets a
+	// shape the sun (or the sky) lights, that shape's colour times that
+	// light comes back as light on the surface. A sunlit wall then lights
+	// the shade beside it, in its own colour. It is traced by Post's bounce
+	// pass (at quarter resolution, used a frame later), so it needs a Post
+	// (View3D connects them), the shapes' colours (TraceInstance.Color),
+	// and Temporal with PostSettings.Temporal: one ray is very grainy.
 	TracedBounce bool
 	// TracedAO (0…1) is ambient occlusion from rays: each shaded point
 	// sends three short rays into the hemisphere over it and the ambient

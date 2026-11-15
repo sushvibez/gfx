@@ -341,28 +341,40 @@ func TestTracedLightShadow(t *testing.T) {
 	}
 }
 
-// One bounce: a red wall in the sun reddens the floor at its foot with
-// FrameSettings.TracedBounce, and not without it.
+// One bounce: a red wall in the sun reddens the shaded floor at its foot
+// with FrameSettings.TracedBounce (Post's bounce pass traces it; the
+// surface adds it a frame later), and not without it.
 func TestTracedBounce(t *testing.T) {
 	shot := func(bounce bool) func(x, z float32) (r, b float64) {
 		const w, h = 320, 320
 		dev, q := headlessDevice(t)
-		r3, err := New3D(dev, q, gpu.FormatRGBA8Unorm)
+		r3, err := New3D(dev, q, gpu.FormatRGBA16Float)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer r3.Release()
 		fs := DefaultFrameSettings()
-		fs.Tonemap = 0
+		fs.Tonemap = TonemapHDR
 		fs.Sun = RGBA{R: 2, G: 2, B: 2, A: 1}
 		fs.Ambient = RGBA{R: 0.03, G: 0.03, B: 0.03, A: 1}
-		fs.TracedShadows, fs.TracedBounce = true, bounce
+		fs.TracedShadows, fs.TracedBounce, fs.Temporal = true, bounce, true
 		r3.SetFrameSettings(fs)
+		r3.KeepDepth = true
+		post, err := NewPost(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer post.Release()
+		s := &post.Settings
+		s.AutoExposure, s.Bloom, s.Grain, s.ChromaticAberration, s.Vignette, s.Sharpen, s.AO = 0, 0, 0, 0, 0, 0, 0
+		s.FXAA = false
+		s.Temporal = 0.9
+		post.Resize(w, h)
+		r3.SetRenderSize(w, h)
+		r3.SetBounceLight(post.BounceView())
 		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
-		view := target.CreateView()
-		depth := dev.CreateDepthTexture(w, h)
-		dview := depth.CreateView()
-		defer func() { dview.Release(); depth.Release(); view.Release(); target.Release() }()
+		tview := target.CreateView()
+		defer func() { tview.Release(); target.Release() }()
 		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60)))
 		// A tall wall at x = -4…-3, its +X face toward the sun.
 		wall := core.Mat4Translate(core.V3(-3.5, 5, 0)).Mul(core.Mat4Scale(core.V3(1, 10, 20)))
@@ -375,24 +387,33 @@ func TestTracedBounce(t *testing.T) {
 			{Model: roof, Color: [3]float32{0.8, 0.8, 0.8}},
 		})
 		eye := core.V3(4, 3, 26)
-		vp := core.Mat4Perspective(0.7, 1, 0.5, 200).Mul(core.Mat4LookAt(eye, core.V3(0, 1, 0), core.V3(0, 1, 0)))
+		proj := core.Mat4Perspective(0.7, 1, 0.5, 200)
+		view := core.Mat4LookAt(eye, core.V3(0, 1, 0), core.V3(0, 1, 0))
+		vp := proj.Mul(view)
+		// The sun comes down from +X, under the roof's edge onto the wall.
+		sun := core.V3(-1, -0.45, 0)
+		post.Projection, post.View = proj, view
+		post.Atmosphere = Atmosphere{SunDir: sun, Sun: [3]float32{2, 2, 2}, Ambient: [3]float32{0.03, 0.03, 0.03}}
 		grey := &Material{Color: RGBA{R: 0.8, G: 0.8, B: 0.8, A: 1}, Roughness: 1}
 		red := &Material{Color: RGBA{R: 0.9, G: 0.05, B: 0.05, A: 1}, Roughness: 1}
-		// The sun comes down from +X, under the roof's edge onto the wall.
-		r3.Begin(vp, core.V3(-1, -0.45, 0), eye)
-		r3.DrawMaterial(r3.CubeMesh(), floor, grey)
-		r3.DrawMaterial(r3.CubeMesh(), wall, red)
-		r3.DrawMaterial(r3.CubeMesh(), roof, grey)
-		enc := dev.CreateCommandEncoder()
-		if err := r3.Render(enc, view, dview, gpu.Color{A: 1}); err != nil {
-			t.Fatal(err)
+		for i := 0; i < 16; i++ {
+			r3.Begin(vp, sun, eye)
+			r3.DrawMaterial(r3.CubeMesh(), floor, grey)
+			r3.DrawMaterial(r3.CubeMesh(), wall, red)
+			r3.DrawMaterial(r3.CubeMesh(), roof, grey)
+			post.UseShadow(r3)
+			enc := dev.CreateCommandEncoder()
+			if err := r3.Render(enc, post.SceneView(), post.DepthView(), gpu.Color{A: 1}); err != nil {
+				t.Fatal(err)
+			}
+			post.Render(enc, tview)
+			q.Submit(enc.Finish())
 		}
-		q.Submit(enc.Finish())
 		pix, err := dev.ReadTexture(q, target, w, h)
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The mean over a patch: one ray a pixel is grainy.
+		// The mean over a patch.
 		return func(x, z float32) (r, b float64) {
 			c := vp.MulVec4(core.V4(x, 0, z, 1))
 			px, py := int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h)
@@ -410,7 +431,9 @@ func TestTracedBounce(t *testing.T) {
 	// The shaded floor a metre and a half in front of the wall's foot.
 	r0, b0 := plain(-1.5, 6)
 	r1, b1 := bounced(-1.5, 6)
-	if r1 < r0+12 || r1-b1 < (r0-b0)+10 {
+	// (Through the camera's tone curve, and smoothed over the quarter-resolution
+	// pass: the red rises by about seven of 255 and the blue by two.)
+	if r1 < r0+5 || r1-b1 < (r0-b0)+4 {
 		t.Fatalf("no red bounce at the wall's foot: rgb %.0f,·,%.0f with the bounce, %.0f,·,%.0f without", r1, b1, r0, b0)
 	}
 }
