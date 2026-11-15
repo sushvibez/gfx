@@ -111,6 +111,12 @@ func screenshotRun(o Options, hooks Hooks, path string, step func(i int, u *ui.U
 	if err != nil {
 		return err
 	}
+	if hooks.Close != nil {
+		defer func() {
+			device.WaitIdle()
+			hooks.Close(a)
+		}()
+	}
 	u := ui.New(r, font, view)
 	a.UI = u
 

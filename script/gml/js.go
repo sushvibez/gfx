@@ -140,10 +140,13 @@ func consoleNS() map[string]any {
 func jsonNS() map[string]any {
 	return map[string]any{
 		"stringify": jsFunc(func(a []any) (any, error) {
+			// No value, or undefined: undefined (nil here), not a string
+			// saying so. A number JSON has no way to write (NaN, an
+			// infinity) is null, as in JS, not an error.
 			if len(a) == 0 {
-				return "undefined", nil
+				return nil, nil
 			}
-			b, err := json.Marshal(a[0])
+			b, err := json.Marshal(jsonFinite(a[0]))
 			if err != nil {
 				return nil, err
 			}
@@ -160,4 +163,29 @@ func jsonNS() map[string]any {
 			return v, nil
 		}),
 	}
+}
+
+// jsonFinite is v with every number JSON cannot write replaced by nil.
+func jsonFinite(v any) any {
+	switch v := v.(type) {
+	case float64:
+		if v != v || math.IsInf(v, 0) {
+			return nil
+		}
+	case float32:
+		return jsonFinite(float64(v))
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = jsonFinite(e)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = jsonFinite(e)
+		}
+		return out
+	}
+	return v
 }

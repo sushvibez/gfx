@@ -130,6 +130,12 @@ type Hooks struct {
 	// or depth: the window keeps the pure-2D path, 4x MSAA, so SVG icons
 	// and paths are anti-aliased as in a 2D-only window.
 	Offscreen3D bool
+	// Close runs once when the app ends (the window closed, or a headless
+	// capture finished), after the last frame and while the device is still
+	// alive: release here what Init and the frames made. What the hooks
+	// create is theirs; the shell owns only what it hands out in App. Not
+	// called in the browser, where the page going away ends everything.
+	Close func(a *App)
 	// DragRegion reports whether a point is in the app's titlebar move
 	// region (undecorated windows).
 	DragRegion func(a *App, x, y float32) bool
@@ -677,6 +683,10 @@ func Run(o Options, hooks Hooks) error {
 		lastRev = core.Revision()
 		return o.MaxFrames == 0 || rendered < o.MaxFrames
 	})
+	if hooks.Close != nil && runtime.GOOS != "js" {
+		device.WaitIdle() // nothing the hook releases is still in a frame
+		hooks.Close(a)
+	}
 	return nil
 }
 

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/ui"
@@ -1359,10 +1360,20 @@ func (x *binExpr) eval(env *Env) (any, error) {
 			return str(l) + str(r), nil
 		}
 	}
+	if x.op == "===" || x.op == "!==" {
+		// Strict: values of different kinds are never equal (1 === "1" is
+		// false). Of the same kind they compare as == does below. null and
+		// undefined are one value here (nil), so they are strictly equal to
+		// each other, which JS says they are not.
+		if jsKind(l) != jsKind(r) {
+			return x.op == "!==", nil
+		}
+		x = &binExpr{op: x.op[:2], l: x.l, r: x.r, line: x.line}
+	}
 	if x.op == "==" || x.op == "!=" {
 		// Comparing against null/undefined never coerces: `model.active !==
 		// undefined` must answer "is it set", not try to read nil as a
-		// number. (=== / !== lex to ==/!=, so this covers both.)
+		// number. (=== and !== come here once the kinds match.)
 		if l == nil || r == nil {
 			eq := l == nil && r == nil
 			if x.op == "!=" {
@@ -1423,16 +1434,18 @@ func (x *binExpr) eval(env *Env) (any, error) {
 		// written `(0.47 + i * 0.04) % 1` must stay 0.47, and truncating it
 		// to 0 turned every ring of the breathing-circles canvas red.
 		return math.Mod(lf, rf), nil
+	// Bitwise operators work on 32-bit integers, and a shift count counts
+	// modulo 32, as in JS: 1 << 32 is 1.
 	case "<<":
-		return float64(int64(lf) << uint(int64(rf))), nil
+		return float64(toInt32(lf) << (uint32(toInt32(rf)) & 31)), nil
 	case ">>":
-		return float64(int64(lf) >> uint(int64(rf))), nil
+		return float64(toInt32(lf) >> (uint32(toInt32(rf)) & 31)), nil
 	case "|":
-		return float64(int64(lf) | int64(rf)), nil
+		return float64(toInt32(lf) | toInt32(rf)), nil
 	case "&":
-		return float64(int64(lf) & int64(rf)), nil
+		return float64(toInt32(lf) & toInt32(rf)), nil
 	case "^":
-		return float64(int64(lf) ^ int64(rf)), nil
+		return float64(toInt32(lf) ^ toInt32(rf)), nil
 	case "<":
 		return lf < rf, nil
 	case ">":
@@ -1729,9 +1742,13 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			}
 			return "", true, nil
 		case "indexOf":
-			return float64(strings.Index(recv, strArgs(args, 0))), true, nil
+			return float64(runeIndex(recv, strArgs(args, 0), argInt(args, 1))), true, nil
 		case "lastIndexOf":
-			return float64(strings.LastIndex(recv, strArgs(args, 0))), true, nil
+			from := len(recv)
+			if len(args) > 1 {
+				from = argInt(args, 1)
+			}
+			return float64(runeLastIndex(recv, strArgs(args, 0), from)), true, nil
 		case "includes":
 			return strings.Contains(recv, strArgs(args, 0)), true, nil
 		case "startsWith":
@@ -1740,33 +1757,7 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			return strings.HasSuffix(recv, strArgs(args, 0)), true, nil
 		case "substring", "slice", "substr":
 			rs := []rune(recv)
-			start := argInt(args, 0)
-			if start < 0 {
-				if name == "slice" {
-					start += len(rs)
-				} else {
-					start = 0
-				}
-			}
-			end := len(rs)
-			if len(args) > 1 {
-				e := argInt(args, 1)
-				if name == "substr" {
-					e = start + e
-				} else if e < 0 && name == "slice" {
-					e += len(rs)
-				}
-				end = e
-			}
-			if start < 0 {
-				start = 0
-			}
-			if end > len(rs) {
-				end = len(rs)
-			}
-			if start > end {
-				start = end
-			}
+			start, end := sliceBounds(name, len(rs), args)
 			return string(rs[start:end]), true, nil
 		case "split":
 			sep := strArgs(args, 0)
@@ -1785,12 +1776,18 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			if n < 0 {
 				n = 0
 			}
+			if n > 0 && len(recv) > maxStringBytes/n {
+				return nil, true, fmt.Errorf("repeat: a string of %d bytes times %d is too long", len(recv), n)
+			}
 			return strings.Repeat(recv, n), true, nil
 		case "padStart", "padEnd":
 			// JS String.prototype.padStart/padEnd: pad to a target length
 			// with a fill string (a space by default), truncating the last
 			// repetition. Uses runes, so "0".padStart on CJK behaves.
 			target := argInt(args, 0)
+			if target > maxStringBytes {
+				return nil, true, fmt.Errorf("%s: a length of %d is too long", name, target)
+			}
 			fill := " "
 			if len(args) > 1 {
 				fill = str(args[1])
@@ -1952,13 +1949,112 @@ func callCallback(args []any, i int, elem any, idx int) (any, error) {
 	return elem, nil
 }
 
+// argInt is argument i as an integer: 0 when missing or not a number (NaN
+// included), and held to 32 bits, so a huge or infinite index is a large
+// one and never an overflowed one.
 func argInt(args []any, i int) int {
 	if i < len(args) {
-		if f, err := toFloat64(args[i]); err == nil {
-			return int(f)
+		if f, err := toFloat64(args[i]); err == nil && f == f {
+			return int(math.Max(math.Min(f, math.MaxInt32), math.MinInt32))
 		}
 	}
 	return 0
+}
+
+// maxStringBytes bounds the strings repeat and padStart/padEnd will build:
+// a page must not be able to ask the host for gigabytes.
+const maxStringBytes = 1 << 26
+
+// toInt32 is JS's ToInt32: the number truncated and wrapped to 32 bits
+// (NaN and the infinities are 0).
+func toInt32(f float64) int32 {
+	if f != f || math.IsInf(f, 0) {
+		return 0
+	}
+	return int32(uint32(int64(math.Mod(math.Trunc(f), 4294967296))))
+}
+
+// jsKind sorts a value into the kinds strict equality tells apart.
+func jsKind(v any) int {
+	switch v := plainColor(v).(type) {
+	case nil:
+		return 0
+	case string:
+		return 1
+	case bool:
+		return 2
+	default:
+		if _, err := toFloat64(v); err == nil {
+			return 3
+		}
+		return 4
+	}
+}
+
+// sliceBounds is where substring, slice or substr cut a string of n
+// characters: 0 <= start <= end <= n, by each method's own rules.
+func sliceBounds(name string, n int, args []any) (start, end int) {
+	clamp := func(v int) int { return max(0, min(v, n)) }
+	start, end = argInt(args, 0), n
+	switch name {
+	case "substring":
+		// Negative is 0, and the two swap when given backwards.
+		if len(args) > 1 && args[1] != nil {
+			end = argInt(args, 1)
+		}
+		start, end = clamp(start), clamp(end)
+		if start > end {
+			start, end = end, start
+		}
+	case "slice":
+		// Negative counts from the end.
+		if start < 0 {
+			start += n
+		}
+		if len(args) > 1 && args[1] != nil {
+			if end = argInt(args, 1); end < 0 {
+				end += n
+			}
+		}
+		start, end = clamp(start), clamp(end)
+	default: // substr(start, length)
+		if start < 0 {
+			start += n
+		}
+		start = clamp(start)
+		if len(args) > 1 && args[1] != nil {
+			end = clamp(start + max(argInt(args, 1), 0))
+		}
+	}
+	if start > end {
+		start = end
+	}
+	return start, end
+}
+
+// runeIndex is where sub first occurs in s at or after character from, in
+// characters (the unit charAt and slice count in), or -1.
+func runeIndex(s, sub string, from int) int {
+	rs := []rune(s)
+	from = max(0, min(from, len(rs)))
+	i := strings.Index(string(rs[from:]), sub)
+	if i < 0 {
+		return -1
+	}
+	return from + utf8.RuneCountInString(string(rs[from:])[:i])
+}
+
+// runeLastIndex is where sub last occurs in s starting at or before
+// character from, in characters, or -1.
+func runeLastIndex(s, sub string, from int) int {
+	rs := []rune(s)
+	from = max(0, min(from, len(rs)))
+	head := string(rs[:min(from+utf8.RuneCountInString(sub), len(rs))])
+	i := strings.LastIndex(head, sub)
+	if i < 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(head[:i])
 }
 
 func strArgs(args []any, i int) string {

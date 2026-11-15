@@ -233,9 +233,9 @@ func lex(src string) ([]token, error) {
 				l.emit(tokPunct, "...")
 				l.pos += 3
 			case three == "===" || three == "!==":
-				// JS strict (in)equality; the engine is loosely typed, so it
-				// behaves like ==/!= — emit the 2-char op to reuse eval.
-				l.emit(tokPunct, three[:2])
+				// JS strict (in)equality: its own operator (no coercion
+				// between kinds of value; see binExpr.eval).
+				l.emit(tokPunct, three)
 				l.pos += 3
 			case two == "==" || two == "!=" || two == "<=" || two == ">=" ||
 				two == "&&" || two == "||" || two == "+=" || two == "-=" ||
