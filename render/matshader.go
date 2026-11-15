@@ -28,7 +28,7 @@ struct Frame {
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
     env : vec4f,         // x sky reflection strength, y time in seconds
-    rt : vec4f,          // x 1 when the sun's shadow is traced, y traced occlusion's strength, z its reach, w the sun jitter's half-angle
+    rt : vec4f,          // x what is traced (1 the sun's shadow + 2 the lights'), y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 `
 
@@ -224,7 +224,7 @@ fn rain_drops(p : vec2f, t : f32) -> vec3f {
 // instead of a slope bias from screen derivatives (which a branchy
 // fragment stage may not take).
 fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
-    if (frame.rt.x > 0.5) {
+    if ((u32(frame.rt.x) & 1u) != 0u) {
         // Traced: one ray toward the sun, from just off the surface. With a
         // soft sun the ray goes to a point of its disc chosen per pixel.
         if (n_dot_l <= 0.0) { return 0.0; }
@@ -686,7 +686,24 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         if (att <= 0.0) {
             continue;
         }
-        if (li.params.y > 0.5) {
+        if ((u32(frame.rt.x) & 2u) != 0u) {
+            // Traced: a ray to the light, for any light that reaches here
+            // and faces the surface. With a temporal filter behind it the
+            // ray goes to a point of a small disc at the light, so the
+            // shadow's edge is soft.
+            if (dot(shaded_n, ld) > 0.0 && att * max(li.color.r, max(li.color.g, li.color.b)) > 0.002) {
+                var to = dv;
+                if (frame.cam_pos.w > 0.0) {
+                    let side = normalize(cross(ld, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(ld.y) > 0.9)));
+                    let o = sh_vogel(i32(sh_ign(in.pos.xy + f32(i) * 3.0) * 16.0), 16, sh_ign(in.pos.yx + 9.0) * 6.2831853) * 0.15;
+                    to = dv + side * o.x + cross(ld, side) * o.y;
+                }
+                let tl = length(to);
+                if (trace_any(in.world + n * 0.03, to / tl, 0.01, tl - 0.05)) {
+                    continue;
+                }
+            }
+        } else if (li.params.y > 0.5) {
             att = att * spot_shadow(li, in.world, shaded_n, dist, in.pos.xy);
         }
         lo = lo + brdf(shaded_n, v, ld, albedo, metallic, roughness) * li.color.rgb * att;

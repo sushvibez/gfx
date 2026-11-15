@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Traced lighting, step 4: `FrameSettings.TracedLightShadows` gives every point and spot light a traced shadow (a ray from the surface to each light that reaches it), not only the `MaxSpotShadows` with a map.
+
 - Traced lighting, step 3: a temporal filter. `PostSettings.Temporal` averages the lit picture over the frames before it (depth reprojection, clamped to the pixel's neighbourhood), and `FrameSettings.Temporal` makes the renderer's per-pixel noise change every frame so there is something to average; traced occlusion then sends one ray a pixel.
 
 - Traced lighting, step 2: `FrameSettings.TracedAO` (and `TracedAORadius`) dims ambient light by three short rays a pixel through the trace scene, in place of `PostSettings.AO`.

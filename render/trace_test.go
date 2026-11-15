@@ -272,3 +272,66 @@ func TestPostTemporalSettlesGrain(t *testing.T) {
 		t.Fatalf("the picture has not settled: mean %.1f after 24 frames, %.1f after 96", m24, m96)
 	}
 }
+
+// Lamps cast traced shadows: a spot light with no shadow map of its own,
+// over a slab hanging above the floor, leaves the floor under the slab
+// dark with FrameSettings.TracedLightShadows and lit without.
+func TestTracedLightShadow(t *testing.T) {
+	shot := func(traced bool) (under, beside float64) {
+		const w, h = 320, 320
+		dev, q := headlessDevice(t)
+		r3, err := New3D(dev, q, gpu.FormatRGBA8Unorm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r3.Release()
+		fs := DefaultFrameSettings()
+		fs.Tonemap = 0
+		fs.Sun = RGBA{R: 1e-4, G: 1e-4, B: 1e-4, A: 1}
+		fs.Ambient = RGBA{R: 0.01, G: 0.01, B: 0.01, A: 1}
+		fs.TracedLightShadows = traced
+		r3.SetFrameSettings(fs)
+		target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
+		view := target.CreateView()
+		depth := dev.CreateDepthTexture(w, h)
+		dview := depth.CreateView()
+		defer func() { dview.Release(); depth.Release(); view.Release(); target.Release() }()
+		floor := core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(40, 1, 40)))
+		slab := core.Mat4Translate(core.V3(0, 4, 0)).Mul(core.Mat4Scale(core.V3(4, 0.2, 4)))
+		r3.SetTraceScene([]TraceInstance{{Model: floor}, {Model: slab}})
+		eye := core.V3(0, 9, 14)
+		vp := core.Mat4Perspective(0.9, 1, 0.5, 100).Mul(core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 1, 0)))
+		grey := &Material{Color: RGBA{R: 0.8, G: 0.8, B: 0.8, A: 1}, Roughness: 1}
+		r3.SetSpotLights([]SpotLight{{Pos: core.V3(0, 10, 0), Dir: core.V3(0, -1, 0), Color: RGBA{R: 1, G: 1, B: 1, A: 1},
+			Energy: 120, Range: 30, Angle: 0.9}})
+		r3.Begin(vp, core.V3(0, -1, 0), eye)
+		r3.DrawMaterial(r3.CubeMesh(), floor, grey)
+		r3.DrawMaterial(r3.CubeMesh(), slab, grey)
+		enc := dev.CreateCommandEncoder()
+		if err := r3.Render(enc, view, dview, gpu.Color{A: 1}); err != nil {
+			t.Fatal(err)
+		}
+		q.Submit(enc.Finish())
+		pix, err := dev.ReadTexture(q, target, w, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := func(p core.Vec3) float64 {
+			c := vp.MulVec4(core.V4(p.X, p.Y, p.Z, 1))
+			return lumAt(pix, w, int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h))
+		}
+		// The slab's shadow reaches 2·10/6 ≈ 3.3 from the lamp's axis.
+		return at(core.V3(0, 0, 2.8)), at(core.V3(0, 0, 6))
+	}
+	uOff, bOff := shot(false)
+	uOn, bOn := shot(true)
+	if uOff < 60 {
+		t.Fatalf("the lamp does not light the floor: %.0f", uOff)
+	}
+	if uOn > uOff*0.25 {
+		t.Fatalf("the slab casts no traced shadow: floor under it %.0f traced, %.0f without", uOn, uOff)
+	}
+	if bOn < bOff*0.9 {
+		t.Fatalf("the floor beside the slab darkened: %.0f traced, %.0f without", bOn, bOff)
+	}
+}

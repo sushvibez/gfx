@@ -103,6 +103,14 @@ type FrameSettings struct {
 	// penumbra is grainy until something filters it). Material draws only;
 	// see docs/notes/raytracing.md.
 	TracedShadows bool
+	// TracedLightShadows makes every point and spot light cast a traced
+	// shadow: a ray from the shaded point to each light that reaches it,
+	// through the trace scene. All of them, not the MaxSpotShadows that have
+	// a map (SpotLight.Shadow is then not consulted by the surface shader;
+	// the haze still reads the maps). With Temporal the ray goes to a point
+	// of a small disc at the light, for a soft edge. A light must stand
+	// clear of the shapes round it, or they shadow everything it lights.
+	TracedLightShadows bool
 	// TracedAO (0…1) is ambient occlusion from rays: each shaded point
 	// sends three short rays into the hemisphere over it and the ambient
 	// light dims by how many are stopped, so corners and the ground under

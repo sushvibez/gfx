@@ -265,7 +265,7 @@ type frameUniforms struct {
 	Misc       core.Vec4 // tonemap mode, light count
 	Sun        core.Vec4 // rgb the sun's radiance (colour times energy)
 	Env        core.Vec4 // sky reflection strength, time in seconds
-	RT         core.Vec4 // x 1 when the sun's shadow is traced, y traced occlusion's strength, z its reach, w the sun jitter's half-angle
+	RT         core.Vec4 // x what is traced (1 the sun's shadow, 2 the lights' shadows, added), y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 
 // sunIntensity is the directional light's radiance, matching the constant
@@ -827,6 +827,9 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	if r.traceShapes > 0 {
 		if fs.TracedShadows {
 			traced = 1
+		}
+		if fs.TracedLightShadows {
+			traced += 2
 		}
 		tracedAO = min(max(fs.TracedAO, 0), 1)
 	}
