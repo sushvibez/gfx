@@ -21,3 +21,4 @@ script/gml/check/*
 !script/gml/check/interact/
 # Papers and other large downloads never belong in the repo.
 *.pdf
+review.md
