@@ -175,14 +175,6 @@ fn spot_shadow(li : Light, world : vec3f, n : vec3f, dist : f32, frag : vec2f) -
     return lit / 8.0;
 }
 
-// Value noise over the plane, for where puddles gather.
-fn wet_noise(p : vec2f) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash12s(i), hash12s(i + vec2f(1.0, 0.0)), u.x),
-               mix(hash12s(i + vec2f(0.0, 1.0)), hash12s(i + vec2f(1.0, 1.0)), u.x), u.y);
-}
 // How open to the sky a point is (1 = nothing over it): the sky map is a
 // depth map looking straight down, tested a hand above the surface with
 // four taps so a roof's edge is soft. Without a map everything is open.
@@ -203,27 +195,6 @@ fn sky_open(world : vec3f) -> f32 {
     open += textureSampleCompareLevel(sky_tex, shadow_samp, uv + vec2f(o, o), sc.z - 0.0006);
     return open * 0.25;
 }
-// Raindrops landing: in each cell of a grid a drop lands at its own place
-// and time; a ring spreads from it, fading (xy: the slope the rings give
-// standing water), and for a moment the drop itself is a pale fleck (z).
-fn rain_drops(p : vec2f, t : f32) -> vec3f {
-    var slope = vec2f(0.0);
-    var fleck = 0.0;
-    for (var k = 0; k < 2; k++) {
-        let q = p * (2.6 + 1.7 * f32(k)) + vec2f(13.7, 5.1) * f32(k);
-        let cell = floor(q);
-        let h = hash12s(cell + 3.1 * f32(k));
-        let centre = cell + vec2f(0.25 + 0.5 * h, 0.25 + 0.5 * fract(h * 57.3));
-        let age = fract(t * (0.9 + 0.5 * fract(h * 13.7)) + h * 9.0);
-        let dv = q - centre;
-        let dist = length(dv);
-        let ring = sin((dist - age * 0.45) * 60.0) * smoothstep(0.07, 0.0, abs(dist - age * 0.45)) * (1.0 - age);
-        slope += dv / max(dist, 1e-3) * ring;
-        fleck = max(fleck, smoothstep(0.10, 0.03, dist) * (1.0 - smoothstep(0.0, 0.16, age)));
-    }
-    return vec3f(slope, fleck);
-}
-
 // The sun's shadow. Hard (one hardware-filtered tap) by default; with
 // FrameSettings.SunSoftness it is PCSS (Fernando 2005): a blocker search
 // finds how far the occluders are, and the filter widens with that
@@ -602,11 +573,13 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     var metallic = clamp(d.p0.x * metal_tex, 0.0, 1.0);
     var roughness = clamp(d.p0.y * rough_tex, 0.05, 1.0);
 
-    // Wet: everything damp darkens and glosses over (more where rain lands,
-    // on what faces up); on level ground a broad noise gathers standing
-    // water into puddles, which are smooth, dark, flat mirrors, ringed by
-    // raindrops when it rains. ripples tells Post to bend this pixel's
-    // mirror image (the sea, and puddles in the rain).
+    // Wet (wgsl.Wet, graded as PTG grades its ground): water in the
+    // pores darkens and saturates what is damp (less on metal), and a film
+    // glosses it over (more on what faces up); puddles stand on level
+    // ground where a broad noise gathers the water: smooth, dark, flat
+    // mirrors with a soaked rim and a damp halo round them, ringed by the
+    // drops when it rains. ripples tells Post to bend this pixel's mirror
+    // image (the sea, and puddles in the rain).
     var ripples = (flags & F_WATER) != 0u;
     var wet = frame.env.w;
     if (wet > 0.0 && (flags & F_WATER) == 0u) {
@@ -614,27 +587,21 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     }
     if (wet > 0.0 && (flags & F_WATER) == 0u) {
         let up = clamp(n.y, 0.0, 1.0);
-        let film = wet * (0.5 + 0.5 * up);
-        let pn = wet_noise(in.world.xz * 0.13) * 0.6 + wet_noise(in.world.xz * 0.41 + vec2f(7.3, 2.9)) * 0.4;
-        let level = 0.22 + 0.30 * wet;
-        let puddle = smoothstep(level, level - 0.07, pn) * smoothstep(0.92, 0.99, up);
-        albedo = albedo * mix(1.0, 0.55, film * (1.0 - metallic));
-        roughness = mix(roughness, max(roughness * 0.4, 0.1), film);
-        albedo = albedo * mix(1.0, 0.5, puddle);
-        roughness = mix(roughness, 0.05, puddle);
-        metallic = mix(metallic, 0.0, puddle);
-        shaded_n = normalize(mix(shaded_n, n, puddle));
+        let fp = max(length(dwx), length(dwy)); // a pixel's size on the surface
+        // At twice the ground's scale (puddles of a few metres on a yard's
+        // paving, as PTG's on a roof or a street).
+        let pud = puddle_level(in.world * 2.0, fp * 2.0, 1.0 - up, 0.8, 0.0, wet) * smoothstep(0.92, 0.99, up);
+        let film = max(wet * (0.5 + 0.5 * up), pud.y * wet);
+        albedo = wet_tone(albedo, mix(0.85, 0.1, metallic), film * (0.75 + 0.25 * pud.z));
+        albedo = mix(albedo, albedo * vec3f(0.6, 0.58, 0.55), pud.x);
+        roughness = mix(mix(roughness, max(roughness * 0.4, 0.1), film), 0.04, pud.x);
+        metallic = mix(metallic, 0.0, pud.x);
+        shaded_n = normalize(mix(shaded_n, n, pud.x));
         let rain = frame.sun.w;
-        if (rain > 0.0 && up > 0.5) {
-            let drops = rain_drops(in.world.xz, frame.env.y);
-            let rs = drops.xy * 0.5 * rain * puddle;
-            shaded_n = normalize(shaded_n + vec3f(rs.x, 0.0, rs.y));
-            ripples = puddle > 0.5;
-            // Where a drop has just landed: a pale, matt fleck of spray.
-            let fleck = drops.z * min(rain * 1.5, 1.0) * smoothstep(0.5, 0.9, up) * wet;
-            albedo = mix(albedo, vec3f(0.8), fleck);
-            roughness = mix(roughness, 1.0, fleck);
-            metallic = mix(metallic, 0.0, fleck);
+        if (rain > 0.0 && pud.x > 0.0) {
+            let rings = rain_rings(in.world.xz, frame.env.y, fp, min(rain, 1.0)) * pud.x;
+            shaded_n = normalize(shaded_n - vec3f(rings.x, 0.0, rings.y) * 0.4);
+            ripples = pud.x > 0.5;
         }
     }
 
