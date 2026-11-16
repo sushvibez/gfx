@@ -167,6 +167,10 @@ func (w *Window) Poll() bool {
 			if int(ev.id) == w.primaryID {
 				w.mouse = append(w.mouse, MouseEvent{Kind: MouseUp, X: ex, Y: ey, Button: 1})
 			}
+		case C.GFX_EV_BACK_DOWN, C.GFX_EV_BACK_UP:
+			// The system Back key arrives as Esc, which every screen
+			// already reads as "back".
+			w.keys = append(w.keys, KeyEvent{Down: ev.kind == C.GFX_EV_BACK_DOWN, Key: KeyEscape})
 		case C.GFX_EV_TOUCH_CANCEL:
 			w.touch = append(w.touch, TouchEvent{ID: int(ev.id), Phase: TouchCancel, X: ex, Y: ey})
 			if w.touchDown > 0 {
@@ -281,7 +285,8 @@ func (w *Window) MouseEvents() []MouseEvent {
 	return ev
 }
 
-// KeyEvents drains key events (none yet on Android; soft keyboard is later).
+// KeyEvents drains key events: the system Back key as KeyEscape (the soft
+// keyboard is later).
 func (w *Window) KeyEvents() []KeyEvent {
 	ev := w.keys
 	w.keys = nil

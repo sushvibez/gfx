@@ -173,6 +173,12 @@ static void *render_thread(void *arg) {
     g_looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
     sensors_start();
     gfxAndroidMain();
+    // The program is over (it quit, or Back from its first screen):
+    // finish the activity rather than leave it showing the last frame.
+    pthread_mutex_lock(&g_mu);
+    ANativeActivity *a = g_destroyed ? NULL : g_activity;
+    pthread_mutex_unlock(&g_mu);
+    if (a) ANativeActivity_finish(a);
     return NULL;
 }
 
@@ -263,6 +269,17 @@ static void drainInput(void) {
                             AMotionEvent_getX(ev, i), AMotionEvent_getY(ev, i));
                 break;
             }
+            handled = 1;
+        } else if (AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_KEY &&
+                   AKeyEvent_getKeyCode(ev) == AKEYCODE_BACK) {
+            // Back is the app's (Esc: a game goes back a screen); left
+            // unhandled, the system would finish the activity under it.
+            // The app quits by returning from gfxAndroidMain.
+            int a = AKeyEvent_getAction(ev);
+            if (a == AKEY_EVENT_ACTION_DOWN && AKeyEvent_getRepeatCount(ev) == 0)
+                push(GFX_EV_BACK_DOWN, 0, 0);
+            else if (a == AKEY_EVENT_ACTION_UP)
+                push(GFX_EV_BACK_UP, 0, 0);
             handled = 1;
         }
         AInputQueue_finishEvent(g_queue, ev, handled);

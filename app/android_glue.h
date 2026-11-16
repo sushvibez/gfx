@@ -16,6 +16,8 @@ enum {
     GFX_EV_TOUCH_MOVE,
     GFX_EV_TOUCH_UP,
     GFX_EV_TOUCH_CANCEL,
+    GFX_EV_BACK_DOWN, // the system Back key (button or gesture), as Esc
+    GFX_EV_BACK_UP,
 };
 
 // gfx_event is one dequeued event for Go to act on.
