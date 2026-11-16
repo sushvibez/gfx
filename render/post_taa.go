@@ -47,6 +47,8 @@ import (
 type taaUniforms struct {
 	Reproj core.Mat4 // this frame's view space to the previous frame's clip space
 	M      core.Vec4 // x 1 = the history holds, y the eye's travel in pixels at distance 1, z the new frame's weight, w how much of the clip a still picture lets go
+	Ride   core.Mat4 // Reproj for a point that rides with the eye (Post.RideRadius)
+	R      core.Vec4 // x the ride radius
 }
 
 // Temporal anti-aliasing's constants: the jitter's cycle, the new frame's
@@ -169,7 +171,8 @@ func (p *Post) taaSetup(cam postCamera) {
 		lc.Release()
 		t.valid = false
 	}
-	u := taaUniforms{Reproj: cam.reproj, M: core.V4(0, cam.travel*p.Projection[5]*float32(p.h)*0.5, taaBlend, taaHold)}
+	u := taaUniforms{Reproj: cam.reproj, M: core.V4(0, cam.travel*p.Projection[5]*float32(p.h)*0.5, taaBlend, taaHold),
+		Ride: cam.ride, R: core.V4(max(p.RideRadius, 0), 0, 0, 0)}
 	if t.valid && cam.ok {
 		u.M.X = 1
 	}
@@ -232,7 +235,7 @@ const postTAAWGSL = `
 @group(0) @binding(2) var hist : texture_2d<f32>;
 @group(0) @binding(3) var depth : texture_depth_2d;
 @group(0) @binding(4) var<uniform> U : PostU;
-struct TaaU { reproj : mat4x4f, m : vec4f };
+struct TaaU { reproj : mat4x4f, m : vec4f, ride : mat4x4f, r : vec4f };
 @group(0) @binding(5) var<uniform> T : TaaU;
 @group(0) @binding(6) var adapt : texture_2d<f32>;
 ` + postDepthWGSL + postExposureWGSL + `
@@ -307,7 +310,10 @@ fn clip_box(lo : vec3f, hi : vec3f, h : vec3f) -> vec3f {
     if (sky) {
         pc = T.reproj * vec4f(view_pos(un, 1.0), 0.0);
     } else {
-        pc = T.reproj * vec4f(view_pos(un, view_dist(dn)), 1.0);
+        let vd = view_dist(dn);
+        var rp = T.reproj;
+        if (vd < T.r.x) { rp = T.ride; }            // it rides with the eye: the turn alone
+        pc = rp * vec4f(view_pos(un, vd), 1.0);
     }
     if (pc.w <= 1e-6) { return vec4f(raw, keep); }
     let puv = vec2f(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);

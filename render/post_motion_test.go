@@ -190,3 +190,36 @@ func TestPostMotionBlurCost(t *testing.T) {
 	off2, on2 := timeIt(0), timeIt(1)
 	t.Logf("frame (scene + Post) at %d×%d: %v without motion blur, %v with (%v, %v)", w, h, off, on, off2, on2)
 }
+
+// What rides with the eye is not smeared by its travel: a camera that
+// only steps sideways blurs the scene, unless the scene is within
+// RideRadius (then it rides along and stays sharp); a turn still blurs
+// what rides.
+func TestPostMotionBlurRide(t *testing.T) {
+	const w, h = 480, 320
+	step := []core.Mat4{motionView(0, -0.6), logDepthView}
+	off := motionScene(t, w, h, false, 0, step)
+	travel := motionScene(t, w, h, false, 1, step)
+	ride := func(radius float32) func(*Post, int) {
+		return func(p *Post, i int) { p.RideRadius = radius }
+	}
+	rode := motionScene(t, w, h, false, 1, step, ride(1e6))
+	turned := motionScene(t, w, h, false, 1, []core.Mat4{motionView(0.05, -0.6), logDepthView}, ride(1e6))
+	_, mTravel := maxDiff(off, travel, w, h)
+	worst, mRode := maxDiff(off, rode, w, h)
+	_, mTurned := maxDiff(off, turned, w, h)
+	t.Logf("a sideways step blurs by %.2f on average; riding %.2f (worst %v); riding through a turn %.2f", mTravel, mRode, worst, mTurned)
+	if mTravel < 1 {
+		t.Fatalf("a sideways step blurred the picture by only %.2f on average", mTravel)
+	}
+	if worst > 0 {
+		t.Fatalf("a scene riding with the eye was smeared by its travel (up to %v)", worst)
+	}
+	if mTurned < 1 {
+		t.Fatalf("a turn blurred a riding scene by only %.2f on average", mTurned)
+	}
+	// A radius short of the scene leaves it to the travel's blur.
+	if _, m := maxDiff(off, motionScene(t, w, h, false, 1, step, ride(0.5)), w, h); m < mTravel*0.8 {
+		t.Fatalf("a ride radius of half a metre kept the scene sharp (%.2f against %.2f)", m, mTravel)
+	}
+}

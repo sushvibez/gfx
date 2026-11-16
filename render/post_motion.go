@@ -32,7 +32,8 @@ import (
 // motionUniforms mirrors the WGSL MotionU struct.
 type motionUniforms struct {
 	Reproj core.Mat4 // this frame's view space to the previous frame's clip space
-	M      core.Vec4 // x shutter (fraction of the frame's motion), y longest blur (uv), z cut (uv per frame)
+	M      core.Vec4 // x shutter (fraction of the frame's motion), y longest blur (uv), z cut (uv per frame), w the ride radius
+	Ride   core.Mat4 // Reproj for a point that rides with the eye (Post.RideRadius)
 }
 
 // Motion blur's constants: the shutter time at strength 1, the longest
@@ -60,6 +61,7 @@ type postMotion struct {
 // postCamera is what Post knows this frame of the previous one's camera.
 type postCamera struct {
 	reproj core.Mat4 // this frame's view space to the previous frame's clip space (x, y and w rows)
+	ride   core.Mat4 // the same for a point that travels with the eye (the turn alone)
 	moved  bool      // the camera moved, turned or zoomed since
 	ok     bool      // reproj holds: the previous camera is known and this is not a cut
 	travel float32   // how far the eye moved, in world units
@@ -120,8 +122,16 @@ func (p *Post) camera() postCamera {
 	var pp core.Mat4
 	pp[0], pp[5], pp[8], pp[9], pp[11] = m.prevProj[0], m.prevProj[5], m.prevProj[8], m.prevProj[9], -1
 	c.reproj = pp.Mul(prevView).Mul(inv)
+	// A point riding with the eye: the previous camera stood where this
+	// one does (its view moved by the eye's travel), so only the turn and
+	// the zoom move it.
+	travel := core.V3(inv[12]-pinv[12], inv[13]-pinv[13], inv[14]-pinv[14])
+	c.ride = pp.Mul(prevView).Mul(core.Mat4Translate(travel.Scale(-1))).Mul(inv)
+	if p.RideRadius <= 0 {
+		c.ride = c.reproj
+	}
 	c.moved = prevView != p.View || m.prevProj != p.Projection
-	c.travel = core.V3(inv[12]-pinv[12], inv[13]-pinv[13], inv[14]-pinv[14]).Length()
+	c.travel = travel.Length()
 	c.ok = true
 	return c
 }
@@ -138,7 +148,8 @@ func (p *Post) motionSetup(cam postCamera) bool {
 	}
 	u := motionUniforms{
 		Reproj: cam.reproj,
-		M:      core.V4(min(0.5, p.Settings.MotionBlur*motionShutter/dt), motionMaxLen, motionCut, 0),
+		M:      core.V4(min(0.5, p.Settings.MotionBlur*motionShutter/dt), motionMaxLen, motionCut, max(p.RideRadius, 0)),
+		Ride:   cam.ride,
 	}
 	p.queue.WriteBuffer(p.motion.uni, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	return true
@@ -215,7 +226,7 @@ const postMotionWGSL = `
 @group(0) @binding(1) var src : texture_2d<f32>;
 @group(0) @binding(2) var depth : texture_depth_2d;
 @group(0) @binding(3) var<uniform> U : PostU;
-struct MotionU { reproj : mat4x4f, m : vec4f };
+struct MotionU { reproj : mat4x4f, m : vec4f, ride : mat4x4f };
 @group(0) @binding(4) var<uniform> M : MotionU;
 ` + postDepthWGSL + `
 @fragment fn fs(in : VOut) -> @location(0) vec4f {
@@ -225,7 +236,10 @@ struct MotionU { reproj : mat4x4f, m : vec4f };
     if (d >= 0.99999) { return vec4f(col0, 1.0); }   // the sky
     let dims = vec2f(textureDimensions(depth));
     let uv = in.uv;
-    let pc = M.reproj * vec4f(view_pos(uv, view_dist(d)), 1.0);
+    let vd = view_dist(d);
+    var rp = M.reproj;
+    if (vd < M.m.w) { rp = M.ride; }                  // it rides with the eye: the turn alone
+    let pc = rp * vec4f(view_pos(uv, vd), 1.0);
     if (pc.w <= 1e-4) { return vec4f(col0, 1.0); }    // behind the previous camera
     let puv = vec2f(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
     let mv = unjitter(uv) - puv;                      // this frame's motion, in uv (not the jitter's)

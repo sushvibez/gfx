@@ -152,6 +152,14 @@ type Post struct {
 	// blur's shutter is open a fixed time, so its share of the frame's
 	// motion depends on it.
 	DeltaTime float32
+	// RideRadius, when above zero, is how far round the eye things ride
+	// with the camera: a cockpit, a cabin, the aircraft a chase camera
+	// follows. Motion blur and temporal anti-aliasing reproject a point
+	// nearer than this by the camera's turn alone, so what travels with
+	// the eye is neither smeared nor ghosted by the travel, while the world
+	// beyond streams past; a radius larger than the scene makes everything
+	// ride (only the camera's turn is seen).
+	RideRadius float32
 
 	device *gpu.Device
 	queue  *gpu.Queue
