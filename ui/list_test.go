@@ -43,6 +43,7 @@ func TestListPerRowHeights(t *testing.T) {
 		t.Errorf("short-list content height = %v, want 70", got)
 	}
 	long := List(&ListState{}, 40, 2, func(int) Element { return Div() }).Heights([]float32{10, 20, 99})
+	long.layout(&Context{}, Rect{0, 0, 200, 400})
 	if got := long.contentHeight(); got != 30 {
 		t.Errorf("long-list content height = %v, want 30 (the extra entry unused)", got)
 	}

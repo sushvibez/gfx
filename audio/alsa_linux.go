@@ -3,23 +3,32 @@
 package audio
 
 // ALSA playback via libasound, loaded with ffi (dlopen, no cgo) — the same
-// pattern as the wgpu binding. Four functions cover blocking playback:
-// open, set_params, writei, recover; writei's blocking paces the mixer.
+// pattern as the wgpu binding. Five functions cover blocking playback:
+// open, set_params, wait, writei, recover; waiting for room and writei's
+// blocking pace the mixer.
 
 import (
 	"fmt"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/sushvibez/gfx/ffi"
 )
 
 type alsaBackend struct {
-	pcm uintptr
+	pcm     uintptr
+	stopped atomic.Bool // set by interrupt: writes fail from here on
 }
+
+// alsaWaitMs is how long one wait for room in the device lasts. write
+// looks at stopped between waits, so this is how soon a closing mixer gets
+// out of a device that has stopped taking audio.
+const alsaWaitMs = 100
 
 var alsa struct {
 	open      func(pcm *uintptr, name string, stream int32, mode int32) int32
 	setParams func(pcm uintptr, format, access int32, channels, rate uint32, softResample int32, latencyUs uint32) int32
+	wait      func(pcm uintptr, timeoutMs int32) int32
 	writei    func(pcm uintptr, buf uintptr, frames uintptr) int
 	recover   func(pcm uintptr, err int32, silent int32) int32
 	close     func(pcm uintptr) int32
@@ -38,6 +47,7 @@ func openBackend() (backend, error) {
 	}
 	lib.Bind(&alsa.open, "snd_pcm_open")
 	lib.Bind(&alsa.setParams, "snd_pcm_set_params")
+	lib.Bind(&alsa.wait, "snd_pcm_wait")
 	lib.Bind(&alsa.writei, "snd_pcm_writei")
 	lib.Bind(&alsa.recover, "snd_pcm_recover")
 	lib.Bind(&alsa.close, "snd_pcm_close")
@@ -59,6 +69,18 @@ func openBackend() (backend, error) {
 func (a *alsaBackend) write(buf []int16) error {
 	frames := uintptr(len(buf) / 2)
 	for frames > 0 {
+		// writei blocks for as long as the device has no room, which is for
+		// ever on one that has stopped (a stalled sound server, a suspended
+		// card). Waiting for room in slices first gives interrupt a point
+		// to be noticed at. A wait that reports an error (underrun,
+		// suspend) falls through: writei reports the same error and the
+		// recovery below deals with it.
+		if a.stopped.Load() {
+			return errInterrupted
+		}
+		if alsa.wait(a.pcm, alsaWaitMs) == 0 {
+			continue // no room yet
+		}
 		n := alsa.writei(a.pcm, uintptr(unsafe.Pointer(&buf[0])), frames)
 		if n < 0 {
 			// Underrun (or suspend): recover once, then retry the chunk.
@@ -74,6 +96,8 @@ func (a *alsaBackend) write(buf []int16) error {
 	}
 	return nil
 }
+
+func (a *alsaBackend) interrupt() { a.stopped.Store(true) }
 
 func (a *alsaBackend) close() {
 	if a.pcm != 0 {

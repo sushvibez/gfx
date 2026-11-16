@@ -5,12 +5,112 @@ import "unsafe"
 // ListState is the retained scroll position of a virtualized list, plus
 // what it has learned about its rows: a QML delegate sizes itself off its
 // own data (a chat bubble is as tall as its message), so a row's height is
-// only known once that row has been built. measured caches it by index and
-// survives the frame, which is what keeps a variable-height list from
-// laying every row out at the first one's height.
+// only known once that row has been built. rows keeps every known height
+// (given by Heights or measured) and survives the frame, which is what
+// keeps a variable-height list from laying every row out at the first
+// one's height; it is an index (see rowIndex), so a layout asks it for the
+// content length, the visible range and a row's position in O(log count).
+//
+// Measured heights are kept by row index. When the model inserts or
+// removes rows anywhere but the end, tell the state (InsertRows,
+// RemoveRows) so the heights stay with their rows; rows added or dropped
+// at the end need nothing.
 type ListState struct {
-	scroll   ScrollState
-	measured map[int]float32
+	scroll ScrollState
+	rows   rowIndex
+
+	// What the last layout synchronised rows with: how many leading rows
+	// came from Heights, whether any row past them was measured, and the
+	// slice a HeightsRev list vouched for.
+	explicit int
+	measured bool
+	revData  *float32
+	revLen   int
+	rev      uint64
+	revOK    bool
+
+	// The last layout's geometry, for RowTop and ScrollToRow.
+	variable bool
+	horiz    bool
+	est, gap float32
+	head     float32
+	count    int
+}
+
+// InsertRows tells a Measured list that the model gained n rows at index
+// at: the heights measured for the rows from there on move down with them
+// and the new rows are measured when they are first built. It costs
+// O(rows); a list that is never told keeps heights by position, which is
+// right only for rows appended at the end.
+func (s *ListState) InsertRows(at, n int) {
+	if n <= 0 || at < 0 || at >= s.rows.len() {
+		return // past the end: the next layout appends them
+	}
+	s.rows.insert(at, n)
+	s.revOK = false
+}
+
+// RemoveRows is InsertRows for n rows removed at index at.
+func (s *ListState) RemoveRows(at, n int) {
+	if at < 0 || at >= s.rows.len() {
+		return
+	}
+	n = min(n, s.rows.len()-at)
+	if n <= 0 {
+		return
+	}
+	s.rows.remove(at, n)
+	s.revOK = false
+}
+
+// InvalidateRow forgets row i's measured height, so it is the estimate
+// until the row is built again. A row is re-measured whenever it is built,
+// so this is only for rows that changed while out of view.
+func (s *ListState) InvalidateRow(i int) {
+	if i >= s.explicit && i < s.rows.len() {
+		s.rows.set(i, unknownRow)
+	}
+}
+
+// ResetRows forgets every measured height (a different model).
+func (s *ListState) ResetRows() {
+	s.rows.forget(0, s.rows.len())
+	s.explicit, s.measured, s.revOK = 0, false, false
+}
+
+// RowTop is where row i starts within the list's content (0 is the
+// content's start, so a header's length is included) and how long the row
+// is, as of the last layout; ok is false for a row the list did not have.
+// It is O(log count) for a variable-height list.
+func (s *ListState) RowTop(i int) (top, size float32, ok bool) {
+	if i < 0 || i >= s.count {
+		return 0, 0, false
+	}
+	if !s.variable || i >= s.rows.len() {
+		return s.head + float32(i)*(s.est+s.gap), s.est, true
+	}
+	return s.head + float32(s.rows.top(i, s.est, s.gap)), s.rows.size(i, s.est), true
+}
+
+// ScrollToRow scrolls the least distance that brings row i wholly into
+// view (its start, when the row is longer than the view), using the last
+// layout's geometry.
+func (s *ListState) ScrollToRow(i int) {
+	top, size, ok := s.RowTop(i)
+	if !ok {
+		return
+	}
+	off, view, limit := &s.scroll.Y, s.scroll.viewH, s.scroll.maxY()
+	if s.horiz {
+		off, view, limit = &s.scroll.X, s.scroll.viewW, s.scroll.maxX()
+	}
+	switch {
+	case top < *off || size > view:
+		*off = top
+	case top+size > *off+view:
+		*off = top + size - view
+	}
+	*off = min(max(*off, 0), limit)
 }
 
 // Offset is the current scroll offset in pixels (0 = top).
@@ -60,30 +160,79 @@ func (e *ListEl) Heights(heights []float32) *ListEl {
 	return e
 }
 
+// HeightsRev is Heights for a long list. Heights compares the slice with
+// what the list already knows on every layout, a scan of the whole slice;
+// here rev vouches for the contents instead: while the same slice arrives
+// with the same rev the scan is skipped and the layout is O(log count).
+// Change rev whenever an element changes (a new slice is noticed on its
+// own).
+func (e *ListEl) HeightsRev(heights []float32, rev uint64) *ListEl {
+	e.heights, e.rev, e.hasRev = heights, rev, true
+	return e
+}
+
+// SetRowHeight tells the state that row i of a HeightsRev list is now h
+// long, so one row can change without a new rev and the scan that follows
+// it: write heights[i], call this, keep the rev. It does nothing for a row
+// the last layout's heights did not cover.
+func (s *ListState) SetRowHeight(i int, h float32) {
+	if i >= 0 && i < s.explicit && i < s.rows.len() {
+		s.rows.set(i, h)
+	}
+}
+
+// variable reports rows of differing sizes: the list then keeps them in
+// its state's index instead of using arithmetic on the uniform height.
+func (e *ListEl) variable() bool { return e.heights != nil || e.measure_ }
+
+// syncRows brings the state's row index in line with this frame's list:
+// the row count, the heights given by Heights, and which of the remaining
+// rows may keep a measured height.
+func (e *ListEl) syncRows() {
+	st := e.st
+	ix := &st.rows
+	ix.resize(e.count)
+	n := min(len(e.heights), e.count)
+	// Rows the slice no longer covers go back to the estimate, and so do
+	// measured rows once the list stops measuring.
+	if n < st.explicit {
+		ix.forget(n, st.explicit)
+	}
+	if st.measured && !e.measure_ {
+		ix.forget(n, e.count)
+		st.measured = false
+	}
+	st.explicit = n
+	if n == 0 {
+		st.revOK = false
+		return
+	}
+	data := unsafe.SliceData(e.heights)
+	if e.hasRev && st.revOK && st.revData == data && st.revLen == n && st.rev == e.rev {
+		return
+	}
+	ix.setPrefix(e.heights[:n])
+	st.revData, st.revLen, st.rev, st.revOK = data, n, e.rev, e.hasRev
+}
+
 // rowHeightAt is row i's height: the one given by Heights, the one measured when
-// the row was last built, else the uniform estimate.
+// the row was last built, else the uniform estimate. For a variable list
+// it reads the state's index, so it is valid once layout has synchronised
+// it.
 func (e *ListEl) rowHeightAt(i int) float32 {
-	if i < len(e.heights) {
-		return e.heights[i]
+	if !e.variable() {
+		return e.rowH
 	}
-	if e.measure_ && e.st.measured != nil {
-		if h, ok := e.st.measured[i]; ok {
-			return h
-		}
-	}
-	return e.rowH
+	return e.st.rows.size(i, e.rowH)
 }
 
 // rowTop is where row i starts and how tall it is, honouring per-row
-// heights when they were given.
+// heights when they were given (valid once layout has run, as rowHeightAt).
 func (e *ListEl) rowTop(i int) (top, h float32) {
-	if e.heights == nil && !e.measure_ {
+	if !e.variable() {
 		return float32(i) * (e.rowH + e.gap), e.rowH
 	}
-	for k := 0; k < i; k++ {
-		top += e.rowHeightAt(k) + e.gap
-	}
-	return top, e.rowHeightAt(i)
+	return float32(e.st.rows.top(i, e.rowH, e.gap)), e.st.rows.size(i, e.rowH)
 }
 
 // contentHeight is the whole list's height, however the rows are sized.
@@ -91,14 +240,10 @@ func (e *ListEl) contentHeight() float32 {
 	if e.count == 0 {
 		return 0
 	}
-	if e.heights == nil && !e.measure_ {
+	if !e.variable() {
 		return float32(e.count)*(e.rowH+e.gap) - e.gap
 	}
-	var total float32
-	for i := 0; i < e.count; i++ {
-		total += e.rowHeightAt(i) + e.gap
-	}
-	return max(total-e.gap, 0)
+	return max(float32(e.st.rows.top(e.count, e.rowH, e.gap)-float64(e.gap)), 0)
 }
 
 // ListEl is the per-frame element of a ListState.
@@ -107,6 +252,8 @@ type ListEl struct {
 	rowH    float32
 	gap     float32   // space between rows; the pitch is rowH + gap
 	heights []float32 // per-row heights (sections); nil = uniform rowH
+	rev     uint64    // names the contents of heights (see HeightsRev)
+	hasRev  bool
 	count   int
 	build   func(i int) Element
 	w, h    float32
@@ -250,6 +397,10 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 	if e.footer != nil {
 		e.footSz = e.mainOf(e.footer.measure(ctx))
 	}
+	variable := e.variable()
+	if variable {
+		e.syncRows()
+	}
 	rowsLen := e.contentHeight()
 	e.setExtent(e.headSz+rowsLen+e.footSz, r)
 	off := e.offset()
@@ -258,24 +409,17 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 	// Visible row range, with one row of overscan each side.
 	first := max(int(rowsOff/pitch)-1, 0)
 	last := min(int((rowsOff+view)/pitch)+1, e.count)
-	if e.heights != nil || e.measure_ {
-		// Rows differ in size, so the visible range is found by walking
-		// them; a sectioned list is short enough that this is cheaper than
-		// keeping a prefix-sum index up to date. A measured list walks the
-		// same way, on what it has learned so far (the uniform estimate
-		// for rows it has never built).
-		first, last = 0, e.count
-		var y float32
-		for i := 0; i < e.count; i++ {
-			h := e.rowHeightAt(i)
-			if y+h < rowsOff {
-				first = i + 1
-			}
-			if y > rowsOff+view {
-				last = i
-				break
-			}
-			y += h + e.gap
+	if variable {
+		// Rows differ in size, so the range comes from the index: the rows
+		// that end above the offset are skipped, and the range stops at the
+		// first row that starts below the view. A measured list answers on
+		// what it has learned so far (the estimate for rows it has never
+		// built).
+		ix := &e.st.rows
+		first = ix.find(float64(rowsOff)+float64(e.gap), false, e.rowH, e.gap)
+		last = 0
+		if bottom := float64(rowsOff + view); bottom >= 0 {
+			last = min(ix.find(bottom, true, e.rowH, e.gap)+1, e.count)
 		}
 		first = max(first-1, 0)
 		last = min(last+1, e.count)
@@ -295,11 +439,10 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 			// Learn this row's own size BEFORE anything is positioned, so
 			// the rows after it land where they belong on this very frame
 			// (a size learned a frame late shows as a jump).
-			if ms := e.mainOf(row.measure(ctx)); ms > 0 {
-				if e.st.measured == nil {
-					e.st.measured = map[int]float32{}
-				}
-				e.st.measured[i] = ms
+			// A row Heights covers keeps the height it was given.
+			if ms := e.mainOf(row.measure(ctx)); ms > 0 && i >= len(e.heights) {
+				e.st.rows.set(i, ms)
+				e.st.measured = true
 			}
 		}
 	}
@@ -310,29 +453,30 @@ func (e *ListEl) layout(ctx *Context, r Rect) {
 		e.setExtent(e.headSz+rowsLen+e.footSz, r)
 		off = e.offset()
 	}
+	st := e.st
+	st.variable, st.horiz, st.est, st.gap = variable, e.horiz, e.rowH, e.gap
+	st.head, st.count = e.headSz, e.count
 	if e.header != nil {
 		e.place(ctx, e.header, r, off, 0, e.headSz)
 	}
 	// Rows of differing sizes sit on a running sum carried from the first
-	// built row: asking rowTop for each one walked every row ahead of it
-	// again, once per visible row.
-	variable := e.heights != nil || e.measure_
-	var top float32
-	if variable {
-		top, _ = e.rowTop(first)
+	// built row, whose start the index gives.
+	var top float64
+	if variable && first < last {
+		top = e.st.rows.top(first, e.rowH, e.gap)
 	}
 	for k, row := range built {
 		i := first + k
 		h := e.rowH
 		if variable {
-			h = e.rowHeightAt(i)
+			h = e.st.rows.size(i, e.rowH)
 		} else {
-			top, _ = e.rowTop(i)
+			top = float64(float32(i) * pitch)
 		}
-		e.place(ctx, row, r, off, e.headSz+top, h)
+		e.place(ctx, row, r, off, e.headSz+float32(top), h)
 		e.rows = append(e.rows, row)
 		if variable {
-			top += h + e.gap
+			top += float64(h) + float64(e.gap)
 		}
 	}
 	if e.footer != nil {

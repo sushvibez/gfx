@@ -35,6 +35,7 @@ func benchListEnd(b *testing.B, count int, measured bool) {
 
 func BenchmarkListHeightsEnd10k(b *testing.B)   { benchListEnd(b, 10000, false) }
 func BenchmarkListHeightsEnd100k(b *testing.B)  { benchListEnd(b, 100000, false) }
+func BenchmarkListMeasuredEnd10k(b *testing.B)  { benchListEnd(b, 10000, true) }
 func BenchmarkListMeasuredEnd100k(b *testing.B) { benchListEnd(b, 100000, true) }
 
 // Rows of a variable-height list land where summing the heights before
@@ -77,3 +78,39 @@ func TestListVariableRowsLandOnTheirPrefixSums(t *testing.T) {
 		}
 	}
 }
+
+// benchListRev is benchListEnd with HeightsRev: the slice is vouched for,
+// so nothing in the layout is proportional to the row count. With edit, one
+// row changes height every frame and the state is told (SetRowHeight).
+func benchListRev(b *testing.B, count int, edit bool) {
+	st := &ListState{}
+	heights := make([]float32, count)
+	for i := range heights {
+		heights[i] = float32(20 + i%3*8)
+	}
+	row := Div().Size(200, 28)
+	var rev uint64
+	mk := func() *ListEl {
+		return List(st, 24, count, func(int) Element { return row }).HeightsRev(heights, rev)
+	}
+	ctx := &Context{}
+	r := Rect{0, 0, 200, 600}
+	mk().layout(ctx, r)
+	st.SetOffset(st.MaxY())
+	b.ReportAllocs()
+	n := 0
+	for b.Loop() {
+		ctx.scrolls = ctx.scrolls[:0]
+		if edit {
+			n++
+			i := n * 7919 % count
+			heights[i] = float32(20 + n%5*4)
+			st.SetRowHeight(i, heights[i])
+		}
+		mk().layout(ctx, r)
+	}
+}
+
+func BenchmarkListHeightsRevEnd10k(b *testing.B)      { benchListRev(b, 10000, false) }
+func BenchmarkListHeightsRevEnd100k(b *testing.B)     { benchListRev(b, 100000, false) }
+func BenchmarkListHeightsRevEditEnd100k(b *testing.B) { benchListRev(b, 100000, true) }

@@ -16,13 +16,21 @@ import "C"
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
 
 type aaudioBackend struct {
-	stream *C.AAudioStream
+	stream  *C.AAudioStream
+	stopped atomic.Bool // set by interrupt: writes fail from here on
 }
+
+// aaudioWriteTimeout bounds one AAudioStream_write, which returns what it
+// managed to queue (nothing, on a stream that has stopped taking audio).
+// write looks at stopped between calls, so this is how soon a closing
+// mixer gets out of a stalled stream.
+const aaudioWriteTimeout = 100 * time.Millisecond
 
 func openBackend() (backend, error) {
 	var builder *C.AAudioStreamBuilder
@@ -56,7 +64,10 @@ func openBackend() (backend, error) {
 func (a *aaudioBackend) write(buf []int16) error {
 	frames := len(buf) / 2
 	for frames > 0 {
-		n := C.AAudioStream_write(a.stream, unsafe.Pointer(&buf[0]), C.int32_t(frames), C.int64_t(time.Second))
+		if a.stopped.Load() {
+			return errInterrupted
+		}
+		n := C.AAudioStream_write(a.stream, unsafe.Pointer(&buf[0]), C.int32_t(frames), C.int64_t(aaudioWriteTimeout))
 		if n < 0 {
 			if n == C.AAUDIO_ERROR_DISCONNECTED {
 				return fmt.Errorf("audio: AAudio stream disconnected")
@@ -70,6 +81,8 @@ func (a *aaudioBackend) write(buf []int16) error {
 	}
 	return nil
 }
+
+func (a *aaudioBackend) interrupt() { a.stopped.Store(true) }
 
 func (a *aaudioBackend) close() {
 	if a.stream != nil {

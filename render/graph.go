@@ -207,7 +207,9 @@ func (g *Graph) evict() {
 	}
 }
 
-// Release frees the pooled transient textures.
+// Release frees the pooled transient textures. It may be called more than
+// once, and the graph may be used again afterwards (it pools afresh); call
+// it before releasing the device the graph was made for.
 func (g *Graph) Release() {
 	for _, list := range g.pool {
 		for _, t := range list {

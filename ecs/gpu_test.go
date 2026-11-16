@@ -147,3 +147,71 @@ fn main(@builtin(global_invocation_id) id : vec3u) {
 		t.Fatalf("merged range = (%d, %d), want (32, 144)", off, bytes)
 	}
 }
+
+// On a real device: growing a row at a time changes the buffer a
+// logarithmic number of times, Generation says when, and the rows read
+// back are the column's whichever buffer they landed in.
+func TestGPUColumnGrowthOnDevice(t *testing.T) {
+	lib := os.Getenv("GFX_WGPU_LIB")
+	if lib == "" {
+		if p, err := filepath.Abs(filepath.Join("..", "build", "wgpu", gpu.DefaultLibNames()[0])); err == nil {
+			if _, statErr := os.Stat(p); statErr == nil {
+				lib = p
+			}
+		}
+	}
+	if lib == "" {
+		t.Skip("wgpu-native not found; run scripts/fetch-wgpu.sh or set GFX_WGPU_LIB")
+	}
+	inst, err := gpu.NewInstance(lib)
+	if err != nil {
+		t.Fatalf("NewInstance: %v", err)
+	}
+	adapter, err := inst.RequestAdapter(nil)
+	if err != nil {
+		t.Fatalf("RequestAdapter: %v", err)
+	}
+	device, err := adapter.RequestDevice()
+	if err != nil {
+		t.Fatalf("RequestDevice: %v", err)
+	}
+	queue := device.Queue()
+
+	w := NewWorld()
+	parts := NewComponent[particle](w)
+	col := NewGPUColumn(device, parts, gpu.BufferCopySrc)
+	defer col.Release()
+	const n = 1000
+	buffers, uploaded := 0, 0
+	var last *gpu.Buffer
+	var gen uint32
+	for i := range n {
+		parts.Add(w.Spawn(), particle{X: float32(i)})
+		col.Sync(queue)
+		if changed := col.Buffer() != last; changed != (col.Generation() != gen) {
+			t.Fatalf("row %d: buffer changed = %v but generation went %d to %d", i, changed, gen, col.Generation())
+		}
+		if col.Buffer() != last {
+			buffers++
+			last, gen = col.Buffer(), col.Generation()
+		}
+		_, b := col.LastUpload()
+		uploaded += b
+	}
+	t.Logf("%d rows one at a time: %d buffers, %d bytes uploaded", n, buffers, uploaded)
+	if buffers != 11 {
+		t.Errorf("%d buffers for %d rows added one at a time, want 11", buffers, n)
+	}
+	if col.Buffer().Size() != col.Capacity()*col.Stride() || col.Capacity() < n {
+		t.Errorf("buffer of %d bytes for a capacity of %d rows", col.Buffer().Size(), col.Capacity())
+	}
+	out, err := device.ReadBuffer(queue, col.Buffer(), n*col.Stride())
+	if err != nil {
+		t.Fatalf("ReadBuffer: %v", err)
+	}
+	for i := range n {
+		if got := math.Float32frombits(binary.LittleEndian.Uint32(out[i*16:])); got != float32(i) {
+			t.Fatalf("row %d x = %v, want %v", i, got, float32(i))
+		}
+	}
+}

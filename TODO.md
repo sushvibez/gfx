@@ -146,7 +146,12 @@ real browser. Win32 `WM_TOUCH` is not handled.
   code, editor seeds. The `.gml` engine is the DSL that shipped instead;
   full QML compatibility is staged in `script/TODO.md`.
 - **`audio`**: Web Audio and AAudio verified only once; no mixer, no
-  spatialisation, no streaming decode.
+  spatialisation, no streaming decode. `Device.Close` is bounded on every
+  backend (2026-11-16), but the interruption of a stalled device is proven
+  against fakes only: not yet run on a real ALSA device, in a browser or
+  on Android (the AAudio change was not even compiled, no NDK on the
+  machine it was written on), and winmm's failure paths only through an
+  injected device.
 - **`physics`**: P3+ of `physics/PLAN.md` (joints, continuous collision,
   a 2D variant).
 - **Accessibility bridges** (2026-11-08): `ui.AccessTree` and the kit's

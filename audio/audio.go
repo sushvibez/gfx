@@ -18,7 +18,9 @@ package audio
 
 import (
 	"fmt"
+	"os"
 	"sync"
+	"time"
 )
 
 // SampleRate is the mixer's output rate; sounds resample to it at load.
@@ -40,10 +42,24 @@ type backend interface {
 // interrupter is a backend whose write can wait on the device for longer
 // than a chunk: interrupt makes a write in progress, and every later one,
 // return an error. Close calls it so a device that stopped taking audio
-// cannot hold the mixer, and Close with it, forever.
+// cannot hold the mixer, and Close with it, forever. It is called from the
+// goroutine that closes, while write may be running on the mixer's.
+//
+// Every backend with a device behind it implements it: winmm (a write
+// waiting for a buffer returns within a millisecond), ALSA (within
+// alsaWaitMs, when the device has no room; a device that stalls part-way
+// through a chunk is not interrupted), AAudio (within its write timeout),
+// Web Audio (at once). What interrupt cannot reach, mixerExitWait bounds.
 type interrupter interface {
 	interrupt()
 }
+
+// mixerExitWait is how long Close waits for the mixer to come out of the
+// backend's write once it has been told to stop. An interrupted write
+// returns in milliseconds; this is for a write that cannot be interrupted
+// (the driver is stuck inside a call), which would otherwise hold Close
+// for ever on any platform.
+var mixerExitWait = 2 * time.Second
 
 // Device owns the backend and the mix goroutine.
 type Device struct {
@@ -77,15 +93,37 @@ func (d *Device) SetVolume(v float32) {
 
 // Close stops the mixer and releases the device. The backend is closed
 // only once the mixer has left it, so nothing is written to a closed
-// device. Closing twice is harmless.
+// device.
+//
+// Close returns in bounded time on every platform. It interrupts the
+// backend's write, waits at most mixerExitWait for the mixer to leave it,
+// and then closes the backend. If the mixer has not left by then (the
+// device is stuck inside a write that cannot be interrupted), Close says
+// so on stderr and returns anyway; the mixer goroutine and the device stay
+// behind and are closed if the write ever returns.
+//
+// Closing twice is harmless, as is closing from several goroutines: the
+// later calls wait for the first and return. After Close, sounds of this
+// device may still be held and asked to play; a voice started then is
+// already finished (Playing reports false) and nothing is mixed.
 func (d *Device) Close() {
 	d.closed.Do(func() {
 		close(d.stop)
 		if in, ok := d.be.(interrupter); ok {
 			in.interrupt()
 		}
-		<-d.done
-		d.be.close()
+		wait := time.NewTimer(mixerExitWait)
+		defer wait.Stop()
+		select {
+		case <-d.done:
+			d.be.close()
+		case <-wait.C:
+			fmt.Fprintf(os.Stderr, "audio: the device did not return from a write within %v of closing; leaving it behind\n", mixerExitWait)
+			go func() {
+				<-d.done
+				d.be.close()
+			}()
+		}
 	})
 }
 
@@ -108,6 +146,13 @@ func (s *Sound) Loop() *Voice { return s.start(true) }
 func (s *Sound) start(loop bool) *Voice {
 	v := &Voice{snd: s, vol: 1, loop: loop}
 	d := s.dev
+	select {
+	case <-d.stop:
+		// Closed: no mixer will ever take the voice off the list.
+		v.stop = true
+		return v
+	default:
+	}
 	d.mu.Lock()
 	d.voices = append(d.voices, v)
 	d.mu.Unlock()

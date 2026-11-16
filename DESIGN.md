@@ -191,6 +191,24 @@ span per frame and uploads via `queue.WriteBuffer` (no persistently-mapped
 staging, no double-buffered readback); **systems and the parallel scheduler
 don't exist yet**.
 
+*Status (2026-11-16):* three contracts of the pool are now written down where
+they are used and tested (`ecs/contract_test.go`). **Dirty ranges belong to
+the mirror, not the component**: each `GPUColumn` keeps its own merged span, so
+any number of mirrors of one component each upload every change once (a single
+shared span was cleared by the first mirror to sync; the second never saw the
+change). **Capacity**: a `GPUColumn`'s buffer is exactly the column the first
+time, then at least doubles when outgrown (up to the device's buffer and
+storage-binding limits) and is replaced by one twice the column after `GPUColumnKeepSyncs` (120)
+syncs under a quarter full, so `Rows()` and not `Buffer().Size()` or WGSL
+`arrayLength` is the live count, and `Generation()` says when the buffer
+changed and bind groups over it must be rebuilt. **Iteration**: `Component.Each`
+states what a callback may do (write through the pointer; add, with new rows
+left for the next pass; remove or despawn, which no longer runs off the
+shrunken column but skips the row swapped into the current or an earlier
+slot); a world and its components belong to one goroutine. `GPUColumn.Release`
+is repeatable, safe before the first sync, and a released column may be synced
+again.
+
 ### 4.1 The node tree on top — decided
 
 **Decision: the node tree is the public API; ECS columns are its storage.**
@@ -249,6 +267,14 @@ readback, `DualSrcBlend`, and MSAA textures. Two design points are not yet
 reality: WGSL-reflection codegen for bind group layouts (pipelines use
 auto-derived layouts instead; `gfx gen` covers the inverse Go→WGSL direction),
 and batched command recording on web (each encoder call is one JS call today).
+
+*Status (2026-11-16):* the lifetime contract is in the package comment
+(`gpu/doc.go`, "Lifetime"): `Release` is exactly-once and not nil-safe, objects
+are released dependents first and the device last, and the strict order is
+what the web backend needs (native wgpu counts references and forgives the
+other order). The registry with reference counts and debug leak detection that
+§7 describes is still not built; repeatable `Release` lives in the owners above
+`gpu` (`ecs.GPUColumn`, `render.Graph`, `audio.Device.Close`).
 
 ## 6. FFI (the cgo replacement) and scripting
 
