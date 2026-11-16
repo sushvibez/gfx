@@ -73,8 +73,12 @@ func (p *Property[T]) Bind(fn func() T) {
 			// a caller that recovers has it retried by the next Get or
 			// flush, like any binding that panics later. The revision moves
 			// so no read-set goes on answering from before it was waiting.
+			// Bindings that read this property wait with it: their next Get
+			// pulls the retry instead of answering from the value they
+			// last computed, and read-sets over them are not fresh.
 			b.setDirty(true)
 			dirtyQueue = append(dirtyQueue, b)
+			b.ownerSubs.invalidate()
 			revision++
 		}
 	}()

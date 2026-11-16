@@ -175,3 +175,110 @@ func TestLoopStepKeepsCallbacksBehindAPanic(t *testing.T) {
 		t.Fatalf("a callback ran twice: %v", got)
 	}
 }
+
+// failingBind binds p to fn behind one failed first evaluation: the first
+// call panics (after reading src when readFirst), later ones return fn().
+func failingBind(p *Property[int], src *Property[int], readFirst bool, fn func() int) {
+	first := true
+	recovered(func() {
+		p.Bind(func() int {
+			if readFirst {
+				_ = src.Get()
+			}
+			if first {
+				first = false
+				panic("first evaluation")
+			}
+			return fn()
+		})
+	})
+}
+
+// Bindings that read a property wait with it when its new binding fails
+// its first evaluation: their next Get pulls the retry, with no flush, and
+// read-sets over them are not fresh in the meantime. A chain and a diamond,
+// an upstream that was plain or already bound, a failure before or after a
+// source read.
+func TestBindFirstEvaluationPanicReachesDependents(t *testing.T) {
+	for _, wasBound := range []bool{false, true} {
+		for _, readFirst := range []bool{false, true} {
+			var src, p, left, right, sum Property[int]
+			src.Set(1)
+			if wasBound {
+				p.Bind(func() int { return src.Get() })
+			} else {
+				p.Set(1)
+			}
+			left.Bind(func() int { return p.Get() * 2 })
+			right.Bind(func() int { return p.Get() + 10 })
+			sum.Bind(func() int { return left.Get() + right.Get() })
+			var inner *ReadSet
+			outer := TrackReads(func() {
+				inner = TrackReads(func() { _ = sum.Get() })
+			})
+			direct := TrackReads(func() { _ = left.Get() })
+			if outer.Stale() || inner.Stale() || direct.Stale() {
+				t.Fatal("stale before anything changed")
+			}
+			changes := 0
+			sum.Changed().Connect(func(int) { changes++ })
+
+			failingBind(&p, &src, readFirst, func() int { return 3 })
+			if !direct.Stale() || !inner.Stale() || !outer.Stale() {
+				t.Fatalf("bound=%v read=%v: read-sets over dependents of a waiting property read as fresh (%v %v %v)",
+					wasBound, readFirst, direct.Stale(), inner.Stale(), outer.Stale())
+			}
+			if got := sum.Get(); got != 19 { // 3*2 + 3+10
+				t.Fatalf("bound=%v read=%v: sum = %d without a flush, want 19", wasBound, readFirst, got)
+			}
+			if changes != 1 {
+				t.Fatalf("bound=%v read=%v: %d change notices, want 1", wasBound, readFirst, changes)
+			}
+			if !outer.Stale() || !direct.Stale() {
+				t.Fatal("the values changed, and the sets must say so")
+			}
+			FlushBindings()
+			if got := sum.Get(); got != 19 || changes != 1 {
+				t.Fatalf("after the flush: sum %d, %d change notices", got, changes)
+			}
+		}
+	}
+}
+
+// A retry that produces the value the property already had settles
+// everything: dependents keep their values, nothing is announced, and the
+// read-sets are fresh again.
+func TestBindFirstEvaluationPanicRetryToSameValue(t *testing.T) {
+	for _, how := range []string{"get", "flush"} {
+		var src, p, dep Property[int]
+		src.Set(1)
+		p.Set(4)
+		dep.Bind(func() int { return p.Get() * 2 })
+		var inner *ReadSet
+		outer := TrackReads(func() {
+			inner = TrackReads(func() { _ = dep.Get() })
+		})
+		changes := 0
+		dep.Changed().Connect(func(int) { changes++ })
+		p.Changed().Connect(func(int) { changes++ })
+
+		failingBind(&p, &src, true, func() int { return 4 })
+		if !inner.Stale() || !outer.Stale() {
+			t.Fatalf("%s: fresh while the retry is waiting", how)
+		}
+		if how == "flush" {
+			FlushBindings()
+		} else if got := dep.Get(); got != 8 {
+			t.Fatalf("get: dep = %d, want 8", got)
+		}
+		if inner.Stale() || outer.Stale() {
+			t.Fatalf("%s: still stale after the retry gave the same value", how)
+		}
+		if changes != 0 {
+			t.Fatalf("%s: %d change notices for an unchanged value", how, changes)
+		}
+		if dep.Get() != 8 {
+			t.Fatalf("%s: dep = %d, want 8", how, dep.Get())
+		}
+	}
+}
