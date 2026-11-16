@@ -161,7 +161,7 @@ func RunGame(o Options, update func(*Frame) bool) error {
 		surface.Present()
 		view.Release()
 		tex.Release()
-		if rendered == 0 {
+		if rendered == 0 && !o.Hidden {
 			win.Show() // the first frame is on screen: reveal the window
 		}
 		rendered++

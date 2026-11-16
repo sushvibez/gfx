@@ -123,8 +123,11 @@ real browser. Win32 `WM_TOUCH` is not handled.
   particles (CPU-simulated ones are in: `render/particles`,
   `Renderer3D.SetParticles`, 2026-11-16). Quality tiers and dynamic
   resolution are in (`render.Quality`, 2026-11-13). The WGSL both 3D
-  renderers share is `render/wgsl` (2026-11-16): the cloud deck's
-  lighting is still only PTG's. The legacy `Draw*` calls do not
+  renderers share is `render/wgsl` (2026-11-16), the clouds' light
+  included (`wgsl.Sky`: `deck_top`, `deck_under`, the cumulus's
+  scattering); the rain's splashes and drips (`particles.Splash`) and snow
+  (`FrameSettings.Snow`) are both renderers' too. Dynamic resolution is
+  checked in a real window (`TestDynamicResolutionWindow`). The legacy `Draw*` calls do not
   write HDR (material draws only). `games/harbor` drives this list.
 - **`app`** (§8): Wayland; multi-window beyond X11 (`NewChild`, `Hide`,
   `Show` are X11-only); the null-GPU headless backend (§8.1 — today

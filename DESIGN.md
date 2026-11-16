@@ -659,6 +659,15 @@ tier drop, which `Quality.Frame` takes (never under `Quality.Lowest`).
 Pure Go, no GPU (`TestDynRes*`, `TestQuality*`); `View3D.RenderScale`
 (or a renderer drawing into `Post.SceneView` at the scaled size, which
 `Post`'s last pass stretches to the display) is where the scale lands.
+*Status (2026-11-16):* checked in a real window: `TestDynamicResolutionWindow`
+(`ui/shell`, `GFX_WINDOW_TESTS=1`) runs the shell's own loop in a window
+that never shows (`shell.Options.Hidden`), a `Renderer3D` scene through
+`Post` at the steered scale, 30 ms of artificial load a frame for 2.5 s:
+the scale went 1 → 0.9 → 0.7 → 0.6 at means of 32–34 ms, the tier dropped
+to medium at the floor, and with the load gone (17 ms) it climbed back a
+tenth every 2 s to 1.0. `Post.RideRadius` (the same day) lets what travels
+with the eye (a cockpit, a chased aircraft) be reprojected by the turn
+alone in motion blur and TAA.
 
 *Status (2026-11-11):* the post stack has started: `render.Post` takes an
 HDR scene (a `Renderer3D` built for `FormatRGBA16Float` with

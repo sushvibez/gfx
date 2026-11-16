@@ -43,6 +43,11 @@ type Options struct {
 	FontSize  float64  // default 18
 	FontPaths []string // preferred font files, tried before the defaults
 	MaxFrames int      // 0 = run until closed
+	// Hidden keeps the window from ever being shown (Run and RunGame show
+	// it after the first frame otherwise): a bounded test through the
+	// real frame loop, swapchain and all, with nothing on the screen.
+	// X11 and Windows only; a browser canvas is always there.
+	Hidden bool
 	// MaxFPS caps the frame rate. 0 means the runner's default: as fast
 	// as the display allows for the game runners, and 60 frames a second
 	// of animation for Run (input still draws at once; GFX_MAX_FPS
@@ -714,7 +719,7 @@ func Run(o Options, hooks Hooks) error {
 				fmt.Fprintln(os.Stderr, "shell: the vsync'd swapchain stalled three frames running; presenting immediately from now on")
 			}
 		}
-		if rendered == 0 {
+		if rendered == 0 && !o.Hidden {
 			win.Show() // first real frame is on screen — reveal the window
 		}
 		rendered++
