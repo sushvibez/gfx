@@ -33,7 +33,7 @@ func roofScene(t *testing.T, wetness float32) (under, open float64) {
 
 // roofPixels renders roofScene's picture (320×240) at the given wetness
 // and rain.
-func roofPixels(t *testing.T, wetness, rain float32) ([]byte, core.Mat4) {
+func roofPixels(t *testing.T, wetness, rain float32, snow ...float32) ([]byte, core.Mat4) {
 	t.Helper()
 	const w, h = 320, 240
 	dev, q := headlessDevice(t)
@@ -47,6 +47,9 @@ func roofPixels(t *testing.T, wetness, rain float32) ([]byte, core.Mat4) {
 	fs.Sun = RGBA{R: 1e-4, G: 1e-4, B: 1e-4, A: 1}
 	fs.Ambient = RGBA{R: 0.6, G: 0.6, B: 0.6, A: 1}
 	fs.Wetness, fs.Rain = wetness, rain
+	if len(snow) > 0 {
+		fs.Snow = snow[0]
+	}
 	r3.SetFrameSettings(fs)
 	target := dev.CreateRenderTexture(w, h, gpu.FormatRGBA8Unorm)
 	view := target.CreateView()
@@ -103,6 +106,55 @@ func TestRainDrops(t *testing.T) {
 	}
 	if testing.Verbose() {
 		dumpPNG(t, rain, w, h, "rain-drops")
+	}
+}
+
+// Snow falls as flakes (particles.Precip, FrameSettings.Snow): they cover
+// a little of the picture, more of it out in the open (the right half,
+// x > 0) than under the roof, which stops them.
+func TestSnowFlakes(t *testing.T) {
+	const w, h = 320, 240
+	dry, vp := roofPixels(t, 0, 0)
+	snow, _ := roofPixels(t, 0, 0, 1)
+	n := 0
+	for i := 0; i < w*h; i++ {
+		if int(snow[i*4+1]) > int(dry[i*4+1])+5 {
+			n++
+		}
+	}
+	if frac := float64(n) / float64(w*h); frac < 0.002 || frac > 0.5 {
+		t.Fatalf("flakes cover %.2f%% of the picture", frac*100)
+	}
+	// The floor under the roof (x -14…-2) against the open floor (x 2…14),
+	// the same depth range, below the roof's height.
+	count := func(x0, x1 float32) (lit, all int) {
+		seen := map[int]bool{}
+		for x := x0; x <= x1; x += 0.1 {
+			for y := float32(0.2); y <= 4.5; y += 0.1 {
+				for z := float32(-6); z <= 6; z += 0.25 {
+					c := vp.MulVec4(core.V4(x, y, z, 1))
+					px, py := int((c.X/c.W*0.5+0.5)*w), int((0.5-c.Y/c.W*0.5)*h)
+					if px < 0 || py < 0 || px >= w || py >= h || seen[py*w+px] {
+						continue
+					}
+					seen[py*w+px] = true
+					all++
+					if j := py*w + px; int(snow[j*4+1]) > int(dry[j*4+1])+5 {
+						lit++
+					}
+				}
+			}
+		}
+		return lit, all
+	}
+	under, nu := count(-14, -2)
+	open, no := count(2, 14)
+	t.Logf("flakes: %.2f%% of the picture; under the roof %d of %d pixels, in the open %d of %d", float64(n)/float64(w*h)*100, under, nu, open, no)
+	if float64(open)/float64(no) < 2*float64(under)/float64(nu) {
+		t.Fatalf("the roof does not stop the snow: %d of %d pixels under it, %d of %d in the open", under, nu, open, no)
+	}
+	if testing.Verbose() {
+		dumpPNG(t, snow, w, h, "snow-flakes")
 	}
 }
 

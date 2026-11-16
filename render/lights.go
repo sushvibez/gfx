@@ -152,6 +152,10 @@ type FrameSettings struct {
 	// where it lands, rings spread across the puddles and their mirror
 	// ripples (see Atmosphere.Rain for the streaks in the air).
 	Rain float32
+	// Snow (0…1) fills the air round the camera with falling flakes in
+	// place of the rain's drops (particles.Precip), stopped by roofs as the
+	// rain is.
+	Snow float32
 	// Time, in seconds, moves what animates in the shader (Material.Water).
 	Time float32
 	// Exposure scales linear radiance before the tone map (zero = 1).

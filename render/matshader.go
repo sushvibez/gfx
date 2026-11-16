@@ -30,7 +30,7 @@ struct Frame {
     misc : vec4f,        // x tonemap mode, y light count
     sun : vec4f,         // rgb the sun's radiance (colour times energy)
     env : vec4f,         // x sky reflection strength, y time in seconds
-    view : vec4f,        // x, y the render target's size in pixels (0: not told)
+    view : vec4f,        // x, y the render target's size in pixels (0: not told), z snow (0…1)
     rt : vec4f,          // x what is traced (1 the sun's shadow + 2 the lights'), y traced occlusion's strength, z its reach, w the sun jitter's half-angle
 }
 `

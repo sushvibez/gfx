@@ -7,7 +7,9 @@ import (
 )
 
 // Rain as particles: FrameSettings.Rain fills a box of air round the camera
-// with falling drops and the ground under it with splashes. Nothing is
+// with falling drops and the ground under it with splashes, and drips from
+// edges (particles.Splash); FrameSettings.Snow fills it with flakes
+// instead, wandering as they fall (particles.Precip). Nothing is
 // simulated or stored: every particle's place is a function of its index
 // and the time (a hash for where it starts, falling at its own speed,
 // wrapped into the box as the camera moves), so the pass is one instanced
@@ -32,7 +34,125 @@ const (
 	rainDrips    = 9000
 )
 
-const rainWGSL = frameWGSL + wgsl.Hash + wgsl.Light + particles.Precip + `
+const rainWGSL = frameWGSL + wgsl.Hash + wgsl.Light + particles.Precip + rainGroundWGSL + particles.Splash + `
+// The light a drop of water at p sends toward the camera.
+fn drop_light(p : vec3f) -> vec3f {
+    let view = normalize(p - frame.cam_pos.xyz);
+    var sum = frame.ambient.rgb * 0.8 + max(frame.sun.rgb, vec3f(0.0)) * 0.10;
+    let count = u32(frame.misc.y);
+    for (var i = 0u; i < count; i = i + 1u) {
+        let li = lights.items[i];
+        let dv = li.pos_range.xyz - p;
+        let dist = length(dv);
+        if (dist >= li.pos_range.w) { continue; }
+        var att = light_window(dist * dist, li.pos_range.w * li.pos_range.w, 0.0);
+        let travel = -dv / max(dist, 1e-4); // the way the light travels to the drop
+        if (li.color.w > 0.5) {
+            att = att * smoothstep(li.dir_cos.w, li.params.x, dot(travel, li.dir_cos.xyz));
+        }
+        // Forward scattering: brightest looking toward the lamp through the drop.
+        let fwd = max(dot(view, travel), 0.0);
+        sum += li.color.rgb * att * (0.6 + 5.0 * fwd * fwd * fwd * fwd);
+    }
+    return sum;
+}
+
+@vertex
+fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOut {
+    var o : VOut;
+    let corner = vec2f(f32((vi == 1u) || (vi == 2u) || (vi == 4u)), f32((vi == 2u) || (vi == 4u) || (vi == 5u))) * 2.0 - 1.0;
+    o.uv = corner;
+    let rain = frame.sun.w;
+    let t = frame.env.y;
+    let cam = frame.cam_pos.xyz;
+    let h = hash4u(ii);
+    var centre = vec3f(0.0);
+    var right = vec3f(0.0);
+    var up = vec3f(0.0);
+    var fade = 0.0;
+    let snow = frame.view.z;
+    if (ii < DROPS && snow > 0.0) {
+        o.kind = 2.0;
+        // A flake (particles.Precip): slow, wandering on its own eddies,
+        // in a smaller box a quarter above the eye.
+        let c0 = vec3f(0.0, 0.25, 0.0);
+        let box = PRECIP_SNOW_BOX;
+        let vel = precip_velocity(h, vec3f(0.5, 0.0, 0.2), true);
+        let rel = precip_wrap(h.xyz * box + vel * t + precip_wobble(h, t), cam, box, c0);
+        let p = cam + rel;
+        let dist = length(rel);
+        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
+        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
+        let size = precip_flake_size(h, dist * 2.0 / (fy * lines), length(vel));
+        let axis = normalize(vel);
+        right = normalize(cross(axis, rel)) * size.x;
+        up = axis * size.y;
+        centre = p;
+        fade = size.z * smoothstep(0.25, 0.9, dist) * sky_at(p).x * precip_edge(rel, box, c0)
+             * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, snow * 1.25) * 0.8;
+    } else if (ii < DROPS) {
+        o.kind = 0.0;
+        // A drop: its own speed, a little wind, wrapped into the box
+        // (particles.Precip, as every gfx renderer's rain).
+        let vel = precip_velocity(h, vec3f(0.7, 0.0, 0.25), false);
+        let rel = precip_wrap(h.xyz * BOX + vel * t, cam, BOX, vec3f(0.0));
+        let p = cam + rel;
+        let dist = length(rel);
+        // As long as the shutter is open; as wide as a drop, or as a pixel
+        // (then fainter, so far rain thins into a veil instead of wires).
+        // A pixel's angle, from the projection's vertical scale and the
+        // target's height (a guess at 900 lines when the size is not told).
+        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
+        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
+        let width = max(0.0028, dist * 1.7 / (fy * lines));
+        let axis = normalize(vel);
+        right = normalize(cross(axis, rel)) * width;
+        up = axis * length(vel) * 0.022;
+        centre = p;
+        let sky = sky_at(p);
+        fade = min(0.0028 / width * 3.0, 1.0) * smoothstep(0.5, 1.5, dist) * sky.x
+             * precip_edge(rel, BOX, vec3f(0.0)) * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, rain * 1.25);
+    } else if (ii >= DROPS + SPLASHES) {
+        o.kind = 0.0;
+        // A drip: water running off an edge (particles.Splash).
+        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
+        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
+        let q = precip_drip(ii, t, cam, PAD, rain, 2.0 / (fy * lines));
+        centre = q.centre; right = q.right; up = q.up; fade = q.fade;
+    } else {
+        o.kind = 1.0;
+        // A splash: a new place each time round, on whatever the rain
+        // meets (particles.Splash).
+        let q = precip_splash(ii, t, cam, PAD, rain);
+        centre = q.centre; right = q.right; up = q.up; fade = q.fade;
+    }
+    let world = centre + right * corner.x + up * corner.y;
+    o.pos = frame.view_proj * vec4f(world, 1.0);
+    o.color = drop_light(centre) * fade * frame.ambient.w;
+    if (u32(frame.misc.x) != 3u) {
+        o.color = o.color * 0.5; // not HDR: no camera after this to expose it
+    }
+    return o;
+}
+
+@fragment
+fn fs(in : VOut) -> @location(0) vec4f {
+    var a = 0.0;
+    if (in.kind < 0.5) {
+        // A streak: soft across, tapering toward its tail (the top).
+        a = precip_streak(in.uv, 0.2, -0.8) * 0.42;
+    } else if (in.kind < 1.5) {
+        a = precip_spray(in.uv);
+    } else {
+        a = precip_flake(in.uv) * 0.6;
+    }
+    return vec4f(in.color * a, 0.0);
+}
+`
+
+// rainGroundWGSL is the rain pass's bindings and the sky map's reading,
+// which particles.Splash asks for (precip_ground).
+const rainGroundWGSL = `
 struct Light {
     pos_range : vec4f,
     color : vec4f,
@@ -74,147 +194,9 @@ fn sky_at(w : vec3f) -> vec2f {
     return vec2f(step(sc.z, top + 0.0004), height);
 }
 
-// The light a drop of water at p sends toward the camera.
-fn drop_light(p : vec3f) -> vec3f {
-    let view = normalize(p - frame.cam_pos.xyz);
-    var sum = frame.ambient.rgb * 0.8 + max(frame.sun.rgb, vec3f(0.0)) * 0.10;
-    let count = u32(frame.misc.y);
-    for (var i = 0u; i < count; i = i + 1u) {
-        let li = lights.items[i];
-        let dv = li.pos_range.xyz - p;
-        let dist = length(dv);
-        if (dist >= li.pos_range.w) { continue; }
-        var att = light_window(dist * dist, li.pos_range.w * li.pos_range.w, 0.0);
-        let travel = -dv / max(dist, 1e-4); // the way the light travels to the drop
-        if (li.color.w > 0.5) {
-            att = att * smoothstep(li.dir_cos.w, li.params.x, dot(travel, li.dir_cos.xyz));
-        }
-        // Forward scattering: brightest looking toward the lamp through the drop.
-        let fwd = max(dot(view, travel), 0.0);
-        sum += li.color.rgb * att * (0.6 + 5.0 * fwd * fwd * fwd * fwd);
-    }
-    return sum;
-}
-
-@vertex
-fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOut {
-    var o : VOut;
-    let corner = vec2f(f32((vi == 1u) || (vi == 2u) || (vi == 4u)), f32((vi == 2u) || (vi == 4u) || (vi == 5u))) * 2.0 - 1.0;
-    o.uv = corner;
-    let rain = frame.sun.w;
-    let t = frame.env.y;
-    let cam = frame.cam_pos.xyz;
-    let h = hash4u(ii);
-    var centre = vec3f(0.0);
-    var right = vec3f(0.0);
-    var up = vec3f(0.0);
-    var fade = 0.0;
-    if (ii < DROPS) {
-        o.kind = 0.0;
-        // A drop: its own speed, a little wind, wrapped into the box
-        // (particles.Precip, as every gfx renderer's rain).
-        let vel = precip_velocity(h, vec3f(0.7, 0.0, 0.25), false);
-        let rel = precip_wrap(h.xyz * BOX + vel * t, cam, BOX, vec3f(0.0));
-        let p = cam + rel;
-        let dist = length(rel);
-        // As long as the shutter is open; as wide as a drop, or as a pixel
-        // (then fainter, so far rain thins into a veil instead of wires).
-        // A pixel's angle, from the projection's vertical scale and the
-        // target's height (a guess at 900 lines when the size is not told).
-        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
-        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
-        let width = max(0.0028, dist * 1.7 / (fy * lines));
-        let axis = normalize(vel);
-        right = normalize(cross(axis, rel)) * width;
-        up = axis * length(vel) * 0.022;
-        centre = p;
-        let sky = sky_at(p);
-        fade = min(0.0028 / width * 3.0, 1.0) * smoothstep(0.5, 1.5, dist) * sky.x
-             * precip_edge(rel, BOX, vec3f(0.0)) * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, rain * 1.25);
-    } else if (ii >= DROPS + SPLASHES) {
-        o.kind = 0.0;
-        // A drip: water running off an edge. Each has its own spot on the
-        // ground plan; from there it looks a metre or so along one of the
-        // four axes for a place where what the rain lands on falls away (the
-        // rim of a roof, a container's top edge, the quay), and if there is
-        // one a bead gathers on it and falls, faster as it goes, over and over.
-        let hc = hash4u(ii * 9973u + 17u);
-        var q = hc.xy * PAD;
-        q = cam.xz + (fract((q - cam.xz) / PAD + 0.5) - 0.5) * PAD;
-        let quarter = floor(hc.z * 4.0) * 1.5707963;
-        let dir = vec2f(cos(quarter), sin(quarter));
-        let high = sky_at(vec3f(q.x, cam.y, q.y)).y;
-        var low = high;
-        var rim = q;
-        var found = 0.0;
-        for (var k = 1; k <= 6; k++) {
-            let qq = q + dir * 0.2 * f32(k);
-            let hh = sky_at(vec3f(qq.x, cam.y, qq.y)).y;
-            if (found < 0.5 && high - hh > 0.8 && hh > -1e4) {
-                found = 1.0;
-                low = hh;
-                rim = qq - dir * 0.05;
-            }
-        }
-        let fall = sqrt(2.0 * max(high - low, 0.01) / 9.8);
-        let period = fall + 0.3 + 1.5 * hc.w;
-        let tf = fract(t / period + h.x) * period - (period - fall); // seconds into the fall
-        let speed = 9.8 * max(tf, 0.0);
-        let p = vec3f(rim.x, high - 4.9 * max(tf, 0.0) * max(tf, 0.0) - 0.03, rim.y);
-        let rel = p - cam;
-        let dist = length(rel);
-        let fy = length(vec3f(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
-        let lines = select(900.0, frame.view.y, frame.view.y > 0.0);
-        let width = max(0.0045, dist * 2.4 / (fy * lines)); // a bead is fatter than a raindrop
-        right = normalize(cross(vec3f(0.0, -1.0, 0.0), rel)) * width;
-        up = vec3f(0.0, -1.0, 0.0) * max(0.02, speed * 0.02);
-        centre = p;
-        let edge = (0.5 - abs(rel.xz / PAD)) * 8.0;
-        fade = found * step(0.0, tf) * step(-1e4, high) * min(0.0045 / width * 3.0, 1.0) * smoothstep(0.4, 1.2, dist)
-             * clamp(min(edge.x, edge.y), 0.0, 1.0) * step(hc.w * 0.6, rain) * 1.4;
-    } else {
-        o.kind = 1.0;
-        // A splash: a new place each time round, on whatever the rain meets.
-        let life = 0.5 + 0.7 * h.z;
-        let turn = t / life + h.w;
-        let hc = hash4u(ii * 7919u + u32(floor(turn)));
-        let age = fract(turn) * life / 0.16; // seen for the first 0.16 s of each round
-        var q = hc.xy * PAD;
-        q = cam.xz + (fract((q - cam.xz) / PAD + 0.5) - 0.5) * PAD;
-        let sky = sky_at(vec3f(q.x, cam.y + 60.0, q.y));
-        let ground = vec3f(q.x, sky.y, q.y);
-        let rel = ground - cam;
-        // A hand's breadth of spray at most, thrown up and out as it ages.
-        let size = 0.012 + 0.03 * age;
-        right = normalize(vec3f(-rel.z, 0.0, rel.x)) * size * 1.6;
-        up = vec3f(0.0, size * (0.7 + 0.9 * age), 0.0);
-        centre = ground + up;
-        let edge = (0.5 - abs(rel.xz / PAD)) * 8.0;
-        fade = step(age, 1.0) * (1.0 - age) * clamp(min(edge.x, edge.y), 0.0, 1.0)
-             * step(-1e4, sky.y) * step(hc.z, rain * 1.25) * 0.45;
-    }
-    let world = centre + right * corner.x + up * corner.y;
-    o.pos = frame.view_proj * vec4f(world, 1.0);
-    o.color = drop_light(centre) * fade * frame.ambient.w;
-    if (u32(frame.misc.x) != 3u) {
-        o.color = o.color * 0.5; // not HDR: no camera after this to expose it
-    }
-    return o;
-}
-
-@fragment
-fn fs(in : VOut) -> @location(0) vec4f {
-    var a = 0.0;
-    if (in.kind < 0.5) {
-        // A streak: soft across, tapering toward its tail (the top).
-        a = precip_streak(in.uv, 0.2, -0.8) * 0.42;
-    } else {
-        // A splash: a low fan of spray, densest at the ground, thinning as
-        // it spreads up and out.
-        let r = length(vec2f(in.uv.x, (in.uv.y + 1.0) * 0.5));
-        a = smoothstep(1.0, 0.25, r) * (1.0 - 0.6 * (in.uv.y * 0.5 + 0.5)) * 0.5;
-    }
-    return vec4f(in.color * a, 0.0);
+// What the rain meets at plan point q (particles.Splash's hook).
+fn precip_ground(q : vec2f) -> f32 {
+    return sky_at(vec3f(q.x, 0.0, q.y)).y;
 }
 `
 
@@ -265,7 +247,7 @@ func (r *Renderer3D) initRain() bool {
 // the depth.
 func (r *Renderer3D) RenderRain(enc *gpu.CommandEncoder, color, depth *gpu.TextureView) {
 	r.renderParticlesSoft(enc, color, depth)
-	if r.settings.Rain <= 0 || !r.initRain() {
+	if !r.precipOn() || !r.initRain() {
 		return
 	}
 	pass := enc.BeginRenderPassOver(color, depth)
@@ -275,13 +257,16 @@ func (r *Renderer3D) RenderRain(enc *gpu.CommandEncoder, color, depth *gpu.Textu
 
 // drawRain records the drops and splashes into the main pass.
 func (r *Renderer3D) drawRain(pass *gpu.RenderPass) {
-	if r.settings.Rain <= 0 || !r.initRain() {
+	if !r.precipOn() || !r.initRain() {
 		return
 	}
 	pass.SetPipeline(r.rainPL)
 	pass.SetBindGroup(0, r.rainBind)
 	pass.Draw(6, rainDrops+rainSplashes+rainDrips, 0, 0)
 }
+
+// precipOn reports whether rain or snow falls this frame.
+func (r *Renderer3D) precipOn() bool { return r.settings.Rain > 0 || r.settings.Snow > 0 }
 
 func (r *Renderer3D) releaseRain() {
 	rel(r.rainBind)

@@ -211,9 +211,10 @@ fn fs_particle_soft(in : PartOut) -> @location(0) vec4f {
 // through them. A raindrop is a streak as long as a shutter draws it along
 // its velocity relative to the camera, as wide as a drop or a pixel (then
 // fainter: far rain is a veil, not wires); a flake is a soft dot that
-// wanders on its own eddies as it falls. The renderer places, lights and
-// stops the drops (a roof, a rain map) in its own vertex stage. Needs
-// wgsl.Hash.
+// wanders on its own eddies as it falls, sized by precip_flake_size, in
+// its own box of air (PRECIP_SNOW_BOX; rain's, PRECIP_RAIN_BOX). The
+// renderer places, lights and stops the drops (a roof, a rain map) in its
+// own vertex stage. Needs wgsl.Hash.
 const Precip = `
 // ---- gfx/render/particles: Precip ---------------------------------------
 // A drop's velocity (m/s, in the box's frame: y up) for its hash h: rain
@@ -251,5 +252,120 @@ fn precip_streak(uv : vec2f, tail0 : f32, head0 : f32) -> f32 {
 // A flake's opacity: a soft dot.
 fn precip_flake(uv : vec2f) -> f32 {
     return smoothstep(1.0, 0.35, length(uv)) * 0.9;
+}
+// The boxes of air round the camera the drops fill (m: across, up,
+// across): snow's is smaller, its flakes slow and close.
+const PRECIP_RAIN_BOX = vec3f(44.0, 26.0, 44.0);
+const PRECIP_SNOW_BOX = vec3f(36.0, 22.0, 36.0);
+// A flake's size for its hash h, px the size of a pixel where it is (m)
+// and speed how fast it moves relative to the eye (m/s): x its width
+// (half), y its half length (drawn out a little by its motion), z the
+// fade for a flake drawn at a pixel's size instead of its own.
+fn precip_flake_size(h : vec4f, px : f32, speed : f32) -> vec3f {
+    let own = 0.012 + 0.008 * h.x;
+    let width = max(own, px * 0.9);
+    return vec3f(width, width + speed * 0.006, min(own / width * 2.0, 1.0));
+}
+`
+
+// Splash is where the rain lands, with nothing stored, as Precip's drops
+// are: splashes, a new place on whatever the rain meets each time round,
+// a hand's breadth of spray thrown up and out over the first 0.16 s, on a
+// pad of ground round the camera; and drips, water running off an edge:
+// each drip has its own spot on the pad, looks a metre or so along one of
+// the four axes for a place where what the rain meets falls away by most
+// of a metre (the rim of a roof, a container's top, a quay), and if there
+// is one a bead gathers on it and falls, faster as it goes, over and over.
+// Each gives a camera-facing quad (PrecipQuad: centre, half extents, fade;
+// a drip's up is along its fall, drawn with precip_streak, a splash's with
+// precip_spray); the renderer lights it.
+//
+// Positions are in the box's frame (y up, the camera at cam). The renderer
+// supplies, in its own module:
+//
+//	fn precip_ground(q : vec2f) -> f32   the height (y) of what the rain meets at plan point q (x, z), or below -1e4 where unknown
+//
+// Needs Precip and wgsl.Hash.
+const Splash = `
+// ---- gfx/render/particles: Splash ---------------------------------------
+struct PrecipQuad {
+    centre : vec3f,
+    right : vec3f,
+    up : vec3f,
+    fade : f32,
+}
+// A plan point on the pad round the camera, held still as the camera moves.
+fn precip_pad(r : vec2f, cam : vec3f, pad : vec2f) -> vec2f {
+    let q = r * pad;
+    return cam.xz + (fract((q - cam.xz) / pad + 0.5) - 0.5) * pad;
+}
+// The fade toward the pad's edges.
+fn precip_pad_edge(rel : vec3f, pad : vec2f) -> f32 {
+    let edge = (0.5 - abs(rel.xz / pad)) * 8.0;
+    return clamp(min(edge.x, edge.y), 0.0, 1.0);
+}
+// Splash i at time t (s) in rain of strength rain (0…1).
+fn precip_splash(i : u32, t : f32, cam : vec3f, pad : vec2f, rain : f32) -> PrecipQuad {
+    var o : PrecipQuad;
+    let h = hash4u(i);
+    let life = 0.5 + 0.7 * h.z;
+    let turn = t / life + h.w;
+    let hc = hash4u(i * 7919u + u32(floor(turn)));
+    let age = fract(turn) * life / 0.16; // seen for the first 0.16 s of each round
+    let q = precip_pad(hc.xy, cam, pad);
+    let gy = precip_ground(q);
+    let ground = vec3f(q.x, gy, q.y);
+    let rel = ground - cam;
+    // A hand's breadth of spray at most, thrown up and out as it ages.
+    let size = 0.012 + 0.03 * age;
+    o.right = normalize(vec3f(-rel.z, 0.0, rel.x)) * size * 1.6;
+    o.up = vec3f(0.0, size * (0.7 + 0.9 * age), 0.0);
+    o.centre = ground + o.up;
+    o.fade = step(age, 1.0) * (1.0 - age) * precip_pad_edge(rel, pad)
+           * step(-1e4, gy) * step(hc.z, rain * 1.25) * 0.45;
+    return o;
+}
+// Drip i at time t (s) in rain of strength rain (0…1); px is a pixel's
+// angle (rad), for a bead seen far off.
+fn precip_drip(i : u32, t : f32, cam : vec3f, pad : vec2f, rain : f32, px : f32) -> PrecipQuad {
+    var o : PrecipQuad;
+    let h = hash4u(i);
+    let hc = hash4u(i * 9973u + 17u);
+    let q = precip_pad(hc.xy, cam, pad);
+    let quarter = floor(hc.z * 4.0) * 1.5707963;
+    let dir = vec2f(cos(quarter), sin(quarter));
+    let high = precip_ground(q);
+    var low = high;
+    var rim = q;
+    var found = 0.0;
+    for (var k = 1; k <= 6; k++) {
+        let qq = q + dir * 0.2 * f32(k);
+        let hh = precip_ground(qq);
+        if (found < 0.5 && high - hh > 0.8 && hh > -1e4) {
+            found = 1.0;
+            low = hh;
+            rim = qq - dir * 0.05;
+        }
+    }
+    let fall = sqrt(2.0 * max(high - low, 0.01) / 9.8);
+    let period = fall + 0.3 + 1.5 * hc.w;
+    let tf = fract(t / period + h.x) * period - (period - fall); // seconds into the fall
+    let speed = 9.8 * max(tf, 0.0);
+    let p = vec3f(rim.x, high - 4.9 * max(tf, 0.0) * max(tf, 0.0) - 0.03, rim.y);
+    let rel = p - cam;
+    let dist = length(rel);
+    let width = max(0.0045, dist * px * 1.2); // a bead is fatter than a raindrop
+    o.right = normalize(cross(vec3f(0.0, -1.0, 0.0), rel)) * width;
+    o.up = vec3f(0.0, -1.0, 0.0) * max(0.02, speed * 0.02);
+    o.centre = p;
+    o.fade = found * step(0.0, tf) * step(-1e4, high) * min(0.0045 / width * 3.0, 1.0) * smoothstep(0.4, 1.2, dist)
+           * precip_pad_edge(rel, pad) * step(hc.w * 0.6, rain) * 1.4;
+    return o;
+}
+// A splash's opacity across its quad (uv -1..1, y up): a low fan of spray,
+// densest at the ground, thinning as it spreads up and out.
+fn precip_spray(uv : vec2f) -> f32 {
+    let r = length(vec2f(uv.x, (uv.y + 1.0) * 0.5));
+    return smoothstep(1.0, 0.25, r) * (1.0 - 0.6 * (uv.y * 0.5 + 0.5)) * 0.5;
 }
 `

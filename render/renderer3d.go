@@ -871,7 +871,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	n := r.packLights(&r.lights)
 	// The sky map looks straight down on the camera's surroundings, snapped
 	// to its own texels so the edge of a roof's shelter holds still.
-	r.skyOn = fs.Wetness > 0 || fs.Rain > 0
+	r.skyOn = fs.Wetness > 0 || fs.Rain > 0 || fs.Snow > 0
 	r.lights.RainVP = core.Mat4{}
 	if r.skyOn {
 		const texel = 2.0 * skyMapRadius / skyMapSize
@@ -926,7 +926,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, fs.Rain),
 		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, fs.Wetness),
 		RT:         core.V4(traced, tracedAO, aoReach, fs.SunSoftness*0.6),
-		View:       core.V4(float32(r.renderW), float32(r.renderH), 0, 0),
+		View:       core.V4(float32(r.renderW), float32(r.renderH), fs.Snow, 0),
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	r.viewProj = viewProj
