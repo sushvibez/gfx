@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/sushvibez/gfx/gpu"
+	"github.com/sushvibez/gfx/render/particles"
 	"github.com/sushvibez/gfx/render/wgsl"
 )
 
@@ -59,5 +60,40 @@ func TestWGSLLibraryCompiles(t *testing.T) {
 	m.Release()
 	if !strings.Contains(src, "fn pcss_filter") {
 		t.Fatal("Join dropped a piece")
+	}
+}
+
+// The particle pass's WGSL (render/particles) compiles once a renderer
+// supplies its hooks.
+func TestParticleWGSLCompiles(t *testing.T) {
+	device, _ := headlessDevice(t)
+	src := wgsl.Join(wgsl.Hash, wgsl.Depth, particles.Shade, particles.Precip) + `
+fn pt_eye() -> PtEye { return PtEye(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), vec3f(0.0, 1.0, 0.0), 0.001); }
+fn pt_clip(rel : vec3f) -> vec4f { return vec4f(rel.xy, 0.5, max(-rel.z, 0.1)); }
+fn pt_light(rel : vec3f, radius : f32) -> PtLight {
+    return PtLight(vec3f(1.0), vec3f(0.3), vec3f(0.1), vec3f(0.0), vec3f(0.0, 1.0, 0.0), vec3f(1.0), vec3f(0.0));
+}
+fn pt_view_dist(d : f32) -> f32 { return depth_dist(d, 0.0, 0.1, 0.1); }
+fn pt_display(c : vec3f) -> vec3f { return c; }
+@vertex fn vs_drop(@builtin(vertex_index) i : u32) -> @builtin(position) vec4f {
+    let h = hash4u(i);
+    let l = precip_wrap(h.xyz + precip_velocity(h, vec3f(1.0, 0.0, 0.0), false) + precip_wobble(h, 1.0), vec3f(0.0), vec3f(30.0), vec3f(0.0));
+    return vec4f(l, precip_edge(l, vec3f(30.0), vec3f(0.0)) + precip_streak(l.xy, 0.3, -0.7) + precip_flake(l.xy));
+}
+`
+	before := gpu.ErrorCount()
+	m, err := device.CreateShaderModuleWGSL("particles", src)
+	if err != nil || gpu.ErrorCount() != before {
+		t.Fatalf("the particle WGSL does not compile: %v", err)
+	}
+	defer m.Release()
+	for _, fs := range []string{"fs_particle", "fs_particle_soft"} {
+		pl, err := device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
+			Shader: m, VertexEntry: "vs_particle", FragmentEntry: fs, Format: gpu.FormatRGBA16Float,
+		})
+		if err != nil || gpu.ErrorCount() != before {
+			t.Fatalf("%s: %v", fs, err)
+		}
+		pl.Release()
 	}
 }

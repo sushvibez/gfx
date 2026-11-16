@@ -2,6 +2,7 @@ package render
 
 import (
 	"github.com/sushvibez/gfx/gpu"
+	"github.com/sushvibez/gfx/render/particles"
 	"github.com/sushvibez/gfx/render/wgsl"
 )
 
@@ -31,7 +32,7 @@ const (
 	rainDrips    = 9000
 )
 
-const rainWGSL = frameWGSL + wgsl.Hash + wgsl.Light + `
+const rainWGSL = frameWGSL + wgsl.Hash + wgsl.Light + particles.Precip + `
 struct Light {
     pos_range : vec4f,
     color : vec4f,
@@ -110,11 +111,11 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
     var fade = 0.0;
     if (ii < DROPS) {
         o.kind = 0.0;
-        // A drop: its own speed, a little wind, wrapped into the box.
-        let vel = vec3f(0.7, -(7.0 + 3.0 * h.w), 0.25);
-        var p = h.xyz * BOX + vel * t;
-        p = cam + (fract((p - cam) / BOX + 0.5) - 0.5) * BOX;
-        let rel = p - cam;
+        // A drop: its own speed, a little wind, wrapped into the box
+        // (particles.Precip, as every gfx renderer's rain).
+        let vel = precip_velocity(h, vec3f(0.7, 0.0, 0.25), false);
+        let rel = precip_wrap(h.xyz * BOX + vel * t, cam, BOX, vec3f(0.0));
+        let p = cam + rel;
         let dist = length(rel);
         // As long as the shutter is open; as wide as a drop, or as a pixel
         // (then fainter, so far rain thins into a veil instead of wires).
@@ -128,9 +129,8 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         up = axis * length(vel) * 0.022;
         centre = p;
         let sky = sky_at(p);
-        let edge = (0.5 - abs(rel / BOX)) * 8.0; // fade toward the box's faces: no popping
         fade = min(0.0028 / width * 3.0, 1.0) * smoothstep(0.5, 1.5, dist) * sky.x
-             * clamp(min(edge.x, min(edge.y, edge.z)), 0.0, 1.0) * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, rain * 1.25);
+             * precip_edge(rel, BOX, vec3f(0.0)) * step(h.x * 0.999 + fract(h.w * 7.0) * 0.001, rain * 1.25);
     } else if (ii >= DROPS + SPLASHES) {
         o.kind = 0.0;
         // A drip: water running off an edge. Each has its own spot on the
@@ -207,7 +207,7 @@ fn fs(in : VOut) -> @location(0) vec4f {
     var a = 0.0;
     if (in.kind < 0.5) {
         // A streak: soft across, tapering toward its tail (the top).
-        a = (1.0 - in.uv.x * in.uv.x) * smoothstep(1.0, 0.2, in.uv.y) * smoothstep(-1.0, -0.8, in.uv.y) * 0.42;
+        a = precip_streak(in.uv, 0.2, -0.8) * 0.42;
     } else {
         // A splash: a low fan of spray, densest at the ground, thinning as
         // it spreads up and out.
@@ -260,7 +260,11 @@ func (r *Renderer3D) initRain() bool {
 // a caller that set DeferRain so that something could come between the
 // scene and the rain (View3D does, so the temporal filter averages the
 // scene and not the falling drops).
+//
+// The particles (SetParticles) are drawn here too, first, soft against
+// the depth.
 func (r *Renderer3D) RenderRain(enc *gpu.CommandEncoder, color, depth *gpu.TextureView) {
+	r.renderParticlesSoft(enc, color, depth)
 	if r.settings.Rain <= 0 || !r.initRain() {
 		return
 	}

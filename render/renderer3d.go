@@ -129,6 +129,9 @@ type Renderer3D struct {
 	rainPL     *gpu.RenderPipeline
 	rainBind   *gpu.BindGroup
 	rainFailed bool
+	// The particles (particles3d.go), built the first time there are any.
+	pt         particlePass
+	sunDir     core.Vec3 // toward the sun, this frame
 	lastRainVP core.Mat4
 	mdraws     *gpu.Buffer
 	lightBuf   *gpu.Buffer
@@ -702,6 +705,7 @@ func (r *Renderer3D) Release() {
 	rel(r.mdraws)
 	rel(r.matShadowBind)
 	r.releaseRain()
+	r.releaseParticles()
 	rel(r.traceNodes)
 	rel(r.traceInsts)
 	rel(r.traceTris)
@@ -904,6 +908,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 	}
 	r.queue.WriteBuffer(r.frame, 0, unsafe.Slice((*byte)(unsafe.Pointer(&u)), unsafe.Sizeof(u)))
 	r.viewProj = viewProj
+	r.sunDir = ld.Scale(-1)
 	// Each shadow-casting spot renders its map through the same depth-only
 	// pipeline as the sun, reading its own copy of the block.
 	for i := 0; i < r.spotShadows; i++ {
@@ -1120,6 +1125,7 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 		}
 	}
 
+	r.prepareParticles()
 	var mp *gpu.RenderPass
 	if r.KeepDepth {
 		mp = enc.BeginRenderPassDepthStore(color, depth, clear)
@@ -1133,6 +1139,7 @@ func (r *Renderer3D) Render(enc *gpu.CommandEncoder, color, depth *gpu.TextureVi
 		r.drawMatItems(mp, true)
 	}
 	if !r.DeferRain {
+		r.drawParticles(mp)
 		r.drawRain(mp)
 	}
 	mp.End()

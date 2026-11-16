@@ -563,6 +563,23 @@ material pass, the rain, Post's depth and atmosphere passes and PTG's
 planet renderer (`games/ptg/draw`) all include them
 (`TestWGSLLibraryCompiles`).
 
+*Status (2026-11-16):* the particle system is `render/particles`: a
+bounded `Pool` of puffs and chips simulated on the CPU in float64 in a
+`Flat` (y up) or `Round` (ECEF) space (buoyancy, drag toward the wind,
+gravity, kept above the ground, growing and fading over a life), its
+`Sprites` as the draw list, the billowed smoke sprite sheet baked once
+(`SmokeAtlas`), `Lights` (the strongest few short-lived point lights as
+the eye sees them, `Flicker`), and the WGSL: `Shade` (camera-facing
+atlas quads, eroding with age, wrapped sun, light through thin parts,
+sky and ground, point lights at the centre, flame lobes; hard or soft
+against stored depth) and `Precip` (stateless drops and flakes wrapped
+into a box round the eye). A renderer supplies five hooks (`pt_eye`,
+`pt_clip`, `pt_light`, `pt_view_dist`, `pt_display`). `Renderer3D` has
+`SetParticles` (soft over the finished picture under a View3D with Post,
+hard in the main pass otherwise; `TestRenderer3DParticles`) and its rain
+uses `Precip`; PTG's planet renderer uses the same pass through its
+camera-relative, log-depth hooks.
+
 *Status (2026-11-13):* `Post.LogDepth` lets the ambient occlusion read a
 logarithmic depth buffer (d = log2(1 + z) · LogDepth), so a planet-scale
 renderer that is not a `Renderer3D` (Drone Defend over PTG's terrain) gets
