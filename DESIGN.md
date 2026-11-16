@@ -548,6 +548,21 @@ readback is native-only (no js), and **the null-GPU level doesn't exist yet**
   tree; binary-packed variant for release. UUID-stable resource references with
   an import pipeline (source asset → imported artifact cache), Godot-style.
 
+*Status (2026-11-16):* the WGSL every 3D renderer shares is one library,
+`render/wgsl`: Go string constants of pure functions (`Hash`, `Noise`,
+`Depth`, `Light`, `Shadow`, `Wet`, `Sky`) that a renderer prepends to its
+own module (constant concatenation is the include; `wgsl.Join` for a
+module built at run time). They read no bindings: a renderer passes in
+how it gets a position, a normal and a view distance (world or
+camera-relative, perspective or log depth) and its own constants. PCSS
+(`pcss_plane`, `pcss_blockers`, `pcss_filter`), the GGX and Smith terms,
+the windowed light falloff, the phase function, log depth and soft
+fades, value noise and fbm, the wet tone, puddles, rain rings and mirror
+alpha, the deck's shell and the lightning bolt live there once; the
+material pass, the rain, Post's depth and atmosphere passes and PTG's
+planet renderer (`games/ptg/draw`) all include them
+(`TestWGSLLibraryCompiles`).
+
 *Status (2026-11-13):* `Post.LogDepth` lets the ambient occlusion read a
 logarithmic depth buffer (d = log2(1 + z) · LogDepth), so a planet-scale
 renderer that is not a `Renderer3D` (Drone Defend over PTG's terrain) gets

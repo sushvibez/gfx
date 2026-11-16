@@ -24,6 +24,7 @@ import (
 
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/gpu"
+	"github.com/sushvibez/gfx/render/wgsl"
 )
 
 // Atmosphere is the air and the sky. The zero value is off: the scene
@@ -414,7 +415,7 @@ func (p *Post) atmosRelease() {
 
 // postAtmosCommonWGSL: the atmosphere's uniforms, view rays from depth,
 // and the sky.
-const postAtmosCommonWGSL = `
+const postAtmosCommonWGSL = wgsl.Hash + wgsl.Depth + wgsl.Light + `
 struct AtmU {
     inv_view : mat4x4f,
     light_vp : mat4x4f,
@@ -434,8 +435,7 @@ struct AtmU {
 };
 // The view distance (along -z) of a depth-buffer value.
 fn view_dist(d : f32) -> f32 {
-    if (A.depth.x > 0.0) { return exp2(d / A.depth.x) - 1.0; } // logarithmic depth (Post.LogDepth)
-    return A.proj.w / (d + A.proj.z);
+    return depth_dist(d, A.depth.x, A.proj.z, A.proj.w); // A.depth.x > 0: logarithmic depth (Post.LogDepth)
 }
 // The view-space ray through a uv (not normalised: z is -1).
 // The scene was drawn with its projection offset by depth.zw (temporal
@@ -452,12 +452,9 @@ fn screen_uv(q : vec3f) -> vec2f {
 fn world_dir(v : vec3f) -> vec3f {
     return normalize(mat3x3f(A.inv_view[0].xyz, A.inv_view[1].xyz, A.inv_view[2].xyz) * v);
 }
-fn ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
-// Henyey-Greenstein phase function.
-fn hg(mu : f32, g : f32) -> f32 {
-    let g2 = g * g;
-    return (1.0 - g2) / (12.566371 * pow(max(1.0 + g2 - 2.0 * g * mu, 1e-4), 1.5));
-}
+// Henyey-Greenstein phase function (the probability density: wgsl.Light's
+// over 4π).
+fn hg(mu : f32, g : f32) -> f32 { return hg_phase(mu, g) / 12.566371; }
 // The horizon's colour in a direction: warmer and brighter toward the sun.
 fn horizon_color(rd : vec3f) -> vec3f {
     let toward = max(dot(normalize(rd.xz + vec2f(1e-5)), normalize(A.sun_dir.xz + vec2f(1e-5))), 0.0);
@@ -705,7 +702,7 @@ fn rain_layer(uv : vec2f, aspect : f32, turn : vec2f, cells : f32, speed : f32, 
     q.y -= A.rain.y * speed * cells * 0.11;
     let cell = floor(q);
     let f = fract(q);
-    let h = fract(sin(dot(cell + seed * 17.0, vec2f(127.1, 311.7))) * 43758.5453);
+    let h = hash12s(cell + seed * 17.0);
     let x = 0.15 + 0.7 * h;
     let len = 0.35 + 0.5 * fract(h * 17.3);
     let line = smoothstep(0.045, 0.0, abs(f.x - x));

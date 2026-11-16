@@ -30,6 +30,7 @@ import (
 
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/gpu"
+	"github.com/sushvibez/gfx/render/wgsl"
 )
 
 // TonemapHDR is the FrameSettings.Tonemap mode for rendering into Post:
@@ -705,7 +706,7 @@ const postAdaptWGSL = `
 
 // postCompositeWGSL: bloom, exposure, the tone curve and the grade, into
 // display space with luma in alpha for FXAA.
-const postCompositeWGSL = `
+const postCompositeWGSL = wgsl.Hash + `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var scene : texture_2d<f32>;
 @group(0) @binding(2) var bloom : texture_2d<f32>;
@@ -752,7 +753,6 @@ fn bright(uv : vec2f, thr : f32) -> vec3f {
     let inside = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
     return max(textureSampleLevel(bloom, samp, uv, 0.0).rgb - thr, vec3f(0.0)) * inside;
 }
-fn lens_hash(p : vec2f) -> f32 { return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453); }
 // The dirt on the front element: specks of dust as soft discs of several
 // sizes, and a broad smear.
 fn lens_dirt(uv : vec2f, asp : f32) -> f32 {
@@ -762,7 +762,7 @@ fn lens_dirt(uv : vec2f, asp : f32) -> f32 {
         let scale = 5.0 + 6.0 * f32(k);
         let q = p * scale + 11.3 * f32(k);
         let cell = floor(q);
-        let h = lens_hash(cell + 2.7 * f32(k));
+        let h = hash12s(cell + 2.7 * f32(k));
         let centre = vec2f(0.3 + 0.4 * h, 0.3 + 0.4 * fract(h * 31.7));
         let radius = 0.10 + 0.22 * fract(h * 7.3);
         let disc = 1.0 - smoothstep(radius * 0.75, radius, length(fract(q) - centre));
@@ -771,8 +771,8 @@ fn lens_dirt(uv : vec2f, asp : f32) -> f32 {
     let i = floor(p * 2.3);
     let f = fract(p * 2.3);
     let u = f * f * (3.0 - 2.0 * f);
-    let smear = mix(mix(lens_hash(i), lens_hash(i + vec2f(1.0, 0.0)), u.x),
-                    mix(lens_hash(i + vec2f(0.0, 1.0)), lens_hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+    let smear = mix(mix(hash12s(i), hash12s(i + vec2f(1.0, 0.0)), u.x),
+                    mix(hash12s(i + vec2f(0.0, 1.0)), hash12s(i + vec2f(1.0, 1.0)), u.x), u.y);
     return clamp(m * 0.5 + smear * smear * 0.35, 0.0, 1.0);
 }
 // The lens's own light, added before exposure: ghosts and a halo (after
@@ -808,7 +808,7 @@ fn lens(uv : vec2f, asp : f32, e : f32) -> vec3f {
         // a line and not a row of copies.
         // (and each pixel shifts its taps by its own fraction of a step, which
         // turns what beading is left into grain).
-        let jit = lens_hash(uv * 913.0) - 0.5;
+        let jit = hash12s(uv * 913.0) - 0.5;
         for (var k = 1; k <= 10; k++) {
             let o = vec2f((f32(k) + jit) * 0.0176, 0.0);
             let w = 1.0 - f32(k) / 11.0;
@@ -917,10 +917,9 @@ fn exposure() -> f32 {
 
 // postDepthWGSL: view-space position from the depth buffer and the
 // projection (depth 0…1, right-handed: the camera looks down -z).
-const postDepthWGSL = `
+const postDepthWGSL = wgsl.Hash + wgsl.Depth + `
 fn view_dist(d : f32) -> f32 {
-    if (U.p4.w > 0.0) { return exp2(d / U.p4.w) - 1.0; } // logarithmic depth (Post.LogDepth)
-    return U.proj.w / (d + U.proj.z);
+    return depth_dist(d, U.p4.w, U.proj.z, U.proj.w); // U.p4.w > 0: logarithmic depth (Post.LogDepth)
 }
 // The scene was drawn with its projection offset by U.jit.xy (in NDC), so
 // the pixel at uv saw the point that lies at uv less that offset.
@@ -930,7 +929,6 @@ fn view_pos(uv : vec2f, z : f32) -> vec3f {
 }
 // Where a pixel's point lies on the screen without the jitter, in uv.
 fn unjitter(uv : vec2f) -> vec2f { return uv - vec2f(U.jit.x, -U.jit.y) * 0.5; }
-fn ign(p : vec2f) -> f32 { return fract(52.9829189 * fract(dot(p, vec2f(0.06711056, 0.00583715)))); }
 `
 
 // postAOWGSL: ambient occlusion at half resolution (the Alchemy / Scalable

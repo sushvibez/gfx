@@ -1,6 +1,9 @@
 package render
 
-import "github.com/sushvibez/gfx/gpu"
+import (
+	"github.com/sushvibez/gfx/gpu"
+	"github.com/sushvibez/gfx/render/wgsl"
+)
 
 // Rain as particles: FrameSettings.Rain fills a box of air round the camera
 // with falling drops and the ground under it with splashes. Nothing is
@@ -28,7 +31,7 @@ const (
 	rainDrips    = 9000
 )
 
-const rainWGSL = frameWGSL + `
+const rainWGSL = frameWGSL + wgsl.Hash + wgsl.Light + `
 struct Light {
     pos_range : vec4f,
     color : vec4f,
@@ -50,15 +53,6 @@ struct VOut {
     @location(0) uv : vec2f,
     @location(1) color : vec3f,
     @location(2) kind : f32,
-}
-
-fn hash4(i : u32) -> vec4f {
-    var s = vec4<u32>(i * 747796405u + 2891336453u, i * 2246822519u + 3266489917u,
-                      i * 668265263u + 374761393u, i * 1597334677u + 3812015801u);
-    s = (s ^ (s >> vec4<u32>(15u))) * vec4<u32>(2246822519u);
-    s = (s ^ (s >> vec4<u32>(13u))) * vec4<u32>(3266489917u);
-    s = s ^ (s >> vec4<u32>(16u));
-    return vec4f(s) * (1.0 / 4294967296.0);
 }
 
 // The sky map at a world point: x is 1 when nothing is over it, y the
@@ -89,10 +83,7 @@ fn drop_light(p : vec3f) -> vec3f {
         let dv = li.pos_range.xyz - p;
         let dist = length(dv);
         if (dist >= li.pos_range.w) { continue; }
-        let nd = dist / li.pos_range.w;
-        var win = max(1.0 - nd * nd * nd * nd, 0.0);
-        win = win * win;
-        var att = win / (1.0 + dist * dist);
+        var att = light_window(dist * dist, li.pos_range.w * li.pos_range.w, 0.0);
         let travel = -dv / max(dist, 1e-4); // the way the light travels to the drop
         if (li.color.w > 0.5) {
             att = att * smoothstep(li.dir_cos.w, li.params.x, dot(travel, li.dir_cos.xyz));
@@ -112,7 +103,7 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
     let rain = frame.sun.w;
     let t = frame.env.y;
     let cam = frame.cam_pos.xyz;
-    let h = hash4(ii);
+    let h = hash4u(ii);
     var centre = vec3f(0.0);
     var right = vec3f(0.0);
     var up = vec3f(0.0);
@@ -147,7 +138,7 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         // four axes for a place where what the rain lands on falls away (the
         // rim of a roof, a container's top edge, the quay), and if there is
         // one a bead gathers on it and falls, faster as it goes, over and over.
-        let hc = hash4(ii * 9973u + 17u);
+        let hc = hash4u(ii * 9973u + 17u);
         var q = hc.xy * PAD;
         q = cam.xz + (fract((q - cam.xz) / PAD + 0.5) - 0.5) * PAD;
         let quarter = floor(hc.z * 4.0) * 1.5707963;
@@ -186,7 +177,7 @@ fn vs(@builtin(vertex_index) vi : u32, @builtin(instance_index) ii : u32) -> VOu
         // A splash: a new place each time round, on whatever the rain meets.
         let life = 0.5 + 0.7 * h.z;
         let turn = t / life + h.w;
-        let hc = hash4(ii * 7919u + u32(floor(turn)));
+        let hc = hash4u(ii * 7919u + u32(floor(turn)));
         let age = fract(turn) * life / 0.16; // seen for the first 0.16 s of each round
         var q = hc.xy * PAD;
         q = cam.xz + (fract((q - cam.xz) / PAD + 0.5) - 0.5) * PAD;

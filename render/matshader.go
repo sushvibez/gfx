@@ -1,5 +1,7 @@
 package render
 
+import "github.com/sushvibez/gfx/render/wgsl"
+
 // WGSL for the material pass (DESIGN.md §9). The legacy PBR shader in
 // renderer3d.go is untouched — DrawMaterial/DrawInstanced run through this
 // second pipeline family instead, so existing examples keep their exact
@@ -33,7 +35,7 @@ struct Frame {
 }
 `
 
-const shaderMaterial = frameWGSL + traceWGSL + `
+const shaderMaterial = frameWGSL + traceWGSL + wgsl.Hash + wgsl.Noise + wgsl.Light + wgsl.Shadow + wgsl.Wet + `
 struct MDraw {
     model : mat4x4f,
     color : vec4f,
@@ -123,8 +125,7 @@ fn vs_shadow(@location(0) pos : vec3f, @location(1) normal : vec3f, @location(2)
 // With a temporal filter behind it (frame.cam_pos.w > 0) the pattern moves
 // each frame, so successive frames sample differently and average out.
 fn sh_ign(p : vec2f) -> f32 {
-    let q = p + 5.588238 * frame.cam_pos.w;
-    return fract(52.9829189 * fract(dot(q, vec2f(0.06711056, 0.00583715))));
+    return ign(p + 5.588238 * frame.cam_pos.w);
 }
 // A random number for a traced ray: with a temporal filter behind it, white
 // noise that is new every frame (a lattice pattern would show as a
@@ -139,12 +140,6 @@ fn tr_rand(p : vec2f, k : f32) -> f32 {
     x = (x ^ (x >> 13u)) * 3266489917u;
     x = x ^ (x >> 16u);
     return f32(x) / 4294967296.0;
-}
-// Vogel disc: n points spread evenly over the unit disc, rotated by phi.
-fn sh_vogel(i : i32, n : i32, phi : f32) -> vec2f {
-    let r = sqrt((f32(i) + 0.5) / f32(n));
-    let th = f32(i) * 2.39996323 + phi;
-    return r * vec2f(cos(th), sin(th));
 }
 
 fn spot_cmp(slot : i32, uv : vec2f, z : f32) -> f32 {
@@ -175,21 +170,18 @@ fn spot_shadow(li : Light, world : vec3f, n : vec3f, dist : f32, frag : vec2f) -
     let radius = 2.5 / f32(textureDimensions(spot_tex0).x);
     var lit = 0.0;
     for (var i = 0; i < 8; i++) {
-        lit += spot_cmp(slot, uv + sh_vogel(i, 8, phi) * radius, p.z - 0.00002);
+        lit += spot_cmp(slot, uv + vogel(i, 8, phi) * radius, p.z - 0.00002);
     }
     return lit / 8.0;
 }
 
 // Value noise over the plane, for where puddles gather.
-fn wet_hash(p : vec2f) -> f32 {
-    return fract(sin(dot(p, vec2f(127.1, 311.7))) * 43758.5453);
-}
 fn wet_noise(p : vec2f) -> f32 {
     let i = floor(p);
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(wet_hash(i), wet_hash(i + vec2f(1.0, 0.0)), u.x),
-               mix(wet_hash(i + vec2f(0.0, 1.0)), wet_hash(i + vec2f(1.0, 1.0)), u.x), u.y);
+    return mix(mix(hash12s(i), hash12s(i + vec2f(1.0, 0.0)), u.x),
+               mix(hash12s(i + vec2f(0.0, 1.0)), hash12s(i + vec2f(1.0, 1.0)), u.x), u.y);
 }
 // How open to the sky a point is (1 = nothing over it): the sky map is a
 // depth map looking straight down, tested a hand above the surface with
@@ -220,7 +212,7 @@ fn rain_drops(p : vec2f, t : f32) -> vec3f {
     for (var k = 0; k < 2; k++) {
         let q = p * (2.6 + 1.7 * f32(k)) + vec2f(13.7, 5.1) * f32(k);
         let cell = floor(q);
-        let h = wet_hash(cell + 3.1 * f32(k));
+        let h = hash12s(cell + 3.1 * f32(k));
         let centre = cell + vec2f(0.25 + 0.5 * h, 0.25 + 0.5 * fract(h * 57.3));
         let age = fract(t * (0.9 + 0.5 * fract(h * 13.7)) + h * 9.0);
         let dv = q - centre;
@@ -247,7 +239,7 @@ fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
         var l = normalize(-frame.light_dir.xyz);
         if (frame.rt.w > 0.0) {
             let side = normalize(cross(l, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(l.y) > 0.9)));
-            let o = sh_vogel(i32(tr_rand(frag, 1.0) * 16.0), 16, tr_rand(frag, 2.0) * 6.2831853) * frame.rt.w;
+            let o = vogel(i32(tr_rand(frag, 1.0) * 16.0), 16, tr_rand(frag, 2.0) * 6.2831853) * frame.rt.w;
             l = normalize(l + side * o.x + cross(l, side) * o.y);
         }
         return select(1.0, 0.0, trace_any(world + n * 0.03, l, 0.01, 2000.0));
@@ -266,52 +258,27 @@ fn shadow_factor(world : vec3f, n : vec3f, n_dot_l : f32, frag : vec2f) -> f32 {
     }
     let dims = vec2f(textureDimensions(shadow_tex));
     let zr = sc.z - 0.0008;
-    // Receiver-plane bias: across a wide kernel the receiver's own depth
-    // changes, and comparing every tap against the centre's depth shadows
-    // a slanted surface with itself. The plane's depth gradient in shadow
-    // uv follows from the normal and the (affine) light matrix: a normal
-    // transforms by the inverse transpose, which for rotation times
-    // scale is the matrix itself over the squared row lengths.
-    let lm = mat3x3f(frame.light_vp[0].xyz, frame.light_vp[1].xyz, frame.light_vp[2].xyz);
-    let lt = transpose(lm);
-    let nc = (lm * n) / vec3f(dot(lt[0], lt[0]), dot(lt[1], lt[1]), dot(lt[2], lt[2]));
-    var dz = vec2f(0.0);
-    if (abs(nc.z) > 1e-6) { dz = vec2f(-2.0 * nc.x, 2.0 * nc.y) / nc.z; }
-    let max_slope = 0.004 * dims.x;      // never follow a plane steeper than this
-    dz = clamp(dz, vec2f(-max_slope), vec2f(max_slope));
-    // A texel of that slope as bias: the map stores one depth per texel,
-    // and a tap can sit anywhere inside it.
+    // Receiver-plane bias (wgsl.Shadow), never following a plane steeper
+    // than 0.004 of the map per texel; a texel of that slope as bias
+    // besides: the map stores one depth per texel, and a tap can sit
+    // anywhere inside it.
+    let dz = pcss_plane(frame.light_vp, n, 0.004 * dims.x);
     let zb = zr - (abs(dz.x) + abs(dz.y)) * 0.9 / dims.x;
     let phi = sh_ign(frag) * 6.2831853;
     // Blocker search: the average depth of what stands between here and the sun.
     let search = clamp(soft * 0.08, 2.0 / dims.x, 0.02);
-    var blk = 0.0;
-    var nb = 0.0;
-    for (var i = 0; i < 8; i++) {
-        let o = sh_vogel(i, 8, phi) * search;
-        let t = vec2i(clamp((uv + o) * dims, vec2f(0.0), dims - 1.0));
-        let d = textureLoad(shadow_tex, t, 0);
-        // The plane at the centre of the texel read, not at the tap.
-        let oc = (vec2f(t) + 0.5) / dims - uv;
-        if (d < zb + dot(oc, dz)) { blk += d; nb += 1.0; }
-    }
-    if (nb < 0.5) {
+    let blk = pcss_blockers(shadow_tex, uv, zb, dz, phi, search, 8, dims);
+    if (blk.y < 0.5) {
         return 1.0;
     }
     // Deep in the umbra (every tap blocked) there is no edge to filter.
-    let e = min(uv, 1.0 - uv);
-    let border = smoothstep(0.0, 0.03, min(e.x, e.y));
-    if (nb > 7.5) {
+    let border = pcss_border(uv);
+    if (blk.y > 7.5) {
         return 1.0 - border;
     }
     // Penumbra: wider the further the blockers are.
-    let pen = clamp((zr - blk / nb) * soft, 1.25 / dims.x, search);
-    var lit = 0.0;
-    for (var i = 0; i < 12; i++) {
-        let o = sh_vogel(i, 12, phi + 1.7) * pen;
-        lit += textureSampleCompareLevel(shadow_tex, shadow_samp, uv + o, zb + dot(o, dz));
-    }
-    lit /= 12.0;
+    let pen = clamp((zr - blk.x / blk.y) * soft, 1.25 / dims.x, search);
+    let lit = pcss_filter(shadow_tex, shadow_samp, uv, zb, dz, phi + 1.7, pen, 12);
     // Fade to lit at the map's edge, so its border never shows.
     return mix(1.0, lit, border);
 }
@@ -454,13 +421,10 @@ fn brdf(n : vec3f, v : vec3f, l : vec3f, albedo : vec3f, metallic : f32, roughne
     let ndh = max(dot(n, h), 0.0);
     let hdv = max(dot(h, v), 0.0);
     let a = roughness * roughness;
-    let a2 = a * a;
-    let den = ndh * ndh * (a2 - 1.0) + 1.0;
-    let ndf = a2 / (PI * den * den);
-    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    let g = (ndv / (ndv * (1.0 - k) + k)) * (ndl / (ndl * (1.0 - k) + k));
+    let ndf = ggx_dpi(ndh, a * a) / PI;
+    let g = smith_schlick(ndv, ndl, (roughness + 1.0) * (roughness + 1.0) / 8.0);
     let f0 = mix(vec3f(0.04), albedo, metallic);
-    let f = f0 + (vec3f(1.0) - f0) * pow(1.0 - hdv, 5.0);
+    let f = fresnel_schlick(f0, vec3f(1.0), hdv);
     let spec = ndf * g * f / (4.0 * ndv * ndl + 1e-4);
     let kd = (vec3f(1.0) - f) * (1.0 - metallic);
     return (kd * albedo / PI + spec) * ndl;
@@ -691,10 +655,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         let ld = dv / max(dist, 1e-4);
         // Godot-style windowed inverse-square: a smooth cutoff at Range
         // multiplying a bounded 1/(1+d^2) falloff.
-        let nd = dist / li.pos_range.w;
-        var win = max(1.0 - nd * nd * nd * nd, 0.0);
-        win = win * win;
-        var att = win / (1.0 + dist * dist);
+        var att = light_window(dist * dist, li.pos_range.w * li.pos_range.w, 0.0);
         if (li.color.w > 0.5) {
             let cd = dot(-ld, li.dir_cos.xyz);
             att = att * smoothstep(li.dir_cos.w, li.params.x, cd);
@@ -714,7 +675,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
                 var to = dv;
                 if (frame.cam_pos.w > 0.0) {
                     let side = normalize(cross(ld, select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(ld.y) > 0.9)));
-                    let o = sh_vogel(i32(tr_rand(in.pos.xy, f32(i) * 2.0 + 20.0) * 16.0), 16, tr_rand(in.pos.xy, f32(i) * 2.0 + 21.0) * 6.2831853) * 0.15;
+                    let o = vogel(i32(tr_rand(in.pos.xy, f32(i) * 2.0 + 20.0) * 16.0), 16, tr_rand(in.pos.xy, f32(i) * 2.0 + 21.0) * 6.2831853) * 0.15;
                     to = dv + side * o.x + cross(ld, side) * o.y;
                 }
                 let tl = length(to);
@@ -742,7 +703,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     if (frame.env.x > 0.0) {
         let nv = max(dot(shaded_n, v), 0.0);
         let f0 = mix(vec3f(0.04), albedo, metallic);
-        let fres = f0 + (max(vec3f(1.0 - roughness), f0) - f0) * pow(1.0 - nv, 5.0);
+        let fres = fresnel_schlick(f0, max(vec3f(1.0 - roughness), f0), nv);
         let r = reflect(-v, shaded_n);
         let blur = roughness * roughness;
         let avg = (frame.sky_top.rgb + frame.sky_horizon.rgb * 2.0) * (1.0 / 3.0) * 0.8;
