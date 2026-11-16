@@ -8,12 +8,16 @@ package gml
 //     under the type name (Style.mainColor, Style.resize(x)).
 //   - `Type 1.0 Type.qml` entries register as file components, so module
 //     types instantiate exactly like sibling-directory components.
-// Unresolvable modules (QtQuick, QtQuick.Controls, ...) are skipped — the
-// element vocabulary for those is built in.
+// Qt's own modules (QtQuick, QtQuick.Controls, ...) have no directory: the
+// element vocabulary for those is built in. Any other module that is not
+// found is recorded (Document.UnresolvedImports), and a strict document
+// does not build with one missing.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -32,10 +36,50 @@ func (doc *docState) resolveImports(root *node, env *Env) {
 		doc.modulesSeen[name] = true
 		dir := findModuleDir(doc.baseDir, name)
 		if dir == "" {
-			continue // builtin vocabulary (QtQuick, ...) or unknown
+			if !qtModule(name) {
+				doc.unresolved = append(doc.unresolved, name)
+			}
+			continue
 		}
 		doc.loadModule(name, dir, env)
 	}
+}
+
+// qtModule reports a module that is Qt's own — QtQuick, QtQuick.Controls,
+// QtQml.Models, Qt5Compat.GraphicalEffects, Qt.labs.settings — which no
+// directory has to provide: what the engine models of them is built in.
+func qtModule(name string) bool {
+	if !strings.HasPrefix(name, "Qt") {
+		return false
+	}
+	if len(name) == 2 {
+		return true
+	}
+	c := name[2]
+	return c == '.' || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+}
+
+// UnresolvedImports lists the modules this document (and the component
+// files it has loaded so far) imports that are neither Qt's own nor found
+// as a directory with a qmldir near the document — sorted, each once. A
+// page written for a C++ application names the modules its C++ registers;
+// here those have nowhere to come from, and their types do not exist.
+func (d *Document) UnresolvedImports() []string {
+	out := append([]string(nil), d.doc.unresolved...)
+	sort.Strings(out)
+	return out
+}
+
+// unresolvedImportsError is the build error of a strict document that
+// imports modules nothing provides, nil when there are none.
+func (doc *docState) unresolvedImportsError() error {
+	if len(doc.unresolved) == 0 {
+		return nil
+	}
+	mods := append([]string(nil), doc.unresolved...)
+	sort.Strings(mods)
+	return fmt.Errorf("import %s: no such module (looked for <module>/qmldir beside the document and in its parent directories, and under their imports/ and styles/)",
+		strings.Join(mods, ", "))
 }
 
 // findModuleDir searches for <module>/qmldir near the document: each

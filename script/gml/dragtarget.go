@@ -122,7 +122,7 @@ func (doc *docState) wireDragTarget(n *node, d *ui.DivEl, env *Env, g *dragAttrs
 	var target any
 	if g.target != nil {
 		if v, err := g.target.eval(env); err == nil {
-			target = v
+			target = hostValue(v) // `drag.target: null`
 		}
 	}
 	if target == nil && !g.handler {

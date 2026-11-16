@@ -249,7 +249,7 @@ func tableColumnWidths(provider any, cols int, env *Env, line int) []float32 {
 	widths := make([]float32, cols)
 	for c := range widths {
 		widths[c] = 120
-		if provider == nil {
+		if nullish(provider) {
 			continue
 		}
 		v, err := callValue(provider, []expr{&litExpr{float64(c)}}, env, line, "columnWidthProvider")

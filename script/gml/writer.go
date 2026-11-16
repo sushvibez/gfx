@@ -110,8 +110,9 @@ func (b *Builder) String() (string, error) {
 // valueExpr converts a Go literal to an expression node.
 func valueExpr(v any) (expr, error) {
 	switch t := v.(type) {
-	case nil:
-		return &litExpr{v: nil}, nil
+	case nil, nullValue:
+		// A host's nil is written as it always was, `null`.
+		return &litExpr{v: Null}, nil
 	case bool, string:
 		return &litExpr{v: t}, nil
 	case float64:
@@ -275,7 +276,14 @@ func writeStmt(sb *strings.Builder, s stmt, depth int) {
 		writeStmt(sb, t.body, depth+1)
 		sb.WriteString(ind + "}\n")
 	case *forOfStmt:
-		fmt.Fprintf(sb, "%sfor (var %s of %s) {\n", ind, t.name, exprString(t.iter, 0))
+		decl, word := "", "of"
+		if t.decl {
+			decl = t.kind.String() + " "
+		}
+		if t.keys {
+			word = "in"
+		}
+		fmt.Fprintf(sb, "%sfor (%s%s %s %s) {\n", ind, decl, t.name, word, exprString(t.iter, 0))
 		writeStmt(sb, t.body, depth+1)
 		sb.WriteString(ind + "}\n")
 	case *tryStmt:
@@ -317,8 +325,13 @@ func stmtOneLine(s stmt) (string, bool) {
 		return exprString(t.e, 0), true
 	case *assignStmt:
 		return exprString(t.target, 0) + " = " + exprString(t.value, 0), true
+	case *scopeStmt:
+		return "", true // what the parser worked out, not source
 	case *varStmt:
-		return "var " + t.name + " = " + exprString(t.value, 0), true
+		if t.value == nil {
+			return t.kind.String() + " " + t.name, true
+		}
+		return t.kind.String() + " " + t.name + " = " + exprString(t.value, 0), true
 	case *seqStmt:
 		// `var a = 1, b = 2` — several declarators in one statement.
 		var parts []string
@@ -383,6 +396,8 @@ func exprStringRaw(e expr) string {
 	switch t := e.(type) {
 	case *litExpr:
 		return litString(t.v)
+	case *regexExpr:
+		return litString(t.re)
 	case *identExpr:
 		return t.name
 	case *memberExpr:
@@ -470,7 +485,11 @@ func exprStringRaw(e expr) string {
 
 func litString(v any) string {
 	switch t := v.(type) {
+	case *jsRegExp:
+		return "/" + t.source + "/" + t.flags
 	case nil:
+		return "undefined"
+	case nullValue:
 		return "null"
 	case bool:
 		return strconv.FormatBool(t)

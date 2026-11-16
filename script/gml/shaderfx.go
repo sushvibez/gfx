@@ -422,7 +422,7 @@ func shaderVector(v any, kind render.UniformKind) []float32 {
 		keys := [][]string{{"x", "width", "r"}, {"y", "height", "g"}, {"z", "b"}, {"w", "a"}}
 		for i := 0; i < n; i++ {
 			for _, k := range keys[i] {
-				if f, err := toFloat32(t[k]); err == nil && t[k] != nil {
+				if f, err := toFloat32(t[k]); err == nil && !nullish(t[k]) {
 					out[i] = f
 					break
 				}

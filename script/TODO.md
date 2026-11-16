@@ -354,6 +354,52 @@ of delegate rows moved much further — navdisplay 1087 → 92 µs, chatui
   (`templatepopup.go` sites) as slots. No measurable target left on
   buttons; worth re-measuring against the pages above.
 
+### The JS evaluator against JS — what is left (2026-11-16)
+
+The language-level gaps a review of the evaluator listed, and where each
+stands. `review.md` (not checked in) has the detail and the measurements.
+
+- ✓ **null and undefined are two values** (`jsvalue.go`): Go's nil is
+  undefined, `gml.Null` is null; `===` tells them apart, and a null
+  argument is 0 where an undefined one is "not given".
+- ✓ **One execution budget** (`budget.go`): steps (loop iterations plus
+  calls) and wall-clock time, shared by everything one entry into the
+  evaluator runs; `SetBudget`, `Interrupt`, `ErrBudget`. The default is
+  ten million steps and ten seconds. Process-wide, not per document.
+- ✓ **var / let / const** (`jsscope.go`): function scope and hoisting,
+  block scope and the dead zone, const, redeclaration refused at load,
+  a `let` of its own per loop iteration, `for … in`.
+- ✓ **JSON** (`jsjson.go`): omission, cycles as an error, replacer,
+  indent, `toJSON`, a reviver.
+- ✓ **RegExp** (`regexp.go`): `lastIndex` with g and y, exec results
+  with `index` / `input` / `groups`, `matchAll`.
+- ✓ **String positions are UTF-16 units** (`jsstring.go`), and string
+  methods are 25–65 % faster for it (no `[]rune` copies).
+- ✓ **Component.onCompleted runs in Qt's order** (`completion.go`),
+  measured on Qt 6.10.1; ✓ unresolved imports are reported
+  (`Document.UnresolvedImports`, an error in a strict document);
+  ✓ `gfx gen` reads the files the go command would compile.
+- ▢ **A ListView's delegates never run `Component.onCompleted`** — rows
+  built after the first build are not collected (a Repeater's are), nor
+  are rows added to a model later. Found while measuring the order.
+- ▢ **An object has no key order**: it is a Go map, so `JSON.stringify`
+  and `for … in` go by sorted key where JS goes by insertion. Needs an
+  ordered object.
+- ▢ `"" + null` and `"" + undefined` print nothing (JS: their names);
+  `undefined + 1` is an error (JS: NaN); `switch` compares loosely.
+- ▢ Half a surrogate pair cannot be held: a cut through an emoji has
+  U+FFFD for the half.
+- ▢ RegExp: no lookaround or backreferences (RE2), a pattern without
+  `u` still matches by code point, `d` and `v` are refused.
+- ▢ Hoisting in a handler written as bare statements, and in a switch
+  clause; `typeof` of a `let` in its dead zone.
+- ▢ `render.SetQtTextMetrics` is still a process-wide switch flipped by
+  loading a document; a per-document choice has to live in `render`.
+- ▢ **No differential testing**: no pinned Node fixtures, no Test262
+  subset. `TestCorpusSweep` (set `GFX_CORPUS_SWEEP`) writes what every
+  corpus page builds, for a before/after diff without a GPU — it does
+  not click, paint or render.
+
 ## Later
 
 ### gml app chrome

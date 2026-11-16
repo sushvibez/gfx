@@ -85,7 +85,7 @@ func (doc *docState) wireInputHandler(h, box *node, d *ui.DivEl, env *Env) {
 	var hasTarget = true
 	if e, ok := exprs["target"]; ok {
 		targetExpr = e
-		if v, err := e.eval(env); err != nil || v == nil {
+		if v, err := e.eval(env); err != nil || nullish(v) {
 			hasTarget = false
 		}
 	}

@@ -980,7 +980,18 @@ func buildFresh(n *node, env *Env, doc *docState) (built ui.Element, buildErr er
 	// Accessible.role/name/description tag what the item built (access.go).
 	// (The node as declared: n is stripped of its attached attributes below.)
 	declared := n
+	// Until the document has completed, every element built is numbered,
+	// for the order its completion handlers run in (completion.go). A
+	// component's root is the same object as its use site and takes that
+	// number.
+	outerElem := doc.curElem
+	if doc.instElem != 0 {
+		doc.curElem, doc.instElem = doc.instElem, 0
+	} else if !doc.completed {
+		doc.curElem = doc.noteBuilt(outerElem, n)
+	}
 	defer func() {
+		doc.curElem = outerElem
 		if buildErr == nil {
 			applyAccessible(declared, env, built)
 		}
@@ -2014,6 +2025,9 @@ type docState struct {
 	// Module imports (module.go): modules already resolved, and module
 	// component types mapped to their .qml files.
 	modulesSeen map[string]bool
+	// unresolved are the imported modules that are neither Qt's own nor
+	// found on disk (module.go).
+	unresolved  []string
 	moduleTypes map[string]string
 	// moduleTypesBy is moduleTypes split per module name, and curFile is
 	// the file whose tree is building — together they answer "does THIS
@@ -2096,6 +2110,10 @@ type docState struct {
 	tplObjs                                         map[string]*elemObject                // styled controls' shadow objects, kept across builds (see seedTemplateScope)
 	propTok                                         map[propTokKey]*core.Property[string] // exposed-value tokens by key+name (see elemObject.setProp)
 	rowDepth                                        int                                   // delegate row scopes we are inside (see build)
+	topView, topRow                                 string                                // the outermost of them: its view's key and its row's prefix
+	built                                           []builtElem                           // the elements built before completion (completion.go)
+	curElem                                         int                                   // the number of the one being built
+	instElem                                        int                                   // the next element built is the root of the component this one uses
 	rowUntracked                                    int                                   // ... of which could not be hashed (rowtoken.go)
 	rowSeen                                         []keyCount                            // keySeen counts to restore when a row ends (see build)
 	cacheHits                                       int                                   // subtree cache hits this build (GFX_BUILD_STATS)
@@ -2629,6 +2647,12 @@ type completedTask struct {
 	// state and derived properties can be bound by bare name too — QML's
 	// item scope, which an id lookup alone does not cover.
 	node *node
+	// Where the handler was collected, which decides when it runs
+	// (completion.go): the number of its element (docState.noteBuilt),
+	// and — for a handler inside a view's delegate — which view and which
+	// of its rows.
+	elem      int
+	view, row string
 }
 
 // collectCompleted queues an element's Component.onCompleted handlers,
@@ -2636,11 +2660,21 @@ type completedTask struct {
 // the handler resolves the element's own methods. Returns the node with the
 // lifecycle attributes stripped.
 func (doc *docState) collectCompleted(n *node, env *Env) *node {
+	return doc.collectCompletedFor(n, env, doc.curElem)
+}
+
+// collectCompletedFor is collectCompleted with the number of the element
+// the handlers belong to (docState.noteBuilt).
+func (doc *docState) collectCompletedFor(n *node, env *Env, elem int) *node {
 	out, tasks := extractComponentHandlers(n, env)
 	if len(tasks) == 0 || doc.collected || doc.completed {
 		return out
 	}
 	for i := range tasks {
+		tasks[i].elem = elem
+		if doc.rowDepth > 0 {
+			tasks[i].view, tasks[i].row = doc.topView, doc.topRow
+		}
 		if tasks[i].self != "" {
 			tasks[i].self = doc.rowPrefix + tasks[i].self
 		}
@@ -5866,7 +5900,11 @@ func buildBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 // `DatabaseManager { Component.onCompleted: openDatabase() }` is how a
 // backend gets started.
 func (doc *docState) refreshNonVisual(c *node, env *Env) {
-	doc.collectCompleted(c, env)
+	// It is serviced from the build of the element that holds it, and is
+	// an element of its own for the order of completion.
+	if !doc.collected && !doc.completed && hasAttr(c, "Component.onCompleted") {
+		doc.collectCompletedFor(c, env, doc.noteBuilt(doc.curElem, c))
+	}
 	switch c.typeName {
 	case "Timer":
 		doc.refreshTimer(c, env)
@@ -8326,7 +8364,8 @@ func buildScroll(n *node, env *Env, doc *docState) (ui.Element, error) {
 		pobj.parentObj = po
 	}
 	pobj.ovW, pobj.ovH = contentW, contentH
-	if padding > 0 {
+	// (No element on the first frame: nothing has been laid out to read.)
+	if padding > 0 && pobj.el != nil {
 		if b := ui.Bounds(pobj.el); pobj.ovW == 0 && b.W > 0 {
 			pobj.ovW = b.W - 2*padding
 		}

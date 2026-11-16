@@ -1,7 +1,6 @@
 package gml
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -133,59 +132,4 @@ func consoleNS() map[string]any {
 		return nil, nil
 	})
 	return map[string]any{"log": emit, "warn": emit, "error": emit, "info": emit}
-}
-
-// jsonNS is the JavaScript JSON global: stringify / parse over the value
-// types this engine uses (float64, string, bool, []any, map[string]any).
-func jsonNS() map[string]any {
-	return map[string]any{
-		"stringify": jsFunc(func(a []any) (any, error) {
-			// No value, or undefined: undefined (nil here), not a string
-			// saying so. A number JSON has no way to write (NaN, an
-			// infinity) is null, as in JS, not an error.
-			if len(a) == 0 {
-				return nil, nil
-			}
-			b, err := json.Marshal(jsonFinite(a[0]))
-			if err != nil {
-				return nil, err
-			}
-			return string(b), nil
-		}),
-		"parse": jsFunc(func(a []any) (any, error) {
-			if len(a) == 0 {
-				return nil, fmt.Errorf("JSON.parse needs a string")
-			}
-			var v any
-			if err := json.Unmarshal([]byte(str(a[0])), &v); err != nil {
-				return nil, err
-			}
-			return v, nil
-		}),
-	}
-}
-
-// jsonFinite is v with every number JSON cannot write replaced by nil.
-func jsonFinite(v any) any {
-	switch v := v.(type) {
-	case float64:
-		if v != v || math.IsInf(v, 0) {
-			return nil
-		}
-	case float32:
-		return jsonFinite(float64(v))
-	case []any:
-		out := make([]any, len(v))
-		for i, e := range v {
-			out[i] = jsonFinite(e)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for k, e := range v {
-			out[k] = jsonFinite(e)
-		}
-		return out
-	}
-	return v
 }

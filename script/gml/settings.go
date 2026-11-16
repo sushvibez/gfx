@@ -181,6 +181,8 @@ func settingsJSON(v any) any {
 	switch v := v.(type) {
 	case nil, float64, string, bool:
 		return v
+	case nullValue:
+		return nil // JSON's null
 	case int:
 		return float64(v)
 	case float32:

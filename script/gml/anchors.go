@@ -246,7 +246,7 @@ func anchorEdge(e expr, env *Env) (*ui.AnchorLink, error) {
 	if id, ok := e.(*identExpr); ok && (id.name == "undefined" || id.name == "null") {
 		return nil, nil
 	}
-	if l, ok := e.(*litExpr); ok && l.v == nil {
+	if l, ok := e.(*litExpr); ok && nullish(l.v) {
 		return nil, nil
 	}
 	m, ok := e.(*memberExpr)

@@ -164,3 +164,87 @@ type P struct {
 		t.Fatalf("names = %v", names)
 	}
 }
+
+// The generator reads the files the go tool would compile for the target,
+// and no others: a file for another GOOS, one behind a tag that is not
+// set, one marked ignore — each may declare the same type differently, or
+// not be meant to compile at all.
+func TestRunSelectsFilesLikeTheGoTool(t *testing.T) {
+	dir := t.TempDir()
+	const head = `package demo
+
+import (
+	"github.com/sushvibez/gfx/core"
+	"github.com/sushvibez/gfx/ecs"
+)
+
+var _ core.Vec2
+`
+	write(t, dir, "comp.go", head+`
+type Always struct {
+	ecs.GPUShared
+	X float32
+}
+`)
+	write(t, dir, "plat_linux.go", head+`
+type Plat struct {
+	ecs.GPUShared
+	OnLinux float32
+}
+`)
+	write(t, dir, "plat_windows.go", head+`
+type Plat struct {
+	ecs.GPUShared
+	OnWindows core.Vec4
+}
+`)
+	write(t, dir, "plat_other.go", "//go:build !linux && !windows\n\n"+head+`
+type Plat struct {
+	ecs.GPUShared
+	Elsewhere uint32
+}
+`)
+	write(t, dir, "tagged.go", "//go:build special\n\n"+head+`
+type Tagged struct {
+	ecs.GPUShared
+	T float32
+}
+`)
+	// Not meant to compile: its field type is one the generator refuses.
+	write(t, dir, "scratch.go", "//go:build ignore\n\n"+head+`
+type Broken struct {
+	ecs.GPUShared
+	P *float32
+}
+`)
+	for _, c := range []struct {
+		target Target
+		names  string
+		field  string
+	}{
+		{Target{GOOS: "linux", GOARCH: "amd64"}, "Always Plat", "onLinux : f32"},
+		{Target{GOOS: "windows", GOARCH: "amd64"}, "Always Plat", "onWindows : vec4f"},
+		{Target{GOOS: "js", GOARCH: "wasm"}, "Always Plat", "elsewhere : u32"},
+		{Target{GOOS: "linux", GOARCH: "amd64", Tags: []string{"special"}}, "Always Plat Tagged", "t : f32"},
+	} {
+		names, err := RunFor(dir, c.target)
+		if err != nil {
+			t.Errorf("%+v: %v", c.target, err)
+			continue
+		}
+		if got := strings.Join(names, " "); got != c.names {
+			t.Errorf("%+v: components %q, want %q", c.target, got, c.names)
+		}
+		out, err := os.ReadFile(filepath.Join(dir, "gfx_gen.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(out), c.field) {
+			t.Errorf("%+v: the generated file has no %q:\n%s", c.target, c.field, out)
+		}
+	}
+	// Run is RunFor with the tool's own target.
+	if _, err := Run(dir); err != nil {
+		t.Errorf("Run: %v", err)
+	}
+}

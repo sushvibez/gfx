@@ -120,10 +120,11 @@ func (d *Document) SetProperty(name string, v any) bool {
 	return true
 }
 
-// Property reads a document property back (nil when undeclared).
+// Property reads a document property back (nil when undeclared, and for
+// a property holding null or undefined).
 func (d *Document) Property(name string) any {
 	if ref, ok := d.doc.props[name]; ok {
-		return ref.get()
+		return hostValue(ref.get())
 	}
 	return nil
 }
@@ -213,6 +214,15 @@ func (d *Document) View() func() ui.Element {
 				clear(untrackedNames)
 			}
 		}
+		// A strict document does not build around an import that names
+		// nothing: its types would fail one by one as "unknown element",
+		// further from the cause. (A lenient one — real QML, written for
+		// an application whose C++ registers its modules — carries on.)
+		if !d.doc.lenient {
+			if err := d.doc.unresolvedImportsError(); err != nil {
+				return errorBanner(fmt.Errorf("%s: %w", d.doc.baseDir, err))
+			}
+		}
 		d.doc.beginFrame()
 		// The page's controls are drawn in a theme that suits its ground (theme.go).
 		pageDark := d.doc.groundDark
@@ -254,13 +264,14 @@ func (d *Document) View() func() ui.Element {
 		if !d.doc.completed && (laidOut || d.doc.builds >= 4) {
 			d.doc.completed = true
 			before := d.doc.observableSignature()
-			for _, t := range d.doc.onCompleted {
+			for _, t := range d.doc.orderCompleted(d.doc.onCompleted) {
 				t.env = d.doc.selfScope(t)
 				if err := runStmts(t.stmts, t.env); err != nil {
 					logf("gml: Component.onCompleted: %v", err)
 				}
 			}
 			d.doc.onCompleted = nil
+			d.doc.built = nil // only the order of these handlers needed it
 			// What completion CHANGED is not in this tree: the handlers ran
 			// after the build that queued them. Since they run exactly once,
 			// forcing one more rebuild cannot loop — and without it a model

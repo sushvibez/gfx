@@ -110,17 +110,18 @@ func FuzzStringCuts(f *testing.F) {
 	f.Add("abc", 0.0, -9.0)
 	f.Add("é𝄞x", 1e30, -1e30)
 	f.Fuzz(func(t *testing.T, s string, a, b float64) {
-		n := len([]rune(s))
+		n := unitLen(s) // positions are UTF-16 units (jsstring.go)
 		for _, name := range []string{"slice", "substring", "substr"} {
 			start, end := sliceBounds(name, n, []any{a, b})
 			if start < 0 || start > end || end > n {
-				t.Fatalf("%s(%v, %v) on %d characters cut [%d:%d]", name, a, b, n, start, end)
+				t.Fatalf("%s(%v, %v) on %d units cut [%d:%d]", name, a, b, n, start, end)
 			}
+			_ = unitSlice(s, start, end)
 		}
-		if i := runeIndex(s, "x", int(max(min(a, 1e9), -1e9))); i < -1 || i > n {
-			t.Fatalf("runeIndex %d of %d", i, n)
+		if i := unitIndex(s, "x", int(max(min(a, 1e9), -1e9))); i < -1 || i > n {
+			t.Fatalf("unitIndex %d of %d", i, n)
 		}
-		_ = fmt.Sprint(runeLastIndex(s, "x", int(max(min(b, 1e9), -1e9))))
+		_ = fmt.Sprint(unitLastIndex(s, "x", int(max(min(b, 1e9), -1e9))))
 	})
 }
 
@@ -148,12 +149,12 @@ func TestJSRunawayRecursionIsAnError(t *testing.T) {
 
 // Flags nothing here implements are refused, not silently ignored.
 func TestRegExpFlags(t *testing.T) {
-	for _, ok := range []string{"", "g", "gi", "ims", "u", "gimsu"} {
+	for _, ok := range []string{"", "g", "gi", "ims", "u", "gimsu", "y", "giy"} {
 		if _, err := newRegExp("a+", ok); err != nil {
 			t.Errorf("flags %q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"y", "d", "v", "gg", "x", "giy"} {
+	for _, bad := range []string{"d", "v", "gg", "x", "gid", "yy"} {
 		if _, err := newRegExp("a+", bad); err == nil {
 			t.Errorf("flags %q were accepted", bad)
 		}

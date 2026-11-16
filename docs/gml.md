@@ -322,7 +322,10 @@ rendering.
 Expressions and handler bodies are JavaScript, evaluated by a tree-walking
 interpreter over the value types `float64`, `string`, `bool`, `null`,
 `[]any` (arrays) and `map[string]any` (objects). Every number is a
-`float64`; `===`/`!==` behave like `==`/`!=` (the engine is loosely typed).
+`float64`. `===`/`!==` do not coerce between kinds, and `null` and
+`undefined` are two values (`x == null` is true for both, `x === null` only
+for null; a missing key, an unset `property var` and a host's nil are
+undefined). String positions are UTF-16 units, as in JavaScript.
 
 ### Supported
 
@@ -345,8 +348,11 @@ expressions), `++`/`--` prefix and postfix.
 Statements: `var`/`let`/`const` (several declarators), `if/else`, `for(;;)`,
 `for (x of iterable)`, `while`, `switch/case/default` with fall-through,
 `break`, `continue`, `return`, `throw`, `try/catch/finally`, function
-declarations inside bodies, blocks, expression statements. Loops are capped
-at ten million iterations per run. QML 6 type annotations on parameters,
+declarations inside bodies, blocks, expression statements. `var` is
+function-scoped and hoisted; `let`/`const` are block-scoped with a dead
+zone. One budget bounds each entry into the evaluator, loops and calls
+together (`gml.SetBudget`: 10,000,000 steps and 10 s by default;
+`gml.Interrupt` stops it from another goroutine). QML 6 type annotations on parameters,
 return types and catch bindings are skipped.
 
 Globals: `Math` (constants plus `abs floor ceil round trunc sqrt cbrt exp
@@ -833,7 +839,7 @@ takes delegate rows out of the cache.
 
 Semantics that differ by design:
 
-- Loosely typed: all numbers are doubles, `===` is `==`, declared types
+- Loosely typed: all numbers are doubles, declared types
   other than the seven listed are `var`. Strings are not colours; colours
   are `#aarrggbb` strings tagged at the boundary.
 - Bindings re-evaluate when their read-set is stale rather than through

@@ -158,7 +158,8 @@ Column {
 
 // TestNullComparisons: comparing against null/undefined must not coerce —
 // `model.active !== undefined` asks whether the role is set, and reading
-// nil as a number would fail the whole binding.
+// nil as a number would fail the whole binding. A role that is not set is
+// undefined and not null: `row.b === null` is false, as in JS.
 func TestNullComparisons(t *testing.T) {
 	src := `
 Column {
@@ -173,8 +174,8 @@ Column {
 	if el := d.View()(); el == nil {
 		t.Fatal("nil view")
 	}
-	if got := str(d.doc.props["out"].get()); got != "true,false,true,true,false" {
-		t.Fatalf("out = %q, want true,false,true,true,false", got)
+	if got := str(d.doc.props["out"].get()); got != "true,false,true,false,false" {
+		t.Fatalf("out = %q, want true,false,true,false,false", got)
 	}
 }
 

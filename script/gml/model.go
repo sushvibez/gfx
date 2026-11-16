@@ -390,7 +390,7 @@ func resolveModel(a attr, env *Env) (rows []map[string]any, count int, err error
 		}
 		return rows, len(rows), nil
 	}
-	if v == nil {
+	if nullish(v) {
 		// `model: null` — or a `property var` holding the model that the
 		// backend has not filled yet. QML shows nothing; it is not an error.
 		return nil, 0, nil

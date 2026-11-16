@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/sushvibez/gfx/core"
@@ -35,6 +36,11 @@ type Env struct {
 	// frozen marks the builtins root: constant for the life of the
 	// document, never bound into, safe to share by reference.
 	frozen bool
+	// block marks a block's scope — a `{ }`, a loop, a catch — as opposed
+	// to a function's: a `var` declared in it belongs to the nearest scope
+	// that is not one (see jsscope.go). (Kept beside the other flags: on
+	// its own after the maps it grew every scope by a size class.)
+	block bool
 	// derivedNames marks individual names bound into an existing scope
 	// the same way — a styled control's contract values (text, padding,
 	// implicit sizes), installed into the enclosing env for the style's
@@ -46,6 +52,9 @@ type Env struct {
 	// property binding's TrackReads — so the read has to record it itself,
 	// or `page: Math.round(contentX / 200)` never re-evaluates.
 	derivedTok map[string]*core.Property[uint64]
+	// consts are the names of this scope a `const` declared: assigning to
+	// one is an error.
+	consts map[string]bool
 }
 
 // declareLocal binds a JS local — a `var`/`let`/`const`, a loop
@@ -249,6 +258,11 @@ func (e *Env) snapshot() *Env {
 					out.derivedTok = map[string]*core.Property[uint64]{}
 				}
 				out.derivedTok[k] = t
+			}
+			if src.consts[k] {
+				out.markConst(k)
+			} else if out.consts[k] {
+				delete(out.consts, k) // shadowed by an inner, assignable binding
 			}
 		}
 	}
@@ -464,8 +478,9 @@ func (e *Env) Get(name string) (any, bool) {
 	return v, ok
 }
 
-// RefValue dereferences a property Ref (host-side convenience).
-func RefValue(r Ref) any { return r.get() }
+// RefValue dereferences a property Ref (host-side convenience). A null
+// reads as nil.
+func RefValue(r Ref) any { return hostValue(r.get()) }
 
 // Input exposes a text-field state; markup references its text as
 // name.text.
@@ -498,6 +513,9 @@ func (x *indexExpr) eval(env *Env) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if m, ok := recv.(*jsMatch); ok {
+		recv = m.items // a match result indexes as the array it is
+	}
 	switch c := recv.(type) {
 	case []any:
 		i, err := toInt(idx)
@@ -511,15 +529,14 @@ func (x *indexExpr) eval(env *Env) (any, error) {
 	case map[string]any:
 		return c[str(idx)], nil // missing key -> nil (JS undefined)
 	case string:
-		r := []rune(c)
 		i, err := toInt(idx)
 		if err != nil {
 			return nil, err
 		}
-		if i < 0 || i >= len(r) {
-			return nil, nil // JS: undefined
+		if ch, ok := unitChar(c, i); ok {
+			return ch, nil
 		}
-		return string(r[i]), nil
+		return nil, nil // JS: undefined
 	}
 	return nil, fmt.Errorf("gml:%d: cannot index %T", x.line, recv)
 }
@@ -530,6 +547,11 @@ func (x *identExpr) eval(env *Env) (any, error) {
 		return nil, fmt.Errorf("gml:%d: unknown identifier %q", x.line, x.name)
 	}
 	if r, ok := v.(Ref); ok {
+		// A let in its dead zone is a Ref (see deadZone), so the test for
+		// it costs a plain value's read nothing.
+		if _, dead := r.(deadZone); dead {
+			return nil, deadZoneError(x.name, x.line)
+		}
 		return r.get(), nil
 	}
 	if !owner.isDerived(x.name) {
@@ -551,7 +573,7 @@ func markMutableRead(v any) { markMutableReadNamed("", v) }
 // to v, for the GFX_UNTRACKED_TRACE breakdown (which names poison caches).
 func markMutableReadNamed(name string, v any) {
 	switch t := v.(type) {
-	case nil, Ref, *elemObject, *userFunc, *node:
+	case nil, nullValue, Ref, *elemObject, *userFunc, *node:
 	case *listModel:
 		// A model carries its own version property and stamps it on
 		// every mutation (listModel.ver) — which is exactly a tracked
@@ -691,6 +713,8 @@ func tokenStr(v any) string {
 	switch t := v.(type) {
 	case nil:
 		return ""
+	case nullValue:
+		return "\x00null" // not what undefined, or any string, carries
 	case string, colorVal, float64, float32, int, int64, bool:
 		return str(t)
 	case Ref, *elemObject:
@@ -712,6 +736,8 @@ func tokenHash(v any, depth int) uint64 {
 	switch t := v.(type) {
 	case nil:
 		return 0x9e37
+	case nullValue:
+		return 0x9e38
 	case map[string]any:
 		if depth > 3 {
 			return uint64(len(t))
@@ -1145,6 +1171,9 @@ func (r scrollFieldRef) onChange(func())                       {}
 func resolveAny(e expr, env *Env) (any, error) {
 	if id, ok := e.(*identExpr); ok {
 		if v, owner, found := env.lookupOwner(id.name); found {
+			if _, dead := v.(deadZone); dead {
+				return nil, deadZoneError(id.name, id.line)
+			}
 			if !owner.isDerived(id.name) {
 				markMutableReadNamed(id.name, v)
 			} else {
@@ -1165,12 +1194,19 @@ func (x *memberExpr) eval(env *Env) (any, error) {
 		if r, ok := base.(Ref); ok {
 			base = r.get()
 		}
-		// Optional chaining: a nil base yields nil instead of "no member".
-		if x.optional && base == nil {
+		// Optional chaining: a null or undefined base yields undefined
+		// instead of "no member" — at the `?.` itself, and for the rest of
+		// a chain a `?.` further in already cut short (`a?.b.c`).
+		if nullish(base) && (x.optional || optionalChain(x.base)) {
 			return nil, nil
 		}
 		if re, ok := base.(*jsRegExp); ok {
 			if v, ok := re.member(x.name); ok {
+				return v, nil
+			}
+		}
+		if m, ok := base.(*jsMatch); ok {
+			if v, ok := m.member(x.name); ok {
 				return v, nil
 			}
 		}
@@ -1179,7 +1215,7 @@ func (x *memberExpr) eval(env *Env) (any, error) {
 			case []any:
 				return float64(len(c)), nil
 			case string:
-				return float64(len([]rune(c))), nil
+				return float64(unitLen(c)), nil // UTF-16 units (jsstring.go)
 			}
 		}
 		// QML color component access — on a COLOUR (see colorVal), not on
@@ -1328,7 +1364,7 @@ func (x *binExpr) eval(env *Env) (any, error) {
 	}
 	// Nullish coalescing: left unless it's null/undefined.
 	if x.op == "??" {
-		if l != nil {
+		if !nullish(l) {
 			return l, nil
 		}
 		return x.r.eval(env)
@@ -1362,9 +1398,8 @@ func (x *binExpr) eval(env *Env) (any, error) {
 	}
 	if x.op == "===" || x.op == "!==" {
 		// Strict: values of different kinds are never equal (1 === "1" is
-		// false). Of the same kind they compare as == does below. null and
-		// undefined are one value here (nil), so they are strictly equal to
-		// each other, which JS says they are not.
+		// false), and null and undefined are kinds of their own. Of the
+		// same kind they compare as == does below.
 		if jsKind(l) != jsKind(r) {
 			return x.op == "!==", nil
 		}
@@ -1374,8 +1409,9 @@ func (x *binExpr) eval(env *Env) (any, error) {
 		// Comparing against null/undefined never coerces: `model.active !==
 		// undefined` must answer "is it set", not try to read nil as a
 		// number. (=== and !== come here once the kinds match.)
-		if l == nil || r == nil {
-			eq := l == nil && r == nil
+		// null and undefined equal each other and nothing else.
+		if nullish(l) || nullish(r) {
+			eq := nullish(l) && nullish(r)
 			if x.op == "!=" {
 				eq = !eq
 			}
@@ -1487,10 +1523,19 @@ func (x *listExpr) eval(env *Env) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			if arr, ok := v.([]any); ok {
-				out = append(out, arr...)
-			} else if v != nil {
-				out = append(out, v)
+			switch t := v.(type) {
+			case []any:
+				out = append(out, t...)
+			case *jsMatch:
+				out = append(out, t.items...)
+			case string: // a string spreads into its characters, as in JS
+				for _, c := range t {
+					out = append(out, string(c))
+				}
+			default:
+				if !nullish(v) {
+					out = append(out, v)
+				}
 			}
 			continue
 		}
@@ -1575,11 +1620,11 @@ func (x *callExpr) eval(env *Env) (any, error) {
 				}
 				var out []any
 				var ret any
-				if m.name == "sort" && len(args) > 0 && args[0] != nil {
+				if m.name == "sort" && len(args) > 0 && !nullish(args[0]) {
 					// sort(compare): ordered by the comparator's sign.
 					out = append([]any{}, arr...)
 					if err := sortWith(out, args[0]); err != nil {
-						return nil, fmt.Errorf("gml:%d: sort: %v", x.line, err)
+						return nil, fmt.Errorf("gml:%d: sort: %w", x.line, err)
 					}
 					ret = out
 				} else {
@@ -1589,8 +1634,8 @@ func (x *callExpr) eval(env *Env) (any, error) {
 				// literal) has nowhere to be written back: the result is
 				// the value, as in JS.
 				if assignable(m.base) {
-					if err := assign(m.base, &litExpr{out}, env); err != nil {
-						return nil, fmt.Errorf("gml:%d: %s: %v", x.line, m.name, err)
+					if err := assignValue(m.base, out, env, true); err != nil {
+						return nil, fmt.Errorf("gml:%d: %s: %w", x.line, m.name, err)
 					}
 				} else if m.name == "sort" || m.name == "reverse" {
 					return out, nil
@@ -1615,7 +1660,7 @@ func (x *callExpr) eval(env *Env) (any, error) {
 	}
 	// o?.f() with o null or undefined: the optional chain short-circuits
 	// the whole call to undefined, as in JS, instead of calling nothing.
-	if fnv == nil && optionalChain(x.callee) {
+	if nullish(fnv) && optionalChain(x.callee) {
 		return nil, nil
 	}
 	return callValue(fnv, x.args, env, x.line, "value")
@@ -1653,12 +1698,15 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 	if err != nil {
 		return nil, true, err
 	}
-	// Normalize numeric receivers to float64 (refs may yield float32/int).
+	// Normalize numeric receivers to float64 (refs may yield float32/int),
+	// and a match result to the array it is.
 	switch b := base.(type) {
 	case float32:
 		base = float64(b)
 	case int:
 		base = float64(b)
+	case *jsMatch:
+		base = b.items
 	}
 	// Every JS value answers toString()/valueOf() — a number, a string, a
 	// bool, null (`getValue(key, "").toString()` on a missing key) — so
@@ -1736,40 +1784,70 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			return strings.TrimLeft(recv, " \t\n\r"), true, nil
 		case "trimEnd":
 			return strings.TrimRight(recv, " \t\n\r"), true, nil
+		// Positions are UTF-16 code units throughout (jsstring.go).
 		case "charAt":
+			ch, _ := unitChar(recv, argInt(args, 0))
+			return ch, true, nil
+		case "at":
+			// Like charAt, counting from the end when negative, and
+			// undefined (not "") when there is nothing there.
 			i := argInt(args, 0)
-			rs := []rune(recv)
-			if i >= 0 && i < len(rs) {
-				return string(rs[i]), true, nil
+			if i < 0 {
+				i += unitLen(recv)
 			}
-			return "", true, nil
+			if ch, ok := unitChar(recv, i); ok {
+				return ch, true, nil
+			}
+			return nil, true, nil
+		case "charCodeAt":
+			if u, ok := unitAt(recv, argInt(args, 0)); ok {
+				return float64(u), true, nil
+			}
+			return math.NaN(), true, nil
+		case "codePointAt":
+			// The whole character when the position is its first unit.
+			i := argInt(args, 0)
+			if i < 0 {
+				return nil, true, nil
+			}
+			off, mid := unitOffset(recv, i)
+			if off >= len(recv) {
+				return nil, true, nil
+			}
+			if mid {
+				u, _ := unitAt(recv, i)
+				return float64(u), true, nil
+			}
+			r, _ := utf8.DecodeRuneInString(recv[off:])
+			return float64(r), true, nil
 		case "indexOf":
-			return float64(runeIndex(recv, strArgs(args, 0), argInt(args, 1))), true, nil
+			return float64(unitIndex(recv, strArgs(args, 0), argInt(args, 1))), true, nil
 		case "lastIndexOf":
-			from := len(recv)
-			if len(args) > 1 {
+			from := math.MaxInt32
+			if len(args) > 1 && args[1] != nil {
 				from = argInt(args, 1)
 			}
-			return float64(runeLastIndex(recv, strArgs(args, 0), from)), true, nil
+			return float64(unitLastIndex(recv, strArgs(args, 0), from)), true, nil
 		case "includes":
-			return runeIndex(recv, strArgs(args, 0), argInt(args, 1)) >= 0, true, nil
+			return unitIndex(recv, strArgs(args, 0), argInt(args, 1)) >= 0, true, nil
 		case "startsWith":
 			// From a position (0 when not given).
-			rs := []rune(recv)
-			from := max(0, min(argInt(args, 1), len(rs)))
-			return strings.HasPrefix(string(rs[from:]), strArgs(args, 0)), true, nil
+			off, _ := unitOffset(recv, max(0, argInt(args, 1)))
+			return strings.HasPrefix(recv[off:], strArgs(args, 0)), true, nil
 		case "endsWith":
 			// As if the string ended at a position (its length when not given).
-			rs := []rune(recv)
-			end := len(rs)
+			end := len(recv)
 			if len(args) > 1 && args[1] != nil {
-				end = max(0, min(argInt(args, 1), len(rs)))
+				end, _ = unitOffset(recv, max(0, argInt(args, 1)))
 			}
-			return strings.HasSuffix(string(rs[:end]), strArgs(args, 0)), true, nil
+			return strings.HasSuffix(recv[:end], strArgs(args, 0)), true, nil
 		case "substring", "slice", "substr":
-			rs := []rune(recv)
-			start, end := sliceBounds(name, len(rs), args)
-			return string(rs[start:end]), true, nil
+			n := len(recv)
+			if !isASCII(recv) {
+				n = unitLen(recv)
+			}
+			start, end := sliceBounds(name, n, args)
+			return unitSlice(recv, start, end), true, nil
 		case "split":
 			sep := strArgs(args, 0)
 			parts := strings.Split(recv, sep)
@@ -1794,7 +1872,7 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 		case "padStart", "padEnd":
 			// JS String.prototype.padStart/padEnd: pad to a target length
 			// with a fill string (a space by default), truncating the last
-			// repetition. Uses runes, so "0".padStart on CJK behaves.
+			// repetition. Lengths are UTF-16 units (jsstring.go).
 			target := argInt(args, 0)
 			if target > maxStringBytes {
 				return nil, true, fmt.Errorf("%s: a length of %d is too long", name, target)
@@ -1803,25 +1881,21 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			if len(args) > 1 {
 				fill = str(args[1])
 			}
-			cur := utf8.RuneCountInString(recv)
+			cur := unitLen(recv)
 			if fill == "" || target <= cur {
 				return recv, true, nil
 			}
 			// The result's size in bytes is worked out before a byte of it
 			// is written: whole repetitions of the fill, then the start of
 			// one more. A fill of long characters is refused here, not
-			// after it has been built.
+			// after it has been built. Lengths are UTF-16 units, as the
+			// target is; the last repetition is cut at a unit, and a cut
+			// through a surrogate pair leaves that character out.
 			need := target - cur
-			fillChars := utf8.RuneCountInString(fill)
-			whole, part := need/fillChars, need%fillChars
-			partBytes, n := 0, 0
-			for i := range fill { // i is the byte offset of each character
-				if n == part { // part < fillChars, so this is reached
-					partBytes = i
-					break
-				}
-				n++
-			}
+			fillUnits := unitLen(fill)
+			whole, part := need/fillUnits, need%fillUnits
+			partBytes, mid := unitOffset(fill, part)
+			_ = mid // the half character is dropped
 			if whole > (maxStringBytes-len(recv)-partBytes)/len(fill) {
 				return nil, true, fmt.Errorf("%s: the padded string is too long", name)
 			}
@@ -1873,7 +1947,7 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			if start < 0 {
 				start += len(recv)
 			}
-			if len(args) > 1 {
+			if len(args) > 1 && args[1] != nil { // undefined: to the end
 				end = argInt(args, 1)
 				if end < 0 {
 					end += len(recv)
@@ -2016,6 +2090,8 @@ func jsKind(v any) int {
 	switch v := plainColor(v).(type) {
 	case nil:
 		return 0
+	case nullValue:
+		return 5
 	case string:
 		return 1
 	case bool:
@@ -2069,31 +2145,6 @@ func sliceBounds(name string, n int, args []any) (start, end int) {
 	return start, end
 }
 
-// runeIndex is where sub first occurs in s at or after character from, in
-// characters (the unit charAt and slice count in), or -1.
-func runeIndex(s, sub string, from int) int {
-	rs := []rune(s)
-	from = max(0, min(from, len(rs)))
-	i := strings.Index(string(rs[from:]), sub)
-	if i < 0 {
-		return -1
-	}
-	return from + utf8.RuneCountInString(string(rs[from:])[:i])
-}
-
-// runeLastIndex is where sub last occurs in s starting at or before
-// character from, in characters, or -1.
-func runeLastIndex(s, sub string, from int) int {
-	rs := []rune(s)
-	from = max(0, min(from, len(rs)))
-	head := string(rs[:min(from+utf8.RuneCountInString(sub), len(rs))])
-	i := strings.LastIndex(head, sub)
-	if i < 0 {
-		return -1
-	}
-	return utf8.RuneCountInString(head[:i])
-}
-
 func strArgs(args []any, i int) string {
 	if i < len(args) {
 		return str(args[i])
@@ -2115,11 +2166,12 @@ func callValue(fnv any, argExprs []expr, env *Env, line int, name string) (any, 
 		}
 		return fn(args)
 	case func([]any) (any, error):
+		// A host's function (Env.Func): null reaches it as nil.
 		args, err := evalArgs(argExprs, env)
 		if err != nil {
 			return nil, err
 		}
-		return fn(args)
+		return fn(hostArgs(args))
 	case *userFunc:
 		args, err := evalArgs(argExprs, env)
 		if err != nil {
@@ -2235,6 +2287,8 @@ func toFloat64(v any) (float64, error) {
 		return 0, nil
 	case string:
 		return strconv.ParseFloat(t, 64)
+	case nullValue:
+		return 0, nil // JS: null is 0 as a number (undefined is not one)
 	}
 	return 0, fmt.Errorf("cannot use %T as number", v)
 }
@@ -2259,7 +2313,7 @@ func toBool(v any) (bool, error) {
 		return t != 0, nil
 	case string:
 		return t != "", nil
-	case nil:
+	case nil, nullValue:
 		return false, nil // JS: null/undefined are falsy
 	case []any, map[string]any:
 		return true, nil // JS: objects and arrays (even empty) are truthy
@@ -2290,7 +2344,9 @@ func str(v any) string {
 			return "true"
 		}
 		return "false"
-	case nil:
+	case nil, nullValue:
+		// Neither prints as its name: a text bound to a value that is not
+		// there shows nothing, which is what pages are written against.
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
@@ -2597,6 +2653,10 @@ func dateObject(t time.Time) map[string]any {
 		}),
 		"toString": jsFunc(func([]any) (any, error) { return date + " " + clock, nil }),
 		"valueOf":  num(int(t.UnixMilli())),
+		// What JSON.stringify writes for a date: its ISO form.
+		"toJSON": jsFunc(func([]any) (any, error) {
+			return t.UTC().Format("2006-01-02T15:04:05.000Z"), nil
+		}),
 	}
 }
 
@@ -2620,14 +2680,28 @@ func stringGlobal() *callableNS {
 			return str(args[0]), nil
 		},
 		members: map[string]any{
+			// The arguments are UTF-16 code units: a surrogate pair given
+			// as two of them is one character.
 			"fromCharCode": jsFunc(func(args []any) (any, error) {
-				var b strings.Builder
+				units := make([]uint16, 0, len(args))
 				for _, a := range args {
 					f, err := toFloat64(a)
 					if err != nil {
 						return "", nil
 					}
-					b.WriteRune(rune(int(f)))
+					units = append(units, uint16(toInt32(f)))
+				}
+				return fromUnits(units), nil
+			}),
+			// Whole code points, of any size.
+			"fromCodePoint": jsFunc(func(args []any) (any, error) {
+				var b strings.Builder
+				for _, a := range args {
+					f, err := toFloat64(a)
+					if err != nil || f < 0 || f > unicode.MaxRune || f != math.Trunc(f) {
+						return nil, fmt.Errorf("String.fromCodePoint: %v is not a code point", str(a))
+					}
+					b.WriteRune(rune(f))
 				}
 				return b.String(), nil
 			}),
@@ -2709,6 +2783,9 @@ func expandArgs(args []expr, env *Env) ([]expr, error) {
 		if r, ok := v.(Ref); ok {
 			v = r.get()
 		}
+		if m, ok := v.(*jsMatch); ok {
+			v = m.items
+		}
 		switch t := v.(type) {
 		case []any:
 			for _, item := range t {
@@ -2718,8 +2795,8 @@ func expandArgs(args []expr, env *Env) ([]expr, error) {
 			for _, c := range t {
 				out = append(out, &litExpr{string(c)})
 			}
-		case nil:
-			return nil, fmt.Errorf("gml: cannot spread %v", v)
+		case nil, nullValue:
+			return nil, fmt.Errorf("gml: cannot spread null or undefined")
 		default:
 			return nil, fmt.Errorf("gml: cannot spread a %T", v)
 		}

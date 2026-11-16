@@ -11,6 +11,7 @@ package gen
 import (
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
@@ -52,20 +53,64 @@ type field struct {
 
 const generatedFile = "gfx_gen.go"
 
-// Run generates gfx_gen.go for the package in dir. It returns the names
-// of the components processed.
-func Run(dir string) ([]string, error) {
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, dir, func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go") && fi.Name() != generatedFile
-	}, 0)
+// Target is the platform and build tags a package is generated for. The
+// zero value is the tool's own: GOOS and GOARCH from the environment, as
+// the go command reads them, and no extra tags.
+type Target struct {
+	GOOS, GOARCH string
+	Tags         []string
+}
+
+// Run generates gfx_gen.go for the package in dir, for the tool's own
+// target. It returns the names of the components processed.
+func Run(dir string) ([]string, error) { return RunFor(dir, Target{}) }
+
+// RunFor generates gfx_gen.go for the package in dir as it is compiled
+// for target. It returns the names of the components processed.
+//
+// Only the files the go command would compile for that target are read:
+// a file named for another GOOS or GOARCH, one behind a build constraint
+// that does not hold, and one marked `//go:build ignore` are left out, as
+// are tests. A package may declare a component differently per platform,
+// or keep a scratch file that is not meant to compile at all; reading
+// every .go file made the first a "declared twice" and the second an
+// error about code nobody builds.
+func RunFor(dir string, target Target) ([]string, error) {
+	ctx := build.Default
+	if target.GOOS != "" {
+		ctx.GOOS = target.GOOS
+	}
+	if target.GOARCH != "" {
+		ctx.GOARCH = target.GOARCH
+	}
+	ctx.BuildTags = append(append([]string(nil), ctx.BuildTags...), target.Tags...)
+
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
+	}
+	fset := token.NewFileSet()
+	files := map[string][]*ast.File{} // by package name
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || name == generatedFile {
+			continue
+		}
+		if ok, err := ctx.MatchFile(dir, name); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		files[f.Name.Name] = append(files[f.Name.Name], f)
 	}
 
 	var pkgName string
 	var comps []component
-	for name, pkg := range pkgs {
+	for name, pkg := range files {
 		found, err := scan(fset, pkg)
 		if err != nil {
 			return nil, err
@@ -79,9 +124,15 @@ func Run(dir string) ([]string, error) {
 		}
 	}
 	if len(comps) == 0 {
-		return nil, fmt.Errorf("gfx gen: no structs embedding ecs.GPUShared in %s", dir)
+		return nil, fmt.Errorf("gfx gen: no structs embedding ecs.GPUShared in %s (for %s/%s)", dir, ctx.GOOS, ctx.GOARCH)
 	}
 	sort.Slice(comps, func(i, j int) bool { return comps[i].name < comps[j].name })
+	for i := 1; i < len(comps); i++ {
+		if comps[i].name == comps[i-1].name {
+			return nil, fmt.Errorf("gfx gen: %s is declared twice for %s/%s (%s and %s)",
+				comps[i].name, ctx.GOOS, ctx.GOARCH, comps[i-1].pos, comps[i].pos)
+		}
+	}
 
 	src, err := emit(pkgName, comps)
 	if err != nil {
@@ -97,11 +148,11 @@ func Run(dir string) ([]string, error) {
 	return names, nil
 }
 
-// scan finds GPUShared structs in a parsed package, resolving the import
+// scan finds GPUShared structs in a package's files, resolving the import
 // aliases used for the ecs and core packages per file.
-func scan(fset *token.FileSet, pkg *ast.Package) ([]component, error) {
+func scan(fset *token.FileSet, files []*ast.File) ([]component, error) {
 	var out []component
-	for _, file := range pkg.Files {
+	for _, file := range files {
 		ecsAlias, coreAlias := importAliases(file)
 		if ecsAlias == "" {
 			continue

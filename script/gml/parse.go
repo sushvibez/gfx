@@ -445,11 +445,16 @@ func (p *parser) propDecl() (propDecl, error) {
 		}
 		typ = "var"
 	}
+	// An object-typed property (`property Item target`) with no initializer
+	// is null in QML, where a `property var` is undefined; object types are
+	// the capitalised ones.
+	objType := false
 	switch typ {
 	case "int", "real", "double", "bool", "string", "var", "color", "alias":
 	default:
 		// Unknown / object / value types (Item, point, size, date, url, ...)
 		// are held as var, so real .qml property decls don't fail to parse.
+		objType = typ != "" && typ[0] >= 'A' && typ[0] <= 'Z'
 		typ = "var"
 	}
 	if p.cur().kind != tokIdent {
@@ -470,7 +475,11 @@ func (p *parser) propDecl() (propDecl, error) {
 	}
 	// QML allows a property with no initializer; default to the type's zero.
 	if !(p.cur().kind == tokPunct && p.cur().text == ":") {
-		return propDecl{typ: typ, name: name, def: &litExpr{zeroForType(typ)}, required: required, isDflt: isDflt, line: line}, nil
+		zero := zeroForType(typ)
+		if objType {
+			zero = Null
+		}
+		return propDecl{typ: typ, name: name, def: &litExpr{zero}, required: required, isDflt: isDflt, line: line}, nil
 	}
 	p.pos++ // ":"
 	// The value may start on the NEXT line — QML allows
@@ -491,7 +500,7 @@ func (p *parser) propDecl() (propDecl, error) {
 	}
 	// Block-binding default: `property color c: { if (...) return x; ... }`.
 	if p.cur().kind == tokPunct && p.cur().text == "{" && !p.objectLiteralAhead() {
-		b, err := p.block()
+		b, err := p.funcBlock()
 		if err != nil {
 			return propDecl{}, err
 		}
@@ -581,7 +590,7 @@ func (p *parser) attr() (attr, error) {
 	// NOT an object literal (key ":" ahead) parses as a statement block
 	// whose return value is the binding's value.
 	if p.cur().kind == tokPunct && p.cur().text == "{" && !p.objectLiteralAhead() {
-		b, err := p.block()
+		b, err := p.funcBlock()
 		if err != nil {
 			return attr{}, err
 		}
@@ -600,7 +609,7 @@ func (p *parser) attr() (attr, error) {
 // inline `stmt (';' stmt)*` sequence terminated by newline or '}'.
 func (p *parser) handler() ([]stmt, error) {
 	if p.cur().kind == tokPunct && p.cur().text == "{" {
-		b, err := p.block()
+		b, err := p.funcBlock()
 		if err != nil {
 			return nil, err
 		}
@@ -707,7 +716,7 @@ func (p *parser) funcDecl() (funcDecl, error) {
 	p.pos++                // ")"
 	p.skipTypeAnnotation() // return type: `function f() : string { ... }`
 	p.skipNewlines()
-	body, err := p.blockStmts()
+	body, err := p.funcBody(params)
 	if err != nil {
 		return funcDecl{}, err
 	}
@@ -817,7 +826,44 @@ func (p *parser) block() (stmt, error) {
 	return &blockStmt{stmts: stmts}, nil
 }
 
+// funcBlock parses a `{ ... }` that is a function's whole body — a
+// handler, a block binding, an arrow function — so the `var`s anywhere
+// inside it are declared when it starts (see scopeStmt).
+func (p *parser) funcBlock() (stmt, error) {
+	stmts, err := p.rawBlockStmts()
+	if err != nil {
+		return nil, err
+	}
+	// The function's own scope is the caller's (callUserFunc, runStmts);
+	// this block is one level inside it, which is where its let, const
+	// and function declarations live. The vars go up to the function.
+	stmts, err = scopeOf(stmts, true, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &blockStmt{stmts: stmts}, nil
+}
+
+// funcBody parses the `{ ... }` of a `function`, whose statements run
+// directly in the call's scope, beside the parameters.
+func (p *parser) funcBody(params []string) ([]stmt, error) {
+	stmts, err := p.rawBlockStmts()
+	if err != nil {
+		return nil, err
+	}
+	return scopeOf(stmts, true, params)
+}
+
+// blockStmts parses `{ stmt* }` as a block scope.
 func (p *parser) blockStmts() ([]stmt, error) {
+	stmts, err := p.rawBlockStmts()
+	if err != nil {
+		return nil, err
+	}
+	return scopeOf(stmts, false, nil)
+}
+
+func (p *parser) rawBlockStmts() ([]stmt, error) {
 	if err := p.expect("{"); err != nil {
 		return nil, err
 	}
@@ -840,14 +886,15 @@ func (p *parser) blockStmts() ([]stmt, error) {
 }
 
 func (p *parser) varStmt() (stmt, error) {
-	p.pos++ // var/let/const
+	kind := declKindOf(p.next().text) // var/let/const
 	var out []stmt
 	for {
 		if p.cur().kind != tokIdent {
 			return nil, fmt.Errorf("gml:%d: expected variable name", p.cur().line)
 		}
+		line := p.cur().line
 		name := p.next().text
-		var val expr = &litExpr{nil}
+		var val expr // nil: declared without a value
 		if p.cur().kind == tokPunct && p.cur().text == "=" {
 			p.pos++
 			p.skipNewlines() // `var x =` may continue on the next line
@@ -856,8 +903,10 @@ func (p *parser) varStmt() (stmt, error) {
 				return nil, err
 			}
 			val = v
+		} else if kind == declConst {
+			return nil, fmt.Errorf("gml:%d: const %s needs a value", line, name)
 		}
-		out = append(out, &varStmt{name: name, value: val})
+		out = append(out, &varStmt{kind: kind, name: name, value: val, line: line})
 		// JS allows several declarators in one statement:
 		// `var l = [], t = [], p = []`.
 		if p.cur().kind == tokPunct && p.cur().text == "," {
@@ -949,6 +998,15 @@ func (p *parser) switchStmt() (stmt, error) {
 		p.skipNewlines()
 		if p.cur().kind == tokPunct && p.cur().text == "}" {
 			p.pos++
+			// The clauses share one scope: a name may be declared once
+			// across all of them.
+			var all []stmt
+			for _, c := range s.clauses {
+				all = append(all, c.body...)
+			}
+			if err := checkRedeclared(all, nil); err != nil {
+				return nil, err
+			}
 			return s, nil
 		}
 		if p.cur().kind == tokEOF {
@@ -995,8 +1053,8 @@ func (p *parser) forStmt() (stmt, error) {
 	if err := p.expect("("); err != nil {
 		return nil, err
 	}
-	// for-of: `for (var x of iterable) body` (also bare `x of`).
-	if ofVar, ok := p.tryForOf(); ok {
+	// for-of and for-in: `for (var x of iterable) body` (also bare `x of`).
+	if loop, ok := p.tryForOf(); ok {
 		iter, err := p.expr(0)
 		if err != nil {
 			return nil, err
@@ -1009,13 +1067,23 @@ func (p *parser) forStmt() (stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &forOfStmt{name: ofVar, iter: iter, body: body}, nil
+		loop.iter, loop.body = iter, body
+		// A let or const loop variable is a new binding every time round,
+		// which only matters — and only costs a scope — when something in
+		// the body can keep it.
+		loop.capture = loop.decl && loop.kind != declVar && stmtHasClosure(body)
+		return loop, nil
 	}
 	var init stmt
 	var err error
+	lexical := false // the loop variable is a let or const
 	if !(p.cur().kind == tokPunct && p.cur().text == ";") {
 		if p.cur().kind == tokIdent && (p.cur().text == "var" || p.cur().text == "let" || p.cur().text == "const") {
+			lexical = p.cur().text != "var"
 			init, err = p.varStmt()
+			if err == nil {
+				err = checkRedeclared([]stmt{init}, nil)
+			}
 		} else {
 			init, err = p.simpleStmt()
 		}
@@ -1049,7 +1117,10 @@ func (p *parser) forStmt() (stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &forStmt{init: init, cond: cond, post: post, body: body}, nil
+	// `for (let i ...)`: every iteration has an i of its own (see
+	// forStmt.exec), which only matters when something can keep it.
+	capture := lexical && (stmtHasClosure(body) || exprHasClosure(cond) || stmtHasClosure(post))
+	return &forStmt{init: init, cond: cond, post: post, body: body, capture: capture}, nil
 }
 
 // objectLiteralAhead reports whether the `{` at the cursor starts an
@@ -1068,22 +1139,26 @@ func (p *parser) objectLiteralAhead() bool {
 	return p.toks[j+1].kind == tokPunct && p.toks[j+1].text == ":"
 }
 
-// tryForOf detects `[var|let|const] ident of` at the cursor and, on success,
-// consumes through `of`, returning the loop variable name.
-func (p *parser) tryForOf() (string, bool) {
+// tryForOf detects `[var|let|const] ident of|in` at the cursor and, on
+// success, consumes through `of` (or `in`), returning the loop with its
+// variable filled in.
+func (p *parser) tryForOf() (*forOfStmt, bool) {
 	j := p.pos
+	loop := &forOfStmt{}
 	if p.toks[j].kind == tokIdent && (p.toks[j].text == "var" || p.toks[j].text == "let" || p.toks[j].text == "const") {
+		loop.decl, loop.kind = true, declKindOf(p.toks[j].text)
 		j++
 	}
 	if p.toks[j].kind != tokIdent {
-		return "", false
+		return nil, false
 	}
-	name := p.toks[j].text
-	if !(p.toks[j+1].kind == tokIdent && p.toks[j+1].text == "of") {
-		return "", false
+	loop.name, loop.line = p.toks[j].text, p.toks[j].line
+	if p.toks[j+1].kind != tokIdent || (p.toks[j+1].text != "of" && p.toks[j+1].text != "in") {
+		return nil, false
 	}
+	loop.keys = p.toks[j+1].text == "in"
 	p.pos = j + 2 // consume [var] ident of
-	return name, true
+	return loop, true
 }
 
 // tryStmt parses `try { } catch (e) { } finally { }` (either clause may be
@@ -1420,7 +1495,7 @@ func (p *parser) primary() (expr, error) {
 		}
 		p.pos++ // ")"
 		p.skipNewlines()
-		body, err := p.blockStmts()
+		body, err := p.funcBody(params)
 		if err != nil {
 			return nil, err
 		}
@@ -1453,6 +1528,12 @@ func (p *parser) primary() (expr, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gml:%d: %v", t.line, err)
 		}
+		// A global or sticky regex carries state (lastIndex), and JS makes
+		// a new RegExp each time the literal is evaluated; one without
+		// either flag never changes and can be the same value every time.
+		if re.global() || re.sticky() {
+			return &regexExpr{re: re}, nil
+		}
 		return &litExpr{re}, nil
 	case t.kind == tokTemplate:
 		p.pos++
@@ -1465,7 +1546,11 @@ func (p *parser) primary() (expr, error) {
 		case "false":
 			p.pos++
 			return &litExpr{false}, nil
-		case "null", "undefined":
+		case "null":
+			p.pos++
+			return &litExpr{Null}, nil
+		case "undefined":
+			// Go's nil is undefined (see jsvalue.go).
 			p.pos++
 			return &litExpr{nil}, nil
 		}
@@ -1637,7 +1722,7 @@ func (p *parser) tryArrowParams() ([]string, bool) {
 // a single expression (wrapped in an implicit return). Returns a funcExpr.
 func (p *parser) arrowBody(params []string) (expr, error) {
 	if p.cur().kind == tokPunct && p.cur().text == "{" {
-		b, err := p.block()
+		b, err := p.funcBlock()
 		if err != nil {
 			return nil, err
 		}

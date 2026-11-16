@@ -85,7 +85,7 @@ func exprMentions(e expr, names map[string]bool) bool {
 	switch x := e.(type) {
 	case nil:
 		return false
-	case *litExpr:
+	case *litExpr, *regexExpr:
 		return false
 	case *identExpr:
 		return names[x.name]
@@ -133,7 +133,7 @@ func stmtsMention(ss []stmt, names map[string]bool) bool {
 
 func stmtMentions(s stmt, names map[string]bool) bool {
 	switch x := s.(type) {
-	case nil:
+	case nil, *scopeStmt: // a scopeStmt's functions are in the list it heads
 		return false
 	case *exprStmt:
 		return exprMentions(x.e, names)
@@ -199,7 +199,7 @@ func exprsHaveClosure(es []expr) bool {
 
 func exprHasClosure(e expr) bool {
 	switch x := e.(type) {
-	case nil, *litExpr, *identExpr:
+	case nil, *litExpr, *identExpr, *regexExpr:
 		return false
 	case *memberExpr:
 		return exprHasClosure(x.base)
@@ -235,7 +235,7 @@ func exprHasClosure(e expr) bool {
 
 func stmtHasClosure(s stmt) bool {
 	switch x := s.(type) {
-	case nil, *breakStmt, *continueStmt:
+	case nil, *breakStmt, *continueStmt, *scopeStmt:
 		return false
 	case *exprStmt:
 		return exprHasClosure(x.e)

@@ -2,8 +2,8 @@ package gml
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
-	"sync/atomic"
 )
 
 // JavaScript-subset statements (phase D2): blocks, var/let, if/else,
@@ -31,8 +31,6 @@ type ctrl struct {
 	val  any
 }
 
-const maxLoopIters = 10_000_000 // frame-safety cap on runaway loops
-
 // --- AST nodes ---
 
 type exprStmt struct{ e expr }
@@ -42,9 +40,13 @@ type assignStmt struct {
 	value  expr
 }
 
+// varStmt is one declared name: `var x = e`, `let x`, `const x = e`. value
+// is nil when the declaration gives none.
 type varStmt struct {
+	kind  declKind
 	name  string
 	value expr
+	line  int
 }
 
 type blockStmt struct{ stmts []stmt }
@@ -56,6 +58,9 @@ type blockStmt struct{ stmts []stmt }
 type funcDeclStmt struct {
 	name string
 	fn   funcDecl
+	// hoisted: the head of the enclosing list binds it (scopeStmt), so
+	// reaching the declaration itself does nothing.
+	hoisted bool
 }
 
 // seqStmt runs several statements in the CURRENT scope (no child scope, so
@@ -72,13 +77,25 @@ type forStmt struct {
 	cond expr
 	post stmt
 	body stmt
+	// capture: the loop variable is a let or const and something in the
+	// loop can keep a reference to it, so each iteration needs a scope of
+	// its own.
+	capture bool
 }
 
-// forOfStmt is `for (var name of iter) body` over an array or string.
+// forOfStmt is `for (var name of iter) body` over an array or string, or
+// `for (var name in iter) body` over an object's keys.
 type forOfStmt struct {
 	name string
 	iter expr
 	body stmt
+	decl bool     // the loop declares its variable (var, let or const)
+	kind declKind // which, when decl
+	keys bool     // for-in: the keys, not the values
+	// capture: the variable is a let or const and the body can keep a
+	// reference to it (see forStmt.capture).
+	capture bool
+	line    int
 }
 
 type returnStmt struct{ value expr } // value may be nil
@@ -147,18 +164,43 @@ func (s *assignStmt) exec(env *Env) (ctrl, error) {
 }
 
 func (s *varStmt) exec(env *Env) (ctrl, error) {
-	v, err := s.value.eval(env)
-	if err != nil {
-		return ctrl{}, err
+	var v any
+	if s.value != nil {
+		var err error
+		if v, err = s.value.eval(env); err != nil {
+			return ctrl{}, err
+		}
 	}
-	env.declareLocal(s.name, v) // in the current (innermost) scope
+	if s.kind == declVar {
+		// A var is the function's, not the block's (see jsscope.go), and
+		// `var x` with no value leaves an x that already exists alone.
+		fn := env.varScope()
+		if s.value == nil {
+			if _, bound := fn.vars[s.name]; bound {
+				return ctrl{}, nil
+			}
+		}
+		fn.declareLocal(s.name, v)
+		return ctrl{}, nil
+	}
+	env.declareLocal(s.name, v) // let, const: the current (innermost) scope
+	if s.kind == declConst {
+		env.markConst(s.name)
+	}
 	return ctrl{}, nil
 }
 
 func (s *funcDeclStmt) exec(env *Env) (ctrl, error) {
+	if !s.hoisted {
+		s.bind(env)
+	}
+	return ctrl{}, nil
+}
+
+// bind makes the declared function, closed over env, and names it there.
+func (s *funcDeclStmt) bind(env *Env) {
 	env.vars[s.name] = &userFunc{params: s.fn.params, defaults: s.fn.defaults,
 		body: s.fn.body, env: env}
-	return ctrl{}, nil
 }
 
 func (s *throwStmt) exec(env *Env) (ctrl, error) {
@@ -170,9 +212,12 @@ func (s *throwStmt) exec(env *Env) (ctrl, error) {
 }
 
 func (s *tryStmt) exec(env *Env) (ctrl, error) {
-	c, err := execBlock(s.body, env.child())
-	if err != nil && s.hasCatch {
-		scope := env.child()
+	c, err := execBlock(s.body, env.blockChild())
+	// A spent budget is not the page's to catch: every further step would
+	// fail the same way, and a handler that swallowed it would be the
+	// runaway loop the budget is there to end.
+	if err != nil && s.hasCatch && !budgetSpent() {
+		scope := env.blockChild()
 		if s.param != "" {
 			var thrown any
 			if t, ok := err.(thrownError); ok {
@@ -188,7 +233,7 @@ func (s *tryStmt) exec(env *Env) (ctrl, error) {
 	}
 	if len(s.finally) > 0 {
 		// finally runs either way; its own return/break wins, as in JS.
-		fc, ferr := execBlock(s.finally, env.child())
+		fc, ferr := execBlock(s.finally, env.blockChild())
 		if ferr != nil {
 			return fc, ferr
 		}
@@ -200,7 +245,7 @@ func (s *tryStmt) exec(env *Env) (ctrl, error) {
 }
 
 func (s *blockStmt) exec(env *Env) (ctrl, error) {
-	return execBlock(s.stmts, env.child())
+	return execBlock(s.stmts, env.blockChild())
 }
 
 func (s *seqStmt) exec(env *Env) (ctrl, error) {
@@ -222,15 +267,20 @@ func (s *ifStmt) exec(env *Env) (ctrl, error) {
 }
 
 func (s *forStmt) exec(env *Env) (ctrl, error) {
-	scope := env.child()
+	iters := 0
+	budgetEnter()
+	defer func() { budgetLoopEnd(iters) }()
+	scope := env.blockChild()
 	if s.init != nil {
 		if _, err := s.init.exec(scope); err != nil {
 			return ctrl{}, err
 		}
 	}
-	for i := 0; ; i++ {
-		if i > maxLoopIters {
-			return ctrl{}, fmt.Errorf("gml: loop exceeded %d iterations", maxLoopIters)
+	for {
+		// Every iteration is a step of the shared budget (budget.go), which
+		// is what ends `while (true) {}`.
+		if err := budgetLoopStep(&iters); err != nil {
+			return ctrl{}, err
 		}
 		if s.cond != nil {
 			ok, err := truthy(s.cond, scope)
@@ -251,6 +301,12 @@ func (s *forStmt) exec(env *Env) (ctrl, error) {
 		case ctrlBreak:
 			return ctrl{}, nil
 		}
+		// `for (let i ...)` with a closure in it: the next iteration gets
+		// its own copy of the loop's variables, made before the increment,
+		// so a function created this time round keeps this i.
+		if s.capture {
+			scope = scope.iteration()
+		}
 		if s.post != nil {
 			if _, err := s.post.exec(scope); err != nil {
 				return ctrl{}, err
@@ -265,20 +321,72 @@ func (s *forOfStmt) exec(env *Env) (ctrl, error) {
 	if err != nil {
 		return ctrl{}, err
 	}
+	if r, ok := v.(Ref); ok {
+		v = r.get()
+	}
+	if m, ok := v.(*jsMatch); ok {
+		v = m.items
+	}
 	var items []any
 	switch it := v.(type) {
 	case []any:
-		items = it
+		if s.keys { // for-in over an array: its indices, as strings
+			for i := range it {
+				items = append(items, strconv.Itoa(i))
+			}
+		} else {
+			items = it
+		}
 	case string:
 		for _, r := range it {
 			items = append(items, string(r))
 		}
+	case map[string]any:
+		if !s.keys {
+			return ctrl{}, nil // an object is not iterable with for-of
+		}
+		// The keys, sorted: a Go map has no order to keep (JS gives them
+		// in the order they were added).
+		for _, k := range sortedKeys(it) {
+			items = append(items, k)
+		}
 	default:
 		return ctrl{}, nil // non-iterable: no iterations (lenient)
 	}
-	scope := env.child()
+	iters := 0
+	budgetEnter()
+	defer func() { budgetLoopEnd(iters) }()
+	// Where the loop variable lives: a var in the function, a let or
+	// const in the loop's own scope, an undeclared name wherever it
+	// already is (and in the loop's scope when it is nowhere).
+	scope := env.blockChild()
+	target := scope
+	switch {
+	case s.decl && s.kind == declVar:
+		target = env.varScope()
+	case !s.decl:
+		if found := env.findScope(s.name); found != nil {
+			target = found
+		}
+	}
 	for _, item := range items {
-		scope.vars[s.name] = item
+		if err := budgetLoopStep(&iters); err != nil {
+			return ctrl{}, err
+		}
+		if s.capture {
+			scope = env.blockChild() // this iteration's own binding
+			target = scope
+		}
+		if target != scope {
+			if err := assignIn(target, s.name, item, s.line); err != nil {
+				return ctrl{}, err
+			}
+		} else {
+			scope.declareLocal(s.name, item)
+			if s.kind == declConst && s.decl {
+				scope.markConst(s.name)
+			}
+		}
 		c, err := s.body.exec(scope)
 		if err != nil {
 			return ctrl{}, err
@@ -337,7 +445,7 @@ func (s *switchStmt) exec(env *Env) (ctrl, error) {
 	if start < 0 {
 		return ctrl{}, nil
 	}
-	scope := env.child()
+	scope := env.blockChild()
 	for i := start; i < len(s.clauses); i++ { // fall through until break
 		for _, st := range s.clauses[i].body {
 			c, err := st.exec(scope)
@@ -359,8 +467,9 @@ func (s *switchStmt) exec(env *Env) (ctrl, error) {
 // compare as strings, bools coerce the other side, everything else numeric.
 func looseEq(a, b any) bool {
 	a, b = plainColor(a), plainColor(b)
-	if a == nil || b == nil {
-		return a == nil && b == nil
+	if nullish(a) || nullish(b) {
+		// A switch compares strictly: `case null` does not take undefined.
+		return jsKind(a) == jsKind(b)
 	}
 	if as, ok := a.(string); ok {
 		return as == str(b)
@@ -394,6 +503,9 @@ func execBlock(stmts []stmt, env *Env) (ctrl, error) {
 // runStmts executes a handler body in a fresh child scope (so var-declared
 // locals don't leak into the document scope).
 func runStmts(stmts []stmt, env *Env) error {
+	// One handler is one activation: its loops share a budget.
+	budgetEnter()
+	defer budgetLeave()
 	_, err := execBlock(stmts, env.child())
 	return err
 }
@@ -405,13 +517,40 @@ func assign(target, value expr, env *Env) error {
 	if err != nil {
 		return err
 	}
+	return assignValue(target, v, env, false)
+}
+
+// assignIn writes a variable in the scope that holds it: through a Ref,
+// and never into a const or a let that is still in its dead zone.
+func assignIn(scope *Env, name string, v any, line int) error {
+	switch cur := scope.vars[name].(type) {
+	case deadZone: // before Ref: it is one
+		return deadZoneError(name, line)
+	case Ref:
+		return cur.set(v)
+	}
+	if scope.consts[name] {
+		if line > 0 {
+			return fmt.Errorf("gml:%d: assignment to constant variable %q", line, name)
+		}
+		return fmt.Errorf("gml: assignment to constant variable %q", name)
+	}
+	scope.vars[name] = v
+	return nil
+}
+
+// assignValue is assign with the value in hand. mutated says the write
+// stores back an array a mutator changed (`xs.push(1)`): arrays are Go
+// slices here, so the binding is rewritten, but it is the same array as
+// far as the page can tell and a const may hold it.
+func assignValue(target expr, v any, env *Env, mutated bool) error {
 	if id, ok := target.(*identExpr); ok {
 		if scope := env.findScope(id.name); scope != nil {
-			if ref, isRef := scope.vars[id.name].(Ref); isRef {
-				return ref.set(v)
+			if mutated && scope.consts[id.name] {
+				scope.vars[id.name] = v
+				return nil
 			}
-			scope.vars[id.name] = v
-			return nil
+			return assignIn(scope, id.name, v, id.line)
 		}
 	}
 	// Element / key assignment: a[i] = v mutates the array or object in place.
@@ -461,6 +600,10 @@ func assign(target, value expr, env *Env) error {
 				obj[m.name] = v
 				return nil
 			}
+			// `re.lastIndex = 0`.
+			if re, isRe := base.(*jsRegExp); isRe && re.setMember(m.name, v) {
+				return nil
+			}
 		}
 	}
 	return err
@@ -484,7 +627,7 @@ func callAny(fn any, args []any) (any, error) {
 	case jsFunc:
 		return f(args)
 	case func([]any) (any, error):
-		return f(args)
+		return f(hostArgs(args))
 	case *userFunc:
 		return callUserFunc(f, args)
 	}
@@ -497,17 +640,31 @@ func callAny(fn any, args []any) (any, error) {
 // the script, not the end of the host.
 const maxCallDepth = 1000
 
-// callDepth counts the user functions being called (the engine belongs to
-// one goroutine at a time; atomic so a second document on another does
-// not corrupt it, only share the budget).
-var callDepth atomic.Int32
+// The depth itself is counted in budgetState (budget.go), beside the
+// steps: the engine belongs to one goroutine at a time, and it is atomic
+// so that a second document on another does not corrupt it, only share
+// the budget.
 
 func callUserFunc(fn *userFunc, args []any) (any, error) {
-	if callDepth.Add(1) > maxCallDepth {
-		callDepth.Add(-1)
+	// One atomic add takes the call a level deeper and charges it as a
+	// step of the shared budget (budget.go): depth alone does not bound
+	// two functions that call each other for ever without going deep.
+	state := budgetState.Add(budgetCall)
+	if state&budgetDepthMask > maxCallDepth {
+		budgetState.Add(-1)
 		return nil, fmt.Errorf("gml: functions nested deeper than %d calls (a function that calls itself without end?)", maxCallDepth)
 	}
-	defer callDepth.Add(-1)
+	// A call from Go with nothing else running is an activation of its own.
+	outermost := state&budgetDepthMask == 1 && budgetNest.Load() == 0
+	if outermost {
+		budgetBegin()
+	}
+	defer leaveCall(outermost)
+	if left := state >> budgetDepthBits; left&(budgetCheckEvery-1) == 0 || left < 0 {
+		if err := budgetCheck(left); err != nil {
+			return nil, err
+		}
+	}
 	// The call scope is pooled when nothing in the body can keep a
 	// reference to it — no arrow function that would close over it. The
 	// corpus calls `Style.resize(x)` (an identity function) for nearly
@@ -526,6 +683,7 @@ func callUserFunc(fn *userFunc, args []any) (any, error) {
 		defer func() {
 			clear(scope.vars)
 			scope.parent = nil
+			scope.consts = nil
 			scopePool.Put(scope)
 		}()
 	} else {
@@ -558,6 +716,17 @@ func callUserFunc(fn *userFunc, args []any) (any, error) {
 		return c.val, nil
 	}
 	return nil, nil
+}
+
+// leaveCall undoes callUserFunc's entry: a level shallower, or — when the
+// call was the outermost thing running — the budget made whole again
+// (which also puts the depth back to zero).
+func leaveCall(outermost bool) {
+	if outermost {
+		budgetRefill()
+		return
+	}
+	budgetState.Add(-1)
 }
 
 // scopePool recycles the call scopes of closure-free user functions.

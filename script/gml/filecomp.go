@@ -136,7 +136,7 @@ func useSiteAttr(a attr, env *Env) attr {
 		return a
 	}
 	switch v.(type) {
-	case float64, float32, int, string, colorVal, bool, []any, map[string]any, nil:
+	case float64, float32, int, string, colorVal, bool, []any, map[string]any, nil, nullValue:
 		out := a
 		out.expr = &litExpr{v: v}
 		return out
@@ -525,7 +525,7 @@ func buildFileComponent(use *node, comp *node, env *Env, doc *docState) (ui.Elem
 		// back the same element it already finished. declareRowScope
 		// pushed this instance's scope onto the bind stack, so the slot
 		// captures it and a later patch rebuilds under it.
-		el, err := doc.slot(env, func() (ui.Element, error) { return build(&inst, env, doc) })
+		el, err := doc.slot(env, func() (ui.Element, error) { return doc.buildInstanceRoot(&inst, env) })
 		restoreScope()
 		doc.rowPrefix = prevPrefix
 		return el, err
@@ -589,7 +589,17 @@ func buildFileComponent(use *node, comp *node, env *Env, doc *docState) (ui.Elem
 	// be redone. When the instance does come back as a new element the
 	// patch bails out and the use site rebuilds as before — the finish
 	// step is what would be missing, and it is not re-applicable.
-	return doc.slot(env, func() (ui.Element, error) { return build(&inst, env, doc) })
+	return doc.slot(env, func() (ui.Element, error) { return doc.buildInstanceRoot(&inst, env) })
+}
+
+// buildInstanceRoot builds a component instance's root element, which is
+// the same OBJECT as the use site being built around it: for the order of
+// completion handlers (completion.go) its handlers are that object's.
+func (doc *docState) buildInstanceRoot(inst *node, env *Env) (ui.Element, error) {
+	doc.instElem = doc.curElem // the use site is the element being built
+	el, err := build(inst, env, doc)
+	doc.instElem = 0 // (a build served from the cache did not take it)
+	return el, err
 }
 
 // defaultChildTarget returns the id a component's `default property alias`

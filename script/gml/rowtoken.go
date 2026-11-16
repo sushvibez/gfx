@@ -164,6 +164,8 @@ func rowValueHash(v any, depth int) (uint64, bool) {
 	switch t := v.(type) {
 	case nil:
 		return 0x9e37, true
+	case nullValue:
+		return 0x9e38, true
 	case bool:
 		if t {
 			return 0x51ed, true

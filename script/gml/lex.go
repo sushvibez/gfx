@@ -306,7 +306,14 @@ func (l *lexer) regexAhead() bool {
 			continue
 		}
 		switch t.kind {
-		case tokIdent, tokNumber, tokString, tokTemplate, tokRegex:
+		case tokIdent:
+			// A keyword that is followed by a value: `return /x/.test(s)`.
+			switch t.text {
+			case "return", "typeof", "case", "throw", "else", "of", "in", "new":
+				return true
+			}
+			return false
+		case tokNumber, tokString, tokTemplate, tokRegex:
 			return false
 		case tokPunct:
 			switch t.text {

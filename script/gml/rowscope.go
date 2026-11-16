@@ -30,6 +30,9 @@ func enterRow(viewKey string, delegate *node, env *Env, doc *docState, row map[s
 	restoreRow := bindRow(env, row, i, vals)
 	prevPrefix := doc.rowPrefix
 	doc.rowPrefix = viewKey + "#" + strconv.Itoa(i) + "/"
+	if doc.rowDepth == 0 {
+		doc.topView, doc.topRow = viewKey, doc.rowPrefix
+	}
 	doc.rowDepth++
 	if !tracked {
 		doc.rowUntracked++
@@ -484,7 +487,9 @@ var (
 func sameValue(a, b any) bool {
 	switch x := a.(type) {
 	case nil:
-		return b == nil || str(b) == ""
+		return b == nil || (str(b) == "" && !isNull(b))
+	case nullValue:
+		return isNull(b)
 	case string:
 		y, ok := b.(string)
 		return ok && x == y
