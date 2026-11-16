@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/sushvibez/gfx/gpu"
@@ -86,5 +87,56 @@ func TestReleasesRunInReverse(t *testing.T) {
 	r.run() // a second run releases nothing twice
 	if len(got) != 3 || got[0] != 2 || got[2] != 0 {
 		t.Fatalf("released in order %v", got)
+	}
+}
+
+// The same through a real window: a frame's error ends Run and is what Run
+// returns, after the app's Close. Opt-in: see the first lines.
+func TestRunReturnsAFrameError(t *testing.T) {
+	// A window gets no frames while the session is locked or the display
+	// is off, and nothing in a test can end a run that never reaches a
+	// frame: this one is run by hand (GFX_WINDOW_TESTS=1), at a desk.
+	if os.Getenv("GFX_WINDOW_TESTS") == "" {
+		t.Skip("set GFX_WINDOW_TESTS=1 to open a window")
+	}
+	// A window belongs to the thread that made it.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	needGPU(t)
+	boom := errors.New("frame failed")
+	started, frames, closed := false, 0, 0
+	hooks := Hooks{
+		Init: func(*App) (func() ui.Element, error) {
+			started = true
+			return func() ui.Element { return ui.Div() }, nil
+		},
+		Encode3D: func(*App, *gpu.CommandEncoder, *gpu.TextureView, *gpu.TextureView) error {
+			if frames++; frames == 3 {
+				return boom
+			}
+			return nil
+		},
+		Close: func(*App) { closed++ },
+	}
+	err := Run(Options{Title: "shell test", Width: 200, Height: 120, MaxFrames: 50}, hooks)
+	if !started {
+		t.Skip("no window here: ", err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("Run returned %v after %d frames, want the frame's error", err, frames)
+	}
+	if frames != 3 {
+		t.Fatalf("%d frames ran; the run should end at the failing one", frames)
+	}
+	if closed != 1 {
+		t.Fatalf("Close ran %d times", closed)
+	}
+	// And a run that fails nowhere returns nil and can be followed by another.
+	frames, closed = 100, 0
+	if err := Run(Options{Title: "shell test", Width: 200, Height: 120, MaxFrames: 4}, hooks); err != nil {
+		t.Fatalf("a clean run returned %v", err)
+	}
+	if closed != 1 {
+		t.Fatalf("Close ran %d times on the clean run", closed)
 	}
 }

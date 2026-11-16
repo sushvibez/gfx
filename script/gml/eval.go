@@ -1807,26 +1807,37 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 			if fill == "" || target <= cur {
 				return recv, true, nil
 			}
-			// Only the characters needed are written, and the bytes are
-			// counted as they go: a fill of long characters cannot build
-			// more than the limit, in the result or on the way to it.
-			var pad strings.Builder
-			for need := target - cur; need > 0; {
-				for _, c := range fill {
-					if need == 0 {
-						break
-					}
-					pad.WriteRune(c)
-					need--
+			// The result's size in bytes is worked out before a byte of it
+			// is written: whole repetitions of the fill, then the start of
+			// one more. A fill of long characters is refused here, not
+			// after it has been built.
+			need := target - cur
+			fillChars := utf8.RuneCountInString(fill)
+			whole, part := need/fillChars, need%fillChars
+			partBytes, n := 0, 0
+			for i := range fill { // i is the byte offset of each character
+				if n == part { // part < fillChars, so this is reached
+					partBytes = i
+					break
 				}
-				if pad.Len()+len(recv) > maxStringBytes {
-					return nil, true, fmt.Errorf("%s: the padded string is too long", name)
-				}
+				n++
 			}
+			if whole > (maxStringBytes-len(recv)-partBytes)/len(fill) {
+				return nil, true, fmt.Errorf("%s: the padded string is too long", name)
+			}
+			var out strings.Builder
+			out.Grow(len(recv) + whole*len(fill) + partBytes)
+			if name == "padEnd" {
+				out.WriteString(recv)
+			}
+			for i := 0; i < whole; i++ {
+				out.WriteString(fill)
+			}
+			out.WriteString(fill[:partBytes])
 			if name == "padStart" {
-				return pad.String() + recv, true, nil
+				out.WriteString(recv)
 			}
-			return recv + pad.String(), true, nil
+			return out.String(), true, nil
 		case "toString", "valueOf":
 			return recv, true, nil
 		}
