@@ -47,6 +47,7 @@ type Renderer3D struct {
 	white     *Image3D // 1x1 white for untextured draws
 
 	shadowMap     *gpu.Texture
+	shadowSize    int // the sun's map, texels a side (SetShadowMapSize)
 	shadowView    *gpu.TextureView
 	shadowSampler *gpu.Sampler
 
@@ -478,6 +479,7 @@ func New3D(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*Ren
 		shadowSampler: device.CreateComparisonSampler(),
 		shadowRadius:  10,
 	}
+	r.shadowSize = shadowMapSize
 	r.shadowMap = device.CreateShadowMap(shadowMapSize)
 	r.shadowView = r.shadowMap.CreateView()
 	r.frame = device.CreateBuffer(gpu.BufferStorage|gpu.BufferCopyDst, int(unsafe.Sizeof(frameUniforms{})))
@@ -809,6 +811,26 @@ func (r *Renderer3D) SetRenderSize(w, h int) {
 	r.queue.WriteBuffer(r.frame, int(unsafe.Offsetof(frameUniforms{}.View)), unsafe.Slice((*byte)(unsafe.Pointer(&v)), unsafe.Sizeof(v)))
 }
 
+// SetShadowMapSize sets the sun's shadow map to n texels a side (2048 by
+// default; a quality tier's QualityBudget.ShadowSize): a smaller map is
+// cheaper and blurrier over the same area. The map and every bind group
+// that reads it are remade when the size changes.
+func (r *Renderer3D) SetShadowMapSize(n int) {
+	if n <= 0 || n == r.shadowSize {
+		return
+	}
+	rel(r.shadowView)
+	rel(r.shadowMap)
+	r.shadowSize = n
+	r.shadowMap = r.device.CreateShadowMap(n)
+	r.shadowView = r.shadowMap.CreateView()
+	r.growDraws(r.draws.Size())
+	r.growMDraws(r.mdraws.Size())
+	items := r.pt.items
+	r.releaseParticles() // rebuilt with the new map at the next frame that has particles
+	r.pt.items = items
+}
+
 // SetShadowArea centers the directional light's shadow volume; everything
 // within radius of center casts and receives shadows.
 func (r *Renderer3D) SetShadowArea(center core.Vec3, radius float32) {
@@ -831,7 +853,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		lz := ld.Scale(-1)
 		lx := up.Cross(lz).Normalize()
 		ly := lz.Cross(lx)
-		texel := 2 * s / shadowMapSize
+		texel := 2 * s / float32(r.shadowSize)
 		cx, cy, cz := center.Dot(lx), center.Dot(ly), center.Dot(lz)
 		step := 64 * texel // along the light: coarse, so stored depths hold still too
 		center = center.Add(lx.Scale(math32.Floor(cx/texel)*texel - cx)).
@@ -900,7 +922,7 @@ func (r *Renderer3D) Begin(viewProj core.Mat4, lightDir, camPos core.Vec3) {
 		FogParams:  core.V4(fs.Fog.Height, fs.Fog.HeightDensity, fs.Fog.AerialPerspective, fogOn),
 		SkyTop:     core.V4(fs.SkyTop.R, fs.SkyTop.G, fs.SkyTop.B, 1),
 		SkyHorizon: core.V4(fs.SkyHorizon.R, fs.SkyHorizon.G, fs.SkyHorizon.B, 1),
-		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/shadowMapSize),
+		Misc:       core.V4(float32(fs.Tonemap), float32(n), fs.SunSoftness*(4.5*s-0.1)/(2*s), 2*s/float32(r.shadowSize)),
 		Sun:        core.V4(fs.Sun.R, fs.Sun.G, fs.Sun.B, fs.Rain),
 		Env:        core.V4(fs.SkyReflection, fs.Time, fs.SceneReflection, fs.Wetness),
 		RT:         core.V4(traced, tracedAO, aoReach, fs.SunSoftness*0.6),

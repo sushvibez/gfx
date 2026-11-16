@@ -29,6 +29,9 @@ func puffPixels(t *testing.T, mode int) []byte {
 	depth := dev.CreateTexture2D(w, h, gpu.FormatDepth32Float, gpu.TextureRenderAttachment|gpu.TextureBinding)
 	dview := depth.CreateView()
 	defer func() { dview.Release(); depth.Release(); view.Release(); target.Release() }()
+	if mode == 3 {
+		r3.SetShadowMapSize(1024) // a low tier's map: everything that reads it is remade
+	}
 	eye := core.V3(0, 3, 10)
 	vp := core.Mat4Perspective(0.9, float32(w)/float32(h), 0.5, 100).Mul(core.Mat4LookAt(eye, core.V3(0, 0, 0), core.V3(0, 1, 0)))
 	if mode > 0 {
@@ -39,11 +42,11 @@ func puffPixels(t *testing.T, mode int) []byte {
 	r3.DrawMaterial(r3.CubeMesh(), core.Mat4Translate(core.V3(0, -0.5, 0)).Mul(core.Mat4Scale(core.V3(60, 1, 60))),
 		&Material{Color: RGBA{R: 0.9, G: 0.9, B: 0.9, A: 1}, Roughness: 1})
 	enc := dev.CreateCommandEncoder()
-	r3.DeferRain, r3.KeepDepth = mode == 2, mode == 2
+	r3.DeferRain, r3.KeepDepth = mode >= 2, mode >= 2
 	if err := r3.Render(enc, view, dview, gpu.Color{A: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if mode == 2 {
+	if mode >= 2 {
 		r3.RenderRain(enc, view, dview)
 	}
 	q.Submit(enc.Finish())
@@ -59,9 +62,13 @@ func puffPixels(t *testing.T, mode int) []byte {
 func TestRenderer3DParticles(t *testing.T) {
 	const w, h = 160, 120
 	at := func(p []byte) int { i := (h/2*w + w/2) * 4; return int(p[i]) + int(p[i+1]) + int(p[i+2]) }
-	none, hard, soft := puffPixels(t, 0), puffPixels(t, 1), puffPixels(t, 2)
-	if at(hard) > at(none)*2/3 || at(soft) > at(none)*2/3 {
-		t.Fatalf("the puff does not darken the floor behind it: %d clear, %d hard, %d soft", at(none), at(hard), at(soft))
+	before := gpu.ErrorCount()
+	none, hard, soft, small := puffPixels(t, 0), puffPixels(t, 1), puffPixels(t, 2), puffPixels(t, 3)
+	if at(hard) > at(none)*2/3 || at(soft) > at(none)*2/3 || at(small) > at(none)*2/3 {
+		t.Fatalf("the puff does not darken the floor behind it: %d clear, %d hard, %d soft, %d with a smaller shadow map", at(none), at(hard), at(soft), at(small))
+	}
+	if gpu.ErrorCount() != before {
+		t.Fatal("GPU validation errors")
 	}
 	if testing.Verbose() {
 		dumpPNG(t, soft, w, h, "particles-soft")
