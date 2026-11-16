@@ -274,7 +274,8 @@ fn precip_flake_size(h : vec4f, px : f32, speed : f32) -> vec3f {
 // pad of ground round the camera; and drips, water running off an edge:
 // each drip has its own spot on the pad, looks a metre or so along one of
 // the four axes for a place where what the rain meets falls away by most
-// of a metre (the rim of a roof, a container's top, a quay), and if there
+// of a metre at an edge, not down a slope (the rim of a roof, a
+// container's top, a quay), and if there
 // is one a bead gathers on it and falls, faster as it goes, over and over.
 // Each gives a camera-facing quad (PrecipQuad: centre, half extents, fade;
 // a drip's up is along its fall, drawn with precip_streak, a splash's with
@@ -338,14 +339,18 @@ fn precip_drip(i : u32, t : f32, cam : vec3f, pad : vec2f, rain : f32, px : f32)
     var low = high;
     var rim = q;
     var found = 0.0;
+    var prev = high;
     for (var k = 1; k <= 6; k++) {
         let qq = q + dir * 0.2 * f32(k);
         let hh = precip_ground(qq);
-        if (found < 0.5 && high - hh > 0.8 && hh > -1e4) {
+        // An edge, not a slope: most of a metre down in all, and most of
+        // that in one 0.2 m step.
+        if (found < 0.5 && high - hh > 0.8 && prev - hh > 0.6 && hh > -1e4) {
             found = 1.0;
             low = hh;
             rim = qq - dir * 0.05;
         }
+        prev = hh;
     }
     let fall = sqrt(2.0 * max(high - low, 0.01) / 9.8);
     let period = fall + 0.3 + 1.5 * hc.w;
