@@ -49,7 +49,11 @@ func TestWGSLLibraryCompiles(t *testing.T) {
     let s = bolt_shape(vec3f(0.0, 0.2, 1.0), vec3f(0.0, 1.0, 0.0), normalize(vec3f(0.0, 0.3, 1.0)), 0.001)
         + shell_hit(vec3f(0.0, 1.0, 0.0), vec3f(0.0, 1.0, 0.0), 2.0) + fbm01(p.xyz, 1.0, 0.01, 3)
         + hash4u(1u).x + hash12s(p.xy) + soft_fade(depth_dist(0.5, 0.0, 1.0, 1.0), log_depth_dist(0.5, 0.1), 1.0);
-    return vec4f(c + vec3f(b, lit) + pud + rr, s + mirror_out(0.5, 0.97, true));
+    let deck = DeckCloud(0.0, 0.2, 0.5, 0.5, 0.5, 0.6);
+    let clouds = deck_under(vec3f(0.0, 0.3, 0.95), vec3f(0.0, 1.0, 0.0), normalize(vec3f(0.2, 0.4, 0.9)), vec3f(1.5), vec3f(0.4), vec3f(0.0), deck, vec4f(0.0), vec3f(0.5))
+        + deck_top(vec3f(1.5), vec3f(0.4), vec3f(0.0), 0.4, 0.5)
+        + (cloud_dome_light(1.0, 0.2, 0.0) + cloud_ground_light(1.0, 0.0)) * cloud_sunlit(2.0, cloud_phases(0.7)) + vec3f(cloud_silver(0.5, 1.0, 0.9));
+    return vec4f(c + vec3f(b, lit) + pud + rr + clouds, s + mirror_out(0.5, 0.97, true));
 }
 `
 	// wgpu reports a WGSL error through the uncaptured-error callback and
