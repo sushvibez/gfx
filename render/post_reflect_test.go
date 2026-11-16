@@ -11,7 +11,8 @@ import (
 )
 
 // foreignMirrorWGSL draws a dark floor that is a mirror (it leaves 1 − 0.8 in
-// alpha when u.c.y is set) and a bright box on it, with logarithmic depth,
+// alpha when u.c.y is set, and adds its own reflection of a sky of
+// brightness u.c.z, as a material does) and a bright box on it, with logarithmic depth,
 // the way a planet renderer that is not a Renderer3D writes its scene.
 const foreignMirrorWGSL = `
 struct U { vp : mat4x4f, c : vec4f };
@@ -24,7 +25,8 @@ struct V { @builtin(position) pos : vec4f, @location(0) world : vec3f };
 }
 @fragment fn fs(in : V) -> @location(0) vec4f {
     if (in.world.y < 0.01) {
-        return vec4f(0.03, 0.03, 0.03, select(1.0, 0.2, u.c.y > 0.5));
+        let m = select(0.0, 0.8, u.c.y > 0.5);
+        return vec4f(vec3f(0.03 + m * u.c.z), 1.0 - m);
     }
     return vec4f(0.9, 0.9, 0.9, 1.0);
 }
@@ -32,8 +34,9 @@ struct V { @builtin(position) pos : vec4f, @location(0) world : vec3f };
 
 // foreignMirrorScene draws foreignMirrorWGSL's floor and box (the clear colour, 0.3
 // grey at the far depth, is the sky) and shows it through Post with
-// setup applied; mirror sets the floor's mirror strength in alpha.
-func foreignMirrorScene(t *testing.T, w, h int, mirror bool, setup func(*Post)) ([]byte, core.Mat4) {
+// setup applied; mirror sets the floor's mirror strength in alpha, and
+// sky (one value at most) is the sky the floor's material reflects.
+func foreignMirrorScene(t *testing.T, w, h int, mirror bool, setup func(*Post), sky ...float32) ([]byte, core.Mat4) {
 	t.Helper()
 	dev, q := headlessDevice(t)
 	mod, err := dev.CreateShaderModuleWGSL("mirror", foreignMirrorWGSL)
@@ -100,7 +103,11 @@ func foreignMirrorScene(t *testing.T, w, h int, mirror bool, setup func(*Post)) 
 		m = 1
 	}
 	vp := proj.Mul(view)
-	q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, m, 0, 0)))
+	matSky := float32(0)
+	if len(sky) > 0 {
+		matSky = sky[0]
+	}
+	q.WriteBuffer(ub, 0, floatBytes(append(append([]float32{}, vp[:]...), post.LogDepth, m, matSky, 0)))
 	lay := pl.BindGroupLayout(0)
 	bg := dev.CreateBindGroup(lay, gpu.BindGroupEntry{Binding: 0, Buffer: ub})
 	lay.Release()
@@ -156,19 +163,28 @@ func TestPostUseReflection(t *testing.T) {
 	if a, b := lumAt(off, w, sx, sy), lumAt(level, w, sx, sy); b-a < 15 {
 		t.Fatalf("the far floor reads %v without reflections, %v with: the sky in the scene is not mirrored", a, b)
 	}
-	// With the material's own sky reflection given as a map, the traced
-	// box replaces it: less is added than over a black sky.
-	sky := func(p *Post) {
+	// A material that reflects a sky has already added it to the mirror.
+	// Given that sky as a map, Post takes it out where the ray meets the
+	// box, so the box reads as it does over no sky; not given it, the box
+	// is added on top of the sky and reads brighter. (Post never takes out
+	// more than the surface holds, so the material has to have put it in.)
+	const skyLevel = 0.6
+	skyMap := func(p *Post) {
 		tex := p.device.CreateTexture2D(4, 2, gpu.FormatRGBA16Float, gpu.TextureRenderAttachment|gpu.TextureBinding)
 		view := tex.CreateView()
 		t.Cleanup(func() { view.Release(); tex.Release() })
 		enc := p.device.CreateCommandEncoder()
-		enc.BeginRenderPass(view, gpu.Color{R: 0.6, G: 0.6, B: 0.6, A: 1}).End()
+		enc.BeginRenderPass(view, gpu.Color{R: skyLevel, G: skyLevel, B: skyLevel, A: 1}).End()
 		p.queue.Submit(enc.Finish())
 		p.UseReflection(&Reflection{Level: true, Sky: view})
 	}
-	withSky, _ := foreignMirrorScene(t, w, h, true, sky)
-	if c := lumAt(withSky, w, bx, by); c >= b-5 || c <= a {
-		t.Fatalf("with a sky map the box's reflection reads %v (none %v, over no sky %v): the sky is not swapped out", c, a, b)
+	swapped, _ := foreignMirrorScene(t, w, h, true, skyMap, skyLevel)
+	stacked, _ := foreignMirrorScene(t, w, h, true, on(&Reflection{Level: true}), skyLevel)
+	c, d := lumAt(swapped, w, bx, by), lumAt(stacked, w, bx, by)
+	if math.Abs(c-b) > 4 {
+		t.Fatalf("with the sky map the box's reflection reads %v, over no sky %v: the sky is not swapped for the box", c, b)
+	}
+	if d-c < 5 {
+		t.Fatalf("the box's reflection reads %v with the sky map and %v without: the map takes nothing out", c, d)
 	}
 }
