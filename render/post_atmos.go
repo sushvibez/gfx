@@ -891,14 +891,8 @@ fn trace_reflection(c : vec2i, dims : vec2f, ripples : bool, strength : f32) -> 
         }
         // Take the sky's reflection out (never below nothing: this sky is an
         // estimate of what the material put in) and put what was met in.
-        // With a sky map (Reflection.Sky) the sky is exactly what the
-        // material put in, so it comes out whole: swapped, not clamped.
         let m = 1.0 - abs(sc.a);
-        if (A.refl.y > 0.5) {
-            col = max(col + (seen - hit.sky * sure) * m, vec3f(0.0));
-        } else {
-            col = max(col - hit.sky * sure * m, vec3f(0.0)) + seen * m;
-        }
+        col = max(col - hit.sky * sure * m, vec3f(0.0)) + seen * m;
     }
     if (is_sky && A.zenith.w > 0.5) {
         let dims = vec2f(textureDimensions(depth));
