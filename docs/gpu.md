@@ -205,6 +205,8 @@ screens), `BeginShadowPass(depth)` (depth only, cleared to 1) and
 `Draw(vertexCount, instanceCount, firstVertex, firstInstance)`,
 `DrawIndexed(indexCount, instanceCount)`,
 `DrawIndexedInstanced(indexCount, instanceCount, firstInstance)`,
+`DrawIndexedBase(indexCount, instanceCount, firstIndex, baseVertex, firstInstance)`
+(meshes packed into shared vertex and index buffers),
 `SetScissor`, `SetViewport` and `End`.
 
 `examples/triangle` is the whole stack in one file: window, instance,

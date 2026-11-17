@@ -25,7 +25,8 @@ var (
 )
 
 // CallStats reports the render-encoding calls since the last reset:
-// draws, bind-group sets, pipeline sets, scissor sets, vertex-buffer sets,
+// draws (indexed or not), bind-group sets, pipeline sets, scissor sets,
+// vertex- and index-buffer sets,
 // command encoders created, render passes begun.
 func CallStats() (draw, bind, pipe, scissor, vbuf, encoders, passes int64) {
 	return callDraw.Load(), callBind.Load(), callPipe.Load(), callScissor.Load(),

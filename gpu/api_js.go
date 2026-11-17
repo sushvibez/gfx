@@ -466,6 +466,14 @@ func (r *RenderPass) DrawIndexedInstanced(indexCount, instanceCount, firstInstan
 	r.v.Call("drawIndexed", indexCount, instanceCount, 0, 0, firstInstance)
 }
 
+// DrawIndexedBase draws indexCount indices starting at firstIndex of the
+// bound index buffer, each added to baseVertex before it reads the vertex
+// buffer: many meshes packed into one vertex and one index buffer draw
+// one after another with no buffer set between them.
+func (r *RenderPass) DrawIndexedBase(indexCount, instanceCount, firstIndex, baseVertex, firstInstance int) {
+	r.v.Call("drawIndexed", indexCount, instanceCount, firstIndex, baseVertex, firstInstance)
+}
+
 // BeginRenderPassDepth starts a pass with a color attachment (cleared to
 // clear) and a depth attachment (cleared to 1.0).
 func (e *CommandEncoder) BeginRenderPassDepth(view, depth *TextureView, clear Color) *RenderPass {

@@ -162,18 +162,30 @@ func beginDepthPassStore(e *CommandEncoder, view, depth *TextureView, clear Colo
 
 // SetIndexBuffer binds a uint32 index buffer.
 func (r *RenderPass) SetIndexBuffer(b *Buffer) {
+	callVBuf.Add(1)
 	wgpuRenderPassEncoderSetIndexBuffer(r.h, b.h, indexUint32, 0, uint64(b.size))
 }
 
 // DrawIndexed draws using the bound index buffer.
 func (r *RenderPass) DrawIndexed(indexCount, instanceCount int) {
+	callDraw.Add(1)
 	wgpuRenderPassEncoderDrawIndexed(r.h, uint32(indexCount), uint32(instanceCount), 0, 0, 0)
 }
 
 // DrawIndexedInstanced draws with an explicit first instance, so shaders
 // can index per-draw data with instance_index.
 func (r *RenderPass) DrawIndexedInstanced(indexCount, instanceCount, firstInstance int) {
+	callDraw.Add(1)
 	wgpuRenderPassEncoderDrawIndexed(r.h, uint32(indexCount), uint32(instanceCount), 0, 0, uint32(firstInstance))
+}
+
+// DrawIndexedBase draws indexCount indices starting at firstIndex of the
+// bound index buffer, each added to baseVertex before it reads the vertex
+// buffer: many meshes packed into one vertex and one index buffer draw
+// one after another with no buffer set between them.
+func (r *RenderPass) DrawIndexedBase(indexCount, instanceCount, firstIndex, baseVertex, firstInstance int) {
+	callDraw.Add(1)
+	wgpuRenderPassEncoderDrawIndexed(r.h, uint32(indexCount), uint32(instanceCount), uint32(firstIndex), int32(baseVertex), uint32(firstInstance))
 }
 
 // BeginRenderPassOver starts a pass over what is already there: the colour
