@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
@@ -202,4 +203,77 @@ func TestQualityBudgetApply(t *testing.T) {
 	if _, ok := ParseQualityTier("max"); ok {
 		t.Error("parsed an unknown tier")
 	}
+}
+
+// TestQualityTrace runs the controller over a synthetic frame-time trace:
+// a load spike at the start (shaders, streaming), sustained load (another
+// program on the GPU), then headroom again. The spike must not drop a
+// tier, the load must, and the recovery must bring the scale back first
+// and then every dropped tier, without oscillating.
+func TestQualityTrace(t *testing.T) {
+	q := NewQuality(QualityHigh)
+	var log []string
+	feed := func(secs, ms float32) {
+		for e := float32(0); e < secs; e += ms / 1000 {
+			if q.Frame(ms / 1000) {
+				log = append(log, fmt.Sprintf("%s@%.2f", q.Tier, q.Dyn.Scale()))
+				if q.Event() == QualityRaised && q.Dyn.Scale() > q.Budget().Scale {
+					t.Errorf("raised to %s with the scale already at %v", q.Tier, q.Dyn.Scale())
+				}
+			}
+		}
+	}
+	// The start: 6 s of 60 ms frames, then 20 ms.
+	feed(6, 60)
+	if q.Tier != QualityHigh {
+		t.Fatalf("dropped to %s in the first seconds", q.Tier)
+	}
+	feed(4, 15)
+	// Sustained load: 30 s of 40 ms frames.
+	feed(30, 40)
+	if q.Tier >= QualityHigh {
+		t.Fatalf("sustained load left the tier at %s", q.Tier)
+	}
+	low := q.Tier
+	// A Hold keeps it there through a burst.
+	q.Hold(5)
+	feed(4, 40)
+	if q.Tier != low {
+		t.Fatalf("dropped during a Hold: %s", q.Tier)
+	}
+	// Headroom again: 12 ms frames for 2 minutes.
+	sawFullScale := false
+	for i := 0; i < 1200 && q.Tier < QualityHigh; i++ {
+		before := q.Tier
+		feed(0.1, 12)
+		if q.Tier == before && q.Dyn.Scale() >= 1 {
+			sawFullScale = true
+		}
+		if q.Tier > before && !sawFullScale {
+			t.Fatal("a tier came back before the scale did")
+		}
+	}
+	if q.Tier != QualityHigh {
+		t.Fatalf("recovery left the tier at %s (%v)", q.Tier, log)
+	}
+	feed(30, 12)
+	if q.Dyn.Scale() < 1 {
+		t.Fatalf("scale %v after recovery", q.Dyn.Scale())
+	}
+	// Never over the tier it started at.
+	feed(60, 8)
+	if q.Tier != QualityHigh {
+		t.Fatalf("climbed over the start tier: %s", q.Tier)
+	}
+	// A raise that does not hold doubles the wait: alternate load and
+	// headroom and count the changes; they must thin out.
+	changes := len(log)
+	for i := 0; i < 6; i++ {
+		feed(15, 40)
+		feed(15, 12)
+	}
+	if n := len(log) - changes; n > 10 {
+		t.Fatalf("%d tier changes in 3 minutes of alternating load: oscillating (%v)", n, log[changes:])
+	}
+	t.Log(log)
 }

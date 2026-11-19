@@ -6,7 +6,7 @@ package render
 //
 //	q := render.NewQuality(render.QualityForAdapter(adapter.Name()))
 //	// each frame:
-//	if q.Frame(dt) { /* a tier was dropped: rebuild what Budget sizes */ }
+//	if q.Frame(dt) { /* the tier changed (q.Event()): rebuild what Budget sizes */ }
 //	b := q.Budget()
 //	b.Apply(&post.Settings)
 //	b.ApplyAtmosphere(&post.Atmosphere)
@@ -17,7 +17,9 @@ package render
 // from the GPU string), and the controller its rule: a mean frame over
 // 21.5 ms lowers the scale a tenth (a fifth when far over), one under
 // 17.4 ms raises it a tenth, waiting longer each time a raise had to be
-// taken back; twice at the floor and still slow drops a tier. The grow
+// taken back; twice at the floor and still slow drops a tier (not in the
+// first seconds, and not while the program holds it), and a dropped tier
+// comes back once the top scale has had headroom for a while. The grow
 // threshold sits just over a 60 Hz frame, so a vsync-paced game that has
 // headroom reads as 16.7 ms and climbs back to full resolution.
 
@@ -319,21 +321,64 @@ func (d *DynamicResolution) Update(dt float32) DynResEvent {
 
 // Quality is a tier and the dynamic resolution that serves it: the tier's
 // budget sets the scale it starts at and the floor, and the controller
-// asking for a tier drop takes it down one (never below Lowest).
+// asking for a tier drop takes it down one (never below Lowest). A
+// dropped tier comes back: once the scale has climbed back to the top
+// and the frames have had headroom (a mean under Dyn's Grow) for
+// RaiseAfter seconds running, the tier goes up one again (never over Top,
+// the tier it started at), so a load that passed (another program on the
+// GPU, a heavy view) does not leave the game on the low tier for good.
+// The scale always comes back before the tier does. A raise that has to
+// be taken back within a minute doubles the wait before the next.
+//
+// Drops wait out the start: none in the first Grace seconds of frames
+// (the shaders, the streaming and the uploads of a scene coming in are
+// not its frame rate), and none while Hold's time runs (a program holds
+// the tier through a streaming burst it knows about).
 type Quality struct {
 	Tier QualityTier
 	// Lowest is the tier dynamic resolution may drop to.
 	Lowest QualityTier
+	// Top is the tier it may climb back to (NewQuality: the tier it
+	// started at).
+	Top QualityTier
 	// Dynamic turns the steering on; off, the scale is the tier's (or
 	// what Dyn.SetScale set).
 	Dynamic bool
 	Dyn     DynamicResolution
+	// Grace is how many seconds of frames pass before a tier may drop
+	// (0: 10); RaiseAfter how long the frames must have headroom at the
+	// top scale before a dropped tier comes back (0: 8).
+	Grace, RaiseAfter float32
+
+	run      float32 // s of frames fed
+	hold     float32 // s left of a Hold
+	calm     float32 // s at the top scale with headroom
+	wait     float32 // s of calm a raise needs now (0: RaiseAfter)
+	sinceUp  float32 // s since the last raise (large: none)
+	lastMove QualityEvent
 }
+
+// QualityEvent is what one Quality.Frame did to the tier.
+type QualityEvent int8
+
+const (
+	QualityHeld    QualityEvent = iota // the tier is as it was
+	QualityDropped                     // down one
+	QualityRaised                      // up one
+)
+
+const (
+	qualityGrace      = 10  // s
+	qualityRaiseAfter = 8   // s
+	qualityRaiseMax   = 120 // s, the longest wait for a raise
+	qualityRegret     = 60  // s: a drop this soon after a raise doubles the wait
+)
 
 // NewQuality starts at a tier with dynamic resolution on.
 func NewQuality(t QualityTier) *Quality {
 	q := &Quality{Dynamic: true}
 	q.SetTier(t)
+	q.Top = q.Tier
 	return q
 }
 
@@ -349,20 +394,75 @@ func (q *Quality) SetTier(t QualityTier) {
 // Budget is the current tier's.
 func (q *Quality) Budget() QualityBudget { return q.Tier.Budget() }
 
+// Hold keeps the tier from dropping for the next secs seconds of frames
+// (a streaming burst, a scene change): the scale still moves.
+func (q *Quality) Hold(secs float32) { q.hold = max(q.hold, secs) }
+
 // Frame feeds one frame's time (seconds) to the steering and reports
-// whether the tier dropped (what the budget sizes — the shadow map, the
-// rain — may want rebuilding).
+// whether the tier changed (what the budget sizes — the shadow map, the
+// rain — may want rebuilding); Event says which way.
 func (q *Quality) Frame(dt float32) bool {
+	q.lastMove = QualityHeld
 	if !q.Dynamic {
 		return false
 	}
-	if q.Dyn.Update(dt) == DynResDropTier && q.Tier > q.Lowest {
+	if q.Top < q.Tier {
+		q.Top = q.Tier // set directly (a zero Quality, SetTier by hand)
+	}
+	if q.wait <= 0 {
+		q.wait = q.RaiseAfter
+		if q.wait <= 0 {
+			q.wait = qualityRaiseAfter
+		}
+		q.sinceUp = 1e9
+	}
+	if dt > 0 && dt <= dynResHitch {
+		q.run += dt
+		q.hold = max(q.hold-dt, 0)
+		q.sinceUp += dt
+	}
+	grace := q.Grace
+	if grace <= 0 {
+		grace = qualityGrace
+	}
+	ev := q.Dyn.Update(dt)
+	if ev == DynResDropTier && q.Tier > q.Lowest && q.run >= grace && q.hold <= 0 {
+		if q.sinceUp < qualityRegret {
+			q.wait = min(q.wait*2, qualityRaiseMax) // the last raise did not hold
+		}
 		q.SetTier(q.Tier - 1)
 		q.Dyn.SetScale(q.Dyn.Floor + 0.1) // a lighter tier starts a step over its floor
+		q.calm = 0
+		q.lastMove = QualityDropped
+		return true
+	}
+	// Headroom at the top scale: count it toward a raise.
+	_, hi := q.Dyn.bounds()
+	grow := q.Dyn.Grow
+	if grow <= 0 {
+		grow = 17.4
+	}
+	switch {
+	case dt <= 0 || dt > dynResHitch:
+	case q.Dyn.Scale() >= hi-1e-4 && q.Dyn.Mean() > 0 && q.Dyn.Mean() < grow && ev != DynResShrank:
+		q.calm += dt
+	default:
+		q.calm = 0
+	}
+	if q.Tier < q.Top && q.calm >= q.wait {
+		q.SetTier(q.Tier + 1)
+		// The heavier tier starts a step under the top and climbs as the
+		// frames allow.
+		q.Dyn.SetScale(q.Budget().Scale - 0.1)
+		q.calm, q.sinceUp = 0, 0
+		q.lastMove = QualityRaised
 		return true
 	}
 	return false
 }
+
+// Event is what the last Frame did to the tier.
+func (q *Quality) Event() QualityEvent { return q.lastMove }
 
 // Scale is the render scale for a w×h display: the steered scale, lowered
 // further when the tier's pixel budget would be exceeded.
