@@ -42,6 +42,7 @@ type Font struct {
 	mglyphs map[rune]msdfGlyph // this size's tiles and advances (msdftext.go)
 	ascent  float32
 	height  float32
+	capH    float32 // CapHeight, measured on first use
 	// Qt's line metrics for the same face (see SetQtTextMetrics); 0 when
 	// the font has no usable OS/2 table.
 	winAscent float32
@@ -354,6 +355,39 @@ func (f *Font) layoutAscent(rf *Font, rs float32) float32 {
 // (underline offsets, the raster baseline) rather than the line box.
 func (f *Font) FaceHeight() float32 { return f.height }
 func (f *Font) FaceAscent() float32 { return f.ascent }
+
+// CapHeight is how far a capital stands above the baseline at this size:
+// the height of the face's 'H' outline, unhinted. Centring a line in a
+// box by its caps — a button's label, a
+// row's name — puts the baseline CapHeight/2 below the box's middle; the
+// line box (Height) does not, since faces put very different ascents and
+// descents round the same caps (Inter's caps sit near the middle of its
+// line, Barlow's and IBM Plex Mono's lower). 0.7 em for a face with no
+// 'H'.
+func (f *Font) CapHeight() float32 {
+	if f.capH > 0 {
+		return f.capH
+	}
+	f.capH = float32(f.size) * 0.7
+	if f.parsed != nil {
+		var buf sfnt.Buffer
+		ppem := fixed.Int26_6(f.size * 64)
+		if gi, err := f.parsed.GlyphIndex(&buf, 'H'); err == nil && gi != 0 {
+			if segs, err := f.parsed.LoadGlyph(&buf, gi, ppem, nil); err == nil && len(segs) > 0 {
+				top := fixed.Int26_6(0)
+				for _, s := range segs {
+					for _, p := range s.Args {
+						top = min(top, p.Y)
+					}
+				}
+				if top < 0 {
+					f.capH = fixedToFloat(-top)
+				}
+			}
+		}
+	}
+	return f.capH
+}
 
 func fixedToFloat(v fixed.Int26_6) float32 { return float32(v) / 64 }
 
