@@ -217,9 +217,16 @@ type BlendDesc struct {
 type Buffer struct {
 	h    uintptr
 	size int
+	sim  bool // counted against GFX_SIM_VRAM_MB
 }
 
-func (b *Buffer) Release() { wgpuBufferRelease(b.h) }
+func (b *Buffer) Release() {
+	if b.sim {
+		simUsed.Add(-int64(b.size))
+		b.sim = false
+	}
+	wgpuBufferRelease(b.h)
+}
 
 // Size returns the buffer's capacity in bytes.
 func (b *Buffer) Size() int { return b.size }
@@ -237,6 +244,9 @@ func (d *Device) CreateBuffer(usage BufferUsage, size int) *Buffer {
 			size, float64(size)/(1<<20), limit>>20, buf[:n])
 	}
 	desc := bufferDescriptor{usage: uint64(usage), size: uint64(size)}
+	if simVRAM > 0 && usage&BufferMapRead == 0 { // a readback's staging is not the scene's
+		return d.simBuffer(desc, size)
+	}
 	return &Buffer{h: wgpuDeviceCreateBuffer(d.h, &desc), size: size}
 }
 
@@ -280,8 +290,7 @@ func (q *Queue) noteStaging(n int) {
 	if q.pending == nil {
 		return
 	}
-	*q.pending += n
-	if *q.pending >= stagingFlush {
+	if q.pending.Add(int64(n)) >= stagingFlush {
 		q.Flush()
 	}
 }
@@ -290,7 +299,7 @@ func (q *Queue) noteStaging(n int) {
 // GPU now. Submit resets the pending-staging count too.
 func (q *Queue) Flush() {
 	if q.pending != nil {
-		*q.pending = 0
+		q.pending.Store(0)
 	}
 	wgpuQueueSubmit(q.h, 0, nil)
 }

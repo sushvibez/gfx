@@ -547,8 +547,7 @@ func (d *Device) Limits() Limits { return d.limits }
 // ud2); the by-value StringView's ABI differs per OS (see svMessage).
 var errorCallback = sync.OnceValue(func() uintptr {
 	return ffi.Callback(func(_, errType, msgA, msgB, _, _ uintptr) uintptr {
-		atomic.AddUint64(&errorCount, 1)
-		fmt.Fprintf(os.Stderr, "gpu: uncaptured error (type %d): %s\n", errType, svMessage(msgA, msgB))
+		noteError(errType, svMessage(msgA, msgB)) // errors_native.go
 		return 0
 	})
 })
@@ -571,7 +570,7 @@ type Device struct {
 	h          uintptr
 	// staging counts bytes written through the queue since its last
 	// submit (shared by every Queue wrapper of this device).
-	staging *int
+	staging *atomic.Int64
 }
 
 func (d *Device) Release() {
@@ -581,7 +580,7 @@ func (d *Device) Release() {
 
 func (d *Device) Queue() *Queue {
 	if d.staging == nil {
-		d.staging = new(int)
+		d.staging = new(atomic.Int64)
 	}
 	return &Queue{h: wgpuDeviceGetQueue(d.h), pending: d.staging}
 }
@@ -1082,9 +1081,13 @@ func msaaCount(n int) uint32 {
 
 // Finish ends recording and releases the encoder.
 func (e *CommandEncoder) Finish() *CommandBuffer {
+	before := atomic.LoadUint64(&finishErrors)
 	h := wgpuCommandEncoderFinish(e.h, nil)
 	wgpuCommandEncoderRelease(e.h)
-	return &CommandBuffer{h}
+	// An encoding that failed (an invalid buffer or bind group in it,
+	// after an allocation was refused) is reported here, synchronously;
+	// Submit then drops the buffer instead of letting wgpu abort.
+	return &CommandBuffer{h: h, failed: atomic.LoadUint64(&finishErrors) != before}
 }
 
 type RenderPass struct{ h uintptr }
@@ -1105,25 +1108,34 @@ func (r *RenderPass) End() {
 	wgpuRenderPassEncoderRelease(r.h)
 }
 
-type CommandBuffer struct{ h uintptr }
+type CommandBuffer struct {
+	h      uintptr
+	failed bool // its encoding reported an error: never submitted
+}
 
 type Queue struct {
 	h       uintptr
-	pending *int // bytes staged since the last submit (may be nil)
+	pending *atomic.Int64 // bytes staged since the last submit (may be nil)
 }
 
 func (q *Queue) Release() { wgpuQueueRelease(q.h) }
 
 // Submit sends command buffers to the GPU and releases them.
 func (q *Queue) Submit(bufs ...*CommandBuffer) {
-	handles := make([]uintptr, len(bufs))
-	for i, b := range bufs {
-		handles[i] = b.h
+	handles := make([]uintptr, 0, len(bufs))
+	for _, b := range bufs {
+		if b.failed {
+			atomic.AddUint64(&droppedSubs, 1)
+			continue
+		}
+		handles = append(handles, b.h)
 	}
 	if q.pending != nil {
-		*q.pending = 0
+		q.pending.Store(0)
 	}
-	wgpuQueueSubmit(q.h, uintptr(len(handles)), &handles[0])
+	if len(handles) > 0 {
+		wgpuQueueSubmit(q.h, uintptr(len(handles)), &handles[0])
+	}
 	runtime.KeepAlive(handles)
 	noteSubmitTrace()
 	for _, b := range bufs {
