@@ -44,6 +44,7 @@ struct MDraw {
     p2 : vec4f,   // x hex-tiling rotation scale; splat: y cos(slope threshold), z softness, w jitter
     p3 : vec4f,   // splat: the steep layer's colour
     p4 : vec4f,   // splat: metallic, roughness, normal scale, jitter noise frequency (per metre)
+    p5 : vec4f,   // macro: strength, noise frequency (per metre)
 }
 struct Light {
     pos_range : vec4f,  // xyz position, w range
@@ -86,6 +87,7 @@ const F_WATER = 128u;
 const F_SPLAT = 256u;
 const F_SPLAT_NORMAL = 512u;
 const F_SPLAT_ARM = 1024u;
+const F_MACRO = 2048u;
 
 struct VSOut {
     @builtin(position) pos : vec4f,
@@ -409,6 +411,21 @@ fn splat_weight(up : f32, world : vec3f, cos_thresh : f32, soft : f32, jitter : 
     return smoothstep(th - soft, th + soft, up);
 }
 
+// Macro variation (Material.Macro): the second albedo sample's scale, and
+// how much of the strength reaches roughness.
+const MACRO_SECOND = 0.213;
+const MACRO_ROUGH = 0.4;
+// macro_noise is a slow variation over the surface in -1…1: two octaves
+// of value noise over world space at freq cells per metre (3D, so a wall
+// or ceiling varies as a floor does, with no projection to choose),
+// stretched so most of the surface uses most of the range (smoothed value
+// noise stays near its middle).
+fn macro_noise(world : vec3f, freq : f32) -> f32 {
+    let q = world * freq;
+    let m = 0.65 * vnoise(q + vec3f(0.0, 17.3, 0.0), NOISE_PERIOD) + 0.35 * vnoise(q * 3.1 + vec3f(5.7, 0.0, 2.9), NOISE_PERIOD);
+    return clamp((m - 0.5) * 2.6, -1.0, 1.0);
+}
+
 // Cotangent frame from screen-space derivatives — the fallback when a mesh
 // carries no tangents (a UV-less primitive, procedural geometry).
 fn cotangent_frame(n : vec3f, dpx : vec3f, dpy : vec3f, duvx : vec2f, duvy : vec2f) -> mat3x3f {
@@ -594,10 +611,31 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         return vec4f(d.color.rgb * texel.rgb, alpha);
     }
 
+    // Macro, first half: the same albedo map sampled again at about a
+    // fifth of the scale (an odd ratio, so the two lattices never line up)
+    // and mixed in, so a tile's features no longer recur at one period.
+    let macro_on = (flags & F_MACRO) != 0u;
+    if (macro_on) {
+        let k = MACRO_SECOND;
+        var big : vec4f;
+        if (triplanar) {
+            big = tri_sample(albedo_tex, wp * k, dpx * k, dpy * k, tw, anti, rot_scale);
+        } else {
+            big = tex_sample(albedo_tex, uv * k, duvx * k, duvy * k, anti, rot_scale);
+        }
+        texel = vec4f(mix(texel.rgb, big.rgb, d.p5.x), texel.a);
+    }
+
     // Base colour maps are sRGB-encoded; shade in linear space.
     var albedo = d.color.rgb * pow(max(texel.rgb, vec3f(0.0)), vec3f(2.2));
     if ((flags & F_SPLAT) != 0u) {
         albedo = mix(d.p3.rgb * pow(max(s_texel.rgb, vec3f(0.0)), vec3f(2.2)), albedo, splat_t);
+    }
+    // Macro, second half: slow light and dark over the surface.
+    var macro_v = 0.0;
+    if (macro_on) {
+        macro_v = macro_noise(in.world, d.p5.y);
+        albedo *= 1.0 + d.p5.x * macro_v;
     }
 
     var ao = 1.0;
@@ -625,6 +663,10 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         ao = mix(s_ao, ao, splat_t);
         metallic = mix(clamp(d.p4.x * s_metal, 0.0, 1.0), metallic, splat_t);
         roughness = mix(clamp(d.p4.y * s_rough, 0.05, 1.0), roughness, splat_t);
+    }
+    if (macro_on) {
+        // Darker patches a little rougher (grime), lighter a little smoother.
+        roughness = clamp(roughness * (1.0 - MACRO_ROUGH * d.p5.x * macro_v), 0.05, 1.0);
     }
     // Traced occlusion: three short rays into the hemisphere over the
     // surface (cosine-weighted, turned per pixel); the ambient light dims by

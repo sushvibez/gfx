@@ -235,6 +235,7 @@ struct Draw {
     p2 : vec4f,
     p3 : vec4f,
     p4 : vec4f,
+    p5 : vec4f,
 }
 `
 )

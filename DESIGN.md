@@ -824,6 +824,15 @@ in place of the blue-noise texture the CQB reference reads, so no texture is
 added. Three more views in the material bind group (fallbacks when unset) and
 two more vec4s per draw; a material without a layer skips the branch.
 
+*Status (2026-11-23):* `Material.Macro` breaks up what stochastic tiling
+leaves of a texture's repeat (its distinctive features recurring every tile):
+the albedo, and lightly the roughness, vary by 1 ± Macro over a two-octave 3D
+value noise at `MacroScale` metres (zero = 6; 3D, so walls and ceilings vary
+as floors do, with no projection to pick), and a second sample of the albedo
+at 0.213 of the scale is mixed in at Macro strength (Godot's dual-scale blend).
+One more vec4 per draw; zero is off and draws exactly what it did
+(`TestMaterialMacro`).
+
 ## 10. What else to steal from Qt / Godot / Unreal
 
 | Source | Idea | Position |

@@ -81,6 +81,17 @@ type Material struct {
 	// Nil costs nothing.
 	Splat *SplatLayer
 
+	// Macro breaks up a tiled texture's repeat at the scale the eye finds
+	// it (a stain or a light stone recurring every tile): the albedo, and
+	// lightly the roughness, vary by 1 ± Macro over a two-octave value
+	// noise in world space (3D, so walls and ceilings vary as floors do),
+	// and a second sample of the albedo at about a fifth of the scale is
+	// mixed in at Macro strength. 0 is off and costs a skipped branch;
+	// 0.1–0.2 suits floors and walls.
+	Macro float32
+	// MacroScale is the macro noise's cell size in metres (0 = 6).
+	MacroScale float32
+
 	Emission float32 // emissive multiplier (0 = no emission unless Emissive is set)
 	Unlit    bool    // skip lighting entirely (still tonemapped-free, display colour)
 
@@ -201,6 +212,7 @@ const (
 	matSplat
 	matSplatNormal
 	matSplatARM
+	matMacro
 )
 
 // resolved is the material flattened to what the shader consumes, with
@@ -217,6 +229,9 @@ type resolved struct {
 	splatColor RGBA
 	splatP2    [3]float32
 	splatP4    [4]float32
+	// Macro variation: strength and noise frequency (per metre); zeros
+	// when off.
+	macro [2]float32
 }
 
 func (m *Material) resolve() resolved {
@@ -289,6 +304,14 @@ func (m *Material) resolve() resolved {
 		var sf int
 		r.splatColor, r.splatP2, r.splatP4, sf = m.Splat.resolve()
 		flags |= sf
+	}
+	if m.Macro > 0 {
+		flags |= matMacro
+		scale := m.MacroScale
+		if scale <= 0 {
+			scale = 6
+		}
+		r.macro = [2]float32{m.Macro, 1 / scale}
 	}
 	r.flags = float32(flags)
 	return r
