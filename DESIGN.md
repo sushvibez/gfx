@@ -803,6 +803,18 @@ shader, not on an HDR target), local lights cast no shadows, there is no
 IBL/reflection probe, no clustered light culling, and the legacy `Draw*`
 path sees none of the new environment settings.
 
+*Status (2026-11-23):* `Material.Splat` (a `SplatLayer`) blends a second
+texture set — albedo, normal, ARM and their factors — over the material by the
+surface's slope, for terrain that reads as grass on the flats and rock on the
+steeps: `t = smoothstep(th − Softness, th + Softness, n.y)` with
+`th = cos(SlopeDegrees) + (j − 0.5)·Jitter` (defaults 35°, 0.12, 0.12) and
+every channel `mix(splat, material, t)`. The layer samples with the material's
+own projection (UVs or triplanar, hex tiling alike); the jitter `j` is a
+two-octave value noise over world XZ (`JitterFrequency`, 0.5 cells per metre)
+in place of the blue-noise texture the CQB reference reads, so no texture is
+added. Three more views in the material bind group (fallbacks when unset) and
+two more vec4s per draw; a material without a layer skips the branch.
+
 ## 10. What else to steal from Qt / Godot / Unreal
 
 | Source | Idea | Position |

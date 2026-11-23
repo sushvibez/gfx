@@ -233,6 +233,8 @@ struct Draw {
     p0 : vec4f,
     p1 : vec4f,
     p2 : vec4f,
+    p3 : vec4f,
+    p4 : vec4f,
 }
 `
 )

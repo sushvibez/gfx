@@ -21,6 +21,8 @@ package render
 //	})
 
 import (
+	"math"
+
 	"github.com/sushvibez/gfx/core"
 	"github.com/sushvibez/gfx/gpu"
 )
@@ -72,6 +74,13 @@ type Material struct {
 	// Roughness and FrameSettings.SkyReflection.
 	Water bool
 
+	// Splat blends a second texture set over this one by the surface's
+	// slope: the material reads as itself on the flats and as the splat
+	// layer on the steeps (grass and rock on a heightfield), with a soft
+	// seam broken by a noise so it follows the slope, not the triangles.
+	// Nil costs nothing.
+	Splat *SplatLayer
+
 	Emission float32 // emissive multiplier (0 = no emission unless Emissive is set)
 	Unlit    bool    // skip lighting entirely (still tonemapped-free, display colour)
 
@@ -83,8 +92,88 @@ type Material struct {
 	// the pipeline that derived it), rebuilt when the maps change. Not
 	// part of the public value.
 	bind    [matVariants]*gpu.BindGroup
-	bindKey [4]*Image3D
+	bindKey [7]*Image3D
 	bindOf  *Renderer3D
+}
+
+// SplatLayer is a Material's steep layer: a second texture set sampled
+// with the material's own projection (UVs or Triplanar, AntiTile alike)
+// and blended in where the surface is steeper than SlopeDegrees. Per
+// pixel, with n the world normal and j a noise in 0…1 over the ground,
+//
+//	th = cos(SlopeDegrees) + (j − 0.5)·Jitter
+//	t  = smoothstep(th − Softness, th + Softness, n.y)
+//
+// and every channel (colour, normal, occlusion, roughness, metalness) is
+// mix(splat, material, t). Zero values mean the defaults, as on Material.
+type SplatLayer struct {
+	Albedo *Image3D // base colour, sRGB-encoded (nil: white)
+	Normal *Image3D // tangent-space normal map (nil: the geometry's normal)
+	ARM    *Image3D // packed occlusion, roughness, metalness (nil: 1, 1, 1)
+
+	Color       RGBA    // tint (zero = opaque white)
+	Metallic    float32 // multiplied with ARM's blue channel
+	Roughness   float32 // multiplied with ARM's green channel (0 with ARM bound: the texture's)
+	NormalScale float32 // normal-map strength (zero = 1)
+
+	// SlopeDegrees is the slope at the middle of the seam, from level
+	// (zero = 35°).
+	SlopeDegrees float32
+	// Softness is the seam's half-width in cosine units (zero = 0.12).
+	Softness float32
+	// Jitter is how far the noise moves the threshold, in cosine units
+	// (zero = 0.12; negative = none).
+	Jitter float32
+	// JitterFrequency is the noise's cells per metre (zero = 0.5, so the
+	// seam breaks up at about two metres and its finer octave at half one).
+	JitterFrequency float32
+}
+
+// resolve applies the zero-means-default rules; the flags say which maps
+// are bound.
+func (s *SplatLayer) resolve() (color RGBA, p2 [3]float32, p4 [4]float32, flags int) {
+	color = s.Color
+	if color == (RGBA{}) {
+		color = RGBA{R: 1, G: 1, B: 1, A: 1}
+	}
+	deg := s.SlopeDegrees
+	if deg == 0 {
+		deg = 35
+	}
+	soft := s.Softness
+	if soft == 0 {
+		soft = 0.12
+	}
+	jit := s.Jitter
+	if jit == 0 {
+		jit = 0.12
+	}
+	jit = max(jit, 0)
+	freq := s.JitterFrequency
+	if freq == 0 {
+		freq = 0.5
+	}
+	ns := s.NormalScale
+	if ns == 0 {
+		ns = 1
+	}
+	metal, rough := s.Metallic, s.Roughness
+	flags = matSplat
+	if s.Normal != nil {
+		flags |= matSplatNormal
+	}
+	if s.ARM != nil {
+		flags |= matSplatARM
+		if rough == 0 {
+			rough = 1
+		}
+		if metal == 0 {
+			metal = 1
+		}
+	}
+	p2 = [3]float32{float32(math.Cos(float64(deg) * math.Pi / 180)), soft, jit}
+	p4 = [4]float32{metal, rough, ns, freq}
+	return
 }
 
 // Release frees the material's cached bind group. Textures are owned by the
@@ -96,7 +185,7 @@ func (m *Material) Release() {
 			m.bind[v] = nil
 		}
 	}
-	m.bindKey, m.bindOf = [4]*Image3D{}, nil
+	m.bindKey, m.bindOf = [7]*Image3D{}, nil
 }
 
 // material flag bits, mirrored by the WGSL fragment stage.
@@ -109,6 +198,9 @@ const (
 	matHasRough
 	matHasEmissive
 	matWater
+	matSplat
+	matSplatNormal
+	matSplatARM
 )
 
 // resolved is the material flattened to what the shader consumes, with
@@ -119,6 +211,12 @@ type resolved struct {
 	normalScale, uvScale          float32
 	flags, emission, alpha, rchan float32
 	antiRot                       float32
+	// The splat layer (zeros when none): its colour, the threshold's
+	// cosine, softness and jitter, and its metallic, roughness, normal
+	// scale and noise frequency.
+	splatColor RGBA
+	splatP2    [3]float32
+	splatP4    [4]float32
 }
 
 func (m *Material) resolve() resolved {
@@ -187,6 +285,11 @@ func (m *Material) resolve() resolved {
 	if flags&matHasARM != 0 && r.metallic == 0 {
 		r.metallic = 1
 	}
+	if m.Splat != nil {
+		var sf int
+		r.splatColor, r.splatP2, r.splatP4, sf = m.Splat.resolve()
+		flags |= sf
+	}
 	r.flags = float32(flags)
 	return r
 }
@@ -209,7 +312,12 @@ func (r *Renderer3D) bindGroup(m *Material, variant int) *gpu.BindGroup {
 	}
 	rough = pick(rough, r.white)
 	emis := pick(m.Emissive, r.black)
-	key := [4]*Image3D{albedo, normal, rough, emis}
+	var sp SplatLayer
+	if m.Splat != nil {
+		sp = *m.Splat
+	}
+	sAlb, sNor, sARM := pick(sp.Albedo, r.white), pick(sp.Normal, r.flatNormal), pick(sp.ARM, r.white)
+	key := [7]*Image3D{albedo, normal, rough, emis, sAlb, sNor, sARM}
 	if m.bindKey != key || m.bindOf != r {
 		for v := range m.bind {
 			if m.bind[v] != nil {
@@ -226,6 +334,9 @@ func (r *Renderer3D) bindGroup(m *Material, variant int) *gpu.BindGroup {
 			gpu.BindGroupEntry{Binding: 2, TextureView: normal.view},
 			gpu.BindGroupEntry{Binding: 3, TextureView: rough.view},
 			gpu.BindGroupEntry{Binding: 4, TextureView: emis.view},
+			gpu.BindGroupEntry{Binding: 5, TextureView: sAlb.view},
+			gpu.BindGroupEntry{Binding: 6, TextureView: sNor.view},
+			gpu.BindGroupEntry{Binding: 7, TextureView: sARM.view},
 		)
 	}
 	return m.bind[variant]

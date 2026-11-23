@@ -997,7 +997,9 @@ func (r *Renderer3D) drawInstanced(mesh *Mesh, models []core.Mat4, m *Material,
 		r.mdata = append(r.mdata, res.color.R, res.color.G, res.color.B, res.color.A)
 		r.mdata = append(r.mdata, res.metallic, res.roughness, res.normalScale, res.uvScale)
 		r.mdata = append(r.mdata, res.flags, res.emission, res.alpha, res.rchan)
-		r.mdata = append(r.mdata, res.antiRot, 0, 0, 0)
+		r.mdata = append(r.mdata, res.antiRot, res.splatP2[0], res.splatP2[1], res.splatP2[2])
+		r.mdata = append(r.mdata, res.splatColor.R, res.splatColor.G, res.splatColor.B, res.splatColor.A)
+		r.mdata = append(r.mdata, res.splatP4[:]...)
 	}
 	blend := res.alpha < 1
 	if spal != nil && !r.ensureMatSkin(matVariant(blend, m.DoubleSided, true)) {
@@ -1027,8 +1029,8 @@ func (r *Renderer3D) drawInstanced(mesh *Mesh, models []core.Mat4, m *Material,
 }
 
 // matDrawFloats is the float count of one WGSL MDraw record: a mat4x4 plus
-// four vec4s.
-const matDrawFloats = 16 + 4 + 4 + 4 + 4
+// six vec4s.
+const matDrawFloats = 16 + 6*4
 
 // Draw queues one mesh with a model transform and base color
 // (non-metallic, mid roughness).

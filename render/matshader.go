@@ -41,7 +41,9 @@ struct MDraw {
     color : vec4f,
     p0 : vec4f,   // metallic, roughness, normal scale, uv scale
     p1 : vec4f,   // flags, emission, alpha, roughness channel
-    p2 : vec4f,   // x hex-tiling rotation scale
+    p2 : vec4f,   // x hex-tiling rotation scale; splat: y cos(slope threshold), z softness, w jitter
+    p3 : vec4f,   // splat: the steep layer's colour
+    p4 : vec4f,   // splat: metallic, roughness, normal scale, jitter noise frequency (per metre)
 }
 struct Light {
     pos_range : vec4f,  // xyz position, w range
@@ -68,6 +70,9 @@ struct Lights { items : array<Light, 16>, spot_vp : array<mat4x4f, 4>, rain_vp :
 @group(1) @binding(2) var normal_tex : texture_2d<f32>;
 @group(1) @binding(3) var arm_tex : texture_2d<f32>;
 @group(1) @binding(4) var emis_tex : texture_2d<f32>;
+@group(1) @binding(5) var splat_albedo_tex : texture_2d<f32>;
+@group(1) @binding(6) var splat_normal_tex : texture_2d<f32>;
+@group(1) @binding(7) var splat_arm_tex : texture_2d<f32>;
 
 const PI = 3.14159265;
 const F_TRIPLANAR = 1u;
@@ -78,6 +83,9 @@ const F_ARM = 16u;
 const F_ROUGH = 32u;
 const F_EMISSIVE = 64u;
 const F_WATER = 128u;
+const F_SPLAT = 256u;
+const F_SPLAT_NORMAL = 512u;
+const F_SPLAT_ARM = 1024u;
 
 struct VSOut {
     @builtin(position) pos : vec4f,
@@ -356,13 +364,13 @@ fn tri_sample(t : texture_2d<f32>, p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3
 }
 
 // Whiteout blend of three tangent-space normal samples into world space.
-fn tri_normal(p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3f, n : vec3f, anti : bool, rs : f32, scale : f32) -> vec3f {
+fn tri_normal(t : texture_2d<f32>, p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3f, n : vec3f, anti : bool, rs : f32, scale : f32) -> vec3f {
     var tx = vec3f(0.0, 0.0, 1.0);
     var ty = vec3f(0.0, 0.0, 1.0);
     var tz = vec3f(0.0, 0.0, 1.0);
-    if (w.x > TRI_MIN) { tx = tex_sample(normal_tex, p.zy, dpx.zy, dpy.zy, anti, rs).xyz * 2.0 - 1.0; }
-    if (w.y > TRI_MIN) { ty = tex_sample(normal_tex, p.xz, dpx.xz, dpy.xz, anti, rs).xyz * 2.0 - 1.0; }
-    if (w.z > TRI_MIN) { tz = tex_sample(normal_tex, p.xy, dpx.xy, dpy.xy, anti, rs).xyz * 2.0 - 1.0; }
+    if (w.x > TRI_MIN) { tx = tex_sample(t, p.zy, dpx.zy, dpy.zy, anti, rs).xyz * 2.0 - 1.0; }
+    if (w.y > TRI_MIN) { ty = tex_sample(t, p.xz, dpx.xz, dpy.xz, anti, rs).xyz * 2.0 - 1.0; }
+    if (w.z > TRI_MIN) { tz = tex_sample(t, p.xy, dpx.xy, dpy.xy, anti, rs).xyz * 2.0 - 1.0; }
     tx = vec3f(tx.xy * scale, tx.z);
     ty = vec3f(ty.xy * scale, ty.z);
     tz = vec3f(tz.xy * scale, tz.z);
@@ -370,6 +378,35 @@ fn tri_normal(p : vec3f, dpx : vec3f, dpy : vec3f, w : vec3f, n : vec3f, anti : 
     let ny = vec3f(ty.xy + n.xz, abs(ty.z) * n.y).xzy;
     let nz = vec3f(tz.xy + n.xy, abs(tz.z) * n.z).xyz;
     return normalize(nx * w.x + ny * w.y + nz * w.z);
+}
+
+// uv_normal reads a tangent-space normal map at uv and takes it to world
+// space: by the mesh's tangents, or a derivative frame when it has none.
+fn uv_normal(t : texture_2d<f32>, uv : vec2f, duvx : vec2f, duvy : vec2f, anti : bool, rs : f32, scale : f32,
+             n : vec3f, tangent : vec4f, dwx : vec3f, dwy : vec3f) -> vec3f {
+    var tn = tex_sample(t, uv, duvx, duvy, anti, rs).xyz * 2.0 - 1.0;
+    tn = vec3f(tn.xy * scale, tn.z);
+    var tbn : mat3x3f;
+    if (length(tangent.xyz) > 1e-4) {
+        let tt = normalize(tangent.xyz - n * dot(n, tangent.xyz));
+        let b = cross(n, tt) * select(-1.0, 1.0, tangent.w >= 0.0);
+        tbn = mat3x3f(tt, b, n);
+    } else {
+        tbn = cotangent_frame(n, dwx, dwy, duvx, duvy);
+    }
+    return normalize(tbn * tn);
+}
+
+// splat_weight is how much of the flat layer a surface keeps (1) against
+// the steep one (0): a smoothstep of the normal's up component across the
+// threshold's cosine, the threshold moved by a two-octave value noise over
+// the ground (in place of the blue-noise texture the reference reads) so
+// the seam breaks up at about the noise's cell size.
+fn splat_weight(up : f32, world : vec3f, cos_thresh : f32, soft : f32, jitter : f32, freq : f32) -> f32 {
+    let q = world.xz * freq;
+    let jn = 0.65 * vnoise(vec3f(q, 0.37), NOISE_PERIOD) + 0.35 * vnoise(vec3f(q * 4.3, 1.91), NOISE_PERIOD);
+    let th = cos_thresh + (jn - 0.5) * jitter;
+    return smoothstep(th - soft, th + soft, up);
 }
 
 // Cotangent frame from screen-space derivatives — the fallback when a mesh
@@ -488,7 +525,7 @@ fn fs(in : FSIn) -> @location(0) vec4f {
             emis = tri_sample(emis_tex, wp, dpx, dpy, tw, anti, rot_scale);
         }
         if ((flags & F_NORMAL) != 0u) {
-            shaded_n = tri_normal(wp, dpx, dpy, tw, n, anti, rot_scale, d.p0.z);
+            shaded_n = tri_normal(normal_tex, wp, dpx, dpy, tw, n, anti, rot_scale, d.p0.z);
         }
     } else {
         texel = tex_sample(albedo_tex, uv, duvx, duvy, anti, rot_scale);
@@ -497,18 +534,35 @@ fn fs(in : FSIn) -> @location(0) vec4f {
             emis = tex_sample(emis_tex, uv, duvx, duvy, anti, rot_scale);
         }
         if ((flags & F_NORMAL) != 0u) {
-            var tn = tex_sample(normal_tex, uv, duvx, duvy, anti, rot_scale).xyz * 2.0 - 1.0;
-            tn = vec3f(tn.xy * d.p0.z, tn.z);
-            var tbn : mat3x3f;
-            if (length(in.tangent.xyz) > 1e-4) {
-                let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
-                let b = cross(n, t) * select(-1.0, 1.0, in.tangent.w >= 0.0);
-                tbn = mat3x3f(t, b, n);
-            } else {
-                tbn = cotangent_frame(n, dwx, dwy, duvx, duvy);
-            }
-            shaded_n = normalize(tbn * tn);
+            shaded_n = uv_normal(normal_tex, uv, duvx, duvy, anti, rot_scale, d.p0.z, n, in.tangent, dwx, dwy);
         }
+    }
+
+    // Splat: a second texture set (the steep layer: rock under grass)
+    // sampled the same way, and the blend weight from the surface's
+    // slope — 1 keeps this material, 0 takes the steep layer — over a
+    // threshold broken by a noise so the seam wanders instead of following
+    // the triangles.
+    var splat_t = 1.0;
+    var s_texel = vec4f(1.0);
+    var s_arm = vec4f(1.0);
+    var s_n = n;
+    if ((flags & F_SPLAT) != 0u) {
+        if (triplanar) {
+            s_texel = tri_sample(splat_albedo_tex, wp, dpx, dpy, tw, anti, rot_scale);
+            s_arm = tri_sample(splat_arm_tex, wp, dpx, dpy, tw, anti, rot_scale);
+            if ((flags & F_SPLAT_NORMAL) != 0u) {
+                s_n = tri_normal(splat_normal_tex, wp, dpx, dpy, tw, n, anti, rot_scale, d.p4.z);
+            }
+        } else {
+            s_texel = tex_sample(splat_albedo_tex, uv, duvx, duvy, anti, rot_scale);
+            s_arm = tex_sample(splat_arm_tex, uv, duvx, duvy, anti, rot_scale);
+            if ((flags & F_SPLAT_NORMAL) != 0u) {
+                s_n = uv_normal(splat_normal_tex, uv, duvx, duvy, anti, rot_scale, d.p4.z, n, in.tangent, dwx, dwy);
+            }
+        }
+        splat_t = splat_weight(n.y, in.world, d.p2.y, d.p2.z, d.p2.w, d.p4.w);
+        shaded_n = normalize(mix(s_n, shaded_n, splat_t));
     }
 
     // Water: the normal is two layers of the wave map, scrolling across each
@@ -542,6 +596,9 @@ fn fs(in : FSIn) -> @location(0) vec4f {
 
     // Base colour maps are sRGB-encoded; shade in linear space.
     var albedo = d.color.rgb * pow(max(texel.rgb, vec3f(0.0)), vec3f(2.2));
+    if ((flags & F_SPLAT) != 0u) {
+        albedo = mix(d.p3.rgb * pow(max(s_texel.rgb, vec3f(0.0)), vec3f(2.2)), albedo, splat_t);
+    }
 
     var ao = 1.0;
     var rough_tex = 1.0;
@@ -553,6 +610,21 @@ fn fs(in : FSIn) -> @location(0) vec4f {
     } else if ((flags & F_ROUGH) != 0u) {
         let ch = u32(d.p1.w);
         rough_tex = select(select(arm.r, arm.g, ch == 1u), arm.b, ch == 2u);
+    }
+    var metallic = clamp(d.p0.x * metal_tex, 0.0, 1.0);
+    var roughness = clamp(d.p0.y * rough_tex, 0.05, 1.0);
+    if ((flags & F_SPLAT) != 0u) {
+        var s_ao = 1.0;
+        var s_rough = 1.0;
+        var s_metal = 1.0;
+        if ((flags & F_SPLAT_ARM) != 0u) {
+            s_ao = s_arm.r;
+            s_rough = s_arm.g;
+            s_metal = s_arm.b;
+        }
+        ao = mix(s_ao, ao, splat_t);
+        metallic = mix(clamp(d.p4.x * s_metal, 0.0, 1.0), metallic, splat_t);
+        roughness = mix(clamp(d.p4.y * s_rough, 0.05, 1.0), roughness, splat_t);
     }
     // Traced occlusion: three short rays into the hemisphere over the
     // surface (cosine-weighted, turned per pixel); the ambient light dims by
@@ -570,8 +642,6 @@ fn fs(in : FSIn) -> @location(0) vec4f {
         }
         ao = ao * mix(1.0, open / f32(rays), frame.rt.y);
     }
-    var metallic = clamp(d.p0.x * metal_tex, 0.0, 1.0);
-    var roughness = clamp(d.p0.y * rough_tex, 0.05, 1.0);
 
     // Wet (wgsl.Wet, graded as PTG grades its ground): water in the
     // pores darkens and saturates what is damp (less on metal), and a film
