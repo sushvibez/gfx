@@ -649,6 +649,15 @@ sub-pixel. Things moving by themselves have no motion vectors: they are
 handled by the clip alone. About 0.1–0.3 ms at 1600×900 on an RTX 5060 Ti
 (`TestPostTAA*`, `TestPostJitter`; `GFX_POST_BENCH=1` for the timing).
 
+*Status (2026-11-23):* the composite upsamples the half-resolution AO by
+depth: of the four texels round a pixel, those whose depth (the depth texel
+the AO pass estimated at) lies within the blur's tolerance of the pixel's own
+count, by their bilinear weights, else the nearest in depth. The filtered
+lookup it replaces mixed a crease's occlusion into the edge of whatever
+stood in front of it (a band down a door jamb in the CQB port;
+`TestPostAOSilhouette`). TAA's history clamp at moving silhouettes is not
+checked headlessly.
+
 *Status (2026-11-13):* quality tiers and dynamic resolution
 (`render/quality.go`): `QualityTier` (low, medium, high, ultra) with a
 `QualityBudget` per tier (starting render scale and floor, a pixel cap of

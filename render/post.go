@@ -408,7 +408,7 @@ func (p *Post) Resize(w, h int) {
 	for k := 0; k < 2; k++ {
 		// Frame k reads adapt[1-k] and writes adapt[k].
 		p.bgAdapt[k] = group(p.plAdapt, samp, texEntry(1, small), texEntry(2, p.adapt[1-k].view), uni(3))
-		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.lit.view), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4), texEntry(5, p.ao[0].view))
+		p.bgComposite[k] = group(p.plComposite, samp, texEntry(1, p.lit.view), texEntry(2, bloom), texEntry(3, p.adapt[k].view), uni(4), texEntry(5, p.ao[0].view), texEntry(6, p.depthView))
 	}
 	p.bgFinal = group(p.plFinal, samp, texEntry(1, p.ldr.view), uni(2))
 	p.bgAO = group(p.plAO, texEntry(0, p.depthView), uni(1))
@@ -714,13 +714,47 @@ const postAdaptWGSL = `
 
 // postCompositeWGSL: bloom, exposure, the tone curve and the grade, into
 // display space with luma in alpha for FXAA.
-const postCompositeWGSL = wgsl.Hash + `
+const postCompositeWGSL = wgsl.Hash + wgsl.Depth + `
 @group(0) @binding(0) var samp : sampler;
 @group(0) @binding(1) var scene : texture_2d<f32>;
 @group(0) @binding(2) var bloom : texture_2d<f32>;
 @group(0) @binding(3) var adapt : texture_2d<f32>;
 @group(0) @binding(4) var<uniform> U : PostU;
 @group(0) @binding(5) var aotex : texture_2d<f32>;
+@group(0) @binding(6) var depth : texture_depth_2d;
+
+// The occlusion at full resolution from the half-resolution estimate, by
+// depth (a bilateral upsample): of the four half-resolution texels round
+// the pixel, those whose depth (the depth texel the AO pass estimated at,
+// 2q) lies near the pixel's own count, each by its bilinear weight. A
+// filtered lookup would mix a wall's occlusion with the floor's behind its
+// edge and draw a band down the silhouette.
+fn ao_upsample(uv : vec2f) -> f32 {
+    let ddims = vec2i(textureDimensions(depth));
+    let adims = vec2i(textureDimensions(aotex));
+    let pix = clamp(vec2i(uv * vec2f(ddims)), vec2i(0), ddims - 1);
+    let z0 = depth_dist(textureLoad(depth, pix, 0), U.p4.w, U.proj.z, U.proj.w);
+    let h = (vec2f(pix) + 0.5) * 0.5 - 0.5;   // in half-resolution texels
+    let b = vec2i(floor(h));
+    let f = h - floor(h);
+    let tol = 0.04 * z0 + 0.02;
+    var acc = 0.0; var ws = 0.0;
+    var best = 1.0; var bestd = 1e30;
+    for (var j = 0; j < 4; j++) {
+        let o = vec2i(j & 1, j >> 1);
+        let q = clamp(b + o, vec2i(0), adims - 1);
+        let z = depth_dist(textureLoad(depth, min(q * 2, ddims - 1), 0), U.p4.w, U.proj.z, U.proj.w);
+        let a = textureLoad(aotex, q, 0).r;
+        let fo = vec2f(o);
+        let wb = mix(1.0 - f.x, f.x, fo.x) * mix(1.0 - f.y, f.y, fo.y);
+        let dz = abs(z - z0);
+        let w = (wb + 1e-3) * max(0.0, 1.0 - dz / tol);
+        acc += a * w; ws += w;
+        if (dz < bestd) { bestd = dz; best = a; }
+    }
+    if (ws > 1e-4) { return acc / ws; }
+    return best;   // nothing at this depth: the nearest in depth
+}
 
 // ACES, Stephen Hill's fit (RRT and ODT).
 fn rrt_odt(v : vec3f) -> vec3f {
@@ -845,7 +879,8 @@ fn lens(uv : vec2f, asp : f32, e : f32) -> vec3f {
     // Ambient occlusion belongs to ambient light: it fades on brightly lit
     // pixels, so sunlit surfaces never get dirty halos; faintly cool.
     let e = exposure();
-    let occ = textureSampleLevel(aotex, samp, uv, 0.0).r;
+    var occ = 1.0;
+    if (U.p4.x > 0.0) { occ = ao_upsample(uv); }
     let lit = smoothstep(0.16, 0.85, luma(col) * e);
     let a = mix(1.0, occ, U.p4.x * (1.0 - 0.8 * lit));
     col *= mix(vec3f(a), vec3f(1.0), vec3f(0.0, 0.03, 0.07));
