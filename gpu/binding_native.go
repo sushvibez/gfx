@@ -75,7 +75,7 @@ func (d *Device) CreateTexture2D(width, height int, format TextureFormat, usage 
 		mipLevelCount: 1,
 		sampleCount:   1,
 	}
-	return &Texture{h: wgpuDeviceCreateTexture(d.h, &desc), bpt: BytesPerTexel(format)}
+	return d.newTexture(&desc, format)
 }
 
 // WriteTexture uploads tightly packed RGBA8 pixels (width*height*4 bytes)

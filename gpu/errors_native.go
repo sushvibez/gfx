@@ -158,7 +158,7 @@ var (
 
 func (d *Device) simBuffer(desc bufferDescriptor, size int) *Buffer {
 	if simUsed.Add(int64(size)) <= simVRAM {
-		return &Buffer{h: wgpuDeviceCreateBuffer(d.h, &desc), size: size, sim: true}
+		return &Buffer{h: wgpuDeviceCreateBuffer(d.h, &desc), size: size, sim: true, acct: d.mem.add(int64(size))}
 	}
 	simUsed.Add(-int64(size))
 	// An invalid buffer, as a refused one is (a usage of none is invalid).

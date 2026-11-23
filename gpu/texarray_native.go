@@ -36,7 +36,7 @@ func (d *Device) CreateTexture2DArray(width, height, layers int, format TextureF
 		mipLevelCount: 1,
 		sampleCount:   1,
 	}
-	return &Texture{h: wgpuDeviceCreateTexture(d.h, &desc), bpt: BytesPerTexel(format)}
+	return d.newTexture(&desc, format)
 }
 
 // CreateViewArray returns a texture_2d_array view over all layers.

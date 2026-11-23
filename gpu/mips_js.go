@@ -28,7 +28,7 @@ func (d *Device) CreateTexture2DMips(width, height int, format TextureFormat, us
 		"usage":         int(usage),
 		"mipLevelCount": mips,
 	})
-	return &Texture{v: v, bpt: BytesPerTexel(format)}
+	return d.newTexture(v, width, height, 1, mips, 1, format)
 }
 
 // WriteTextureMip uploads tightly packed RGBA8 pixels into one mip level.

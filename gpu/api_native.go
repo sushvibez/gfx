@@ -533,7 +533,7 @@ func (a *Adapter) RequestDevice() (*Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Device{h: h, limits: got, dualSource: dual}, nil
+	return &Device{h: h, limits: got, dualSource: dual, mem: &memAccount{}}, nil
 }
 
 // DualSourceBlending reports whether the device was created with the
@@ -571,6 +571,7 @@ type Device struct {
 	// staging counts bytes written through the queue since its last
 	// submit (shared by every Queue wrapper of this device).
 	staging *atomic.Int64
+	mem     *memAccount // live buffers' and textures' bytes (AllocatedBytes)
 }
 
 func (d *Device) Release() {
@@ -973,9 +974,24 @@ type Texture struct {
 	// stride. It was width*4 everywhere until glyph sheets went to one
 	// byte a texel.
 	bpt int
+	// acct and bytes are what the texture counts in its device's
+	// AllocatedBytes, given back once on Release.
+	acct  *memAccount
+	bytes int64
 }
 
-func (t *Texture) Release() { wgpuTextureRelease(t.h) }
+func (t *Texture) Release() {
+	t.acct.sub(t.bytes)
+	t.acct = nil
+	wgpuTextureRelease(t.h)
+}
+
+// newTexture creates a texture from desc and counts its memory.
+func (d *Device) newTexture(desc *textureDescriptor, format TextureFormat) *Texture {
+	n := textureBytes(int(desc.size.width), int(desc.size.height), int(desc.size.depthOrArrayLayers),
+		int(desc.mipLevelCount), int(desc.sampleCount), format)
+	return &Texture{h: wgpuDeviceCreateTexture(d.h, desc), bpt: BytesPerTexel(format), acct: d.mem.add(n), bytes: n}
+}
 
 func (t *Texture) CreateView() *TextureView {
 	return &TextureView{wgpuTextureCreateView(t.h, nil)}

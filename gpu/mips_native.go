@@ -39,7 +39,7 @@ func (d *Device) CreateTexture2DMips(width, height int, format TextureFormat, us
 		mipLevelCount: uint32(mips),
 		sampleCount:   1,
 	}
-	return &Texture{h: wgpuDeviceCreateTexture(d.h, &desc), bpt: BytesPerTexel(format)}
+	return d.newTexture(&desc, format)
 }
 
 // WriteTextureMip uploads tightly packed RGBA8 pixels into one mip level.

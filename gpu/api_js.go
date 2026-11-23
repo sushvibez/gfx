@@ -147,13 +147,14 @@ func (a *Adapter) RequestDevice() (*Device, error) {
 		return nil
 	})
 	v.Call("addEventListener", "uncapturederror", onErr) // intentionally never released
-	return &Device{v: v, limits: lim}, nil
+	return &Device{v: v, limits: lim, mem: &memAccount{}}, nil
 }
 
 // Device is a browser GPUDevice.
 type Device struct {
 	v      js.Value
 	limits Limits
+	mem    *memAccount // live buffers' and textures' bytes (AllocatedBytes)
 }
 
 // Limits reports the buffer-size limits the device was created with.
@@ -408,7 +409,7 @@ func (d *Device) CreateMSAATexture(width, height int, format TextureFormat, samp
 		"usage":       0x10, // RENDER_ATTACHMENT
 		"sampleCount": samples,
 	})
-	return &Texture{v: v, bpt: BytesPerTexel(format)}
+	return d.newTexture(v, width, height, 1, 1, samples, format)
 }
 
 // CreateDepthTexture allocates a Depth32Float render attachment.
@@ -562,9 +563,14 @@ func (e *CommandEncoder) BeginRenderPassOver(view, depth *TextureView) *RenderPa
 type Buffer struct {
 	v    js.Value
 	size int
+	acct *memAccount // counted in its device's AllocatedBytes
 }
 
-func (b *Buffer) Release() { b.v.Call("destroy") }
+func (b *Buffer) Release() {
+	b.acct.sub(int64(b.size))
+	b.acct = nil
+	b.v.Call("destroy")
+}
 
 // Size returns the buffer's capacity in bytes.
 func (b *Buffer) Size() int { return b.size }
@@ -572,7 +578,7 @@ func (b *Buffer) Size() int { return b.size }
 // CreateBuffer allocates a GPU buffer of size bytes.
 func (d *Device) CreateBuffer(usage BufferUsage, size int) *Buffer {
 	v := d.v.Call("createBuffer", map[string]any{"size": size, "usage": int(usage)})
-	return &Buffer{v: v, size: size}
+	return &Buffer{v: v, size: size, acct: d.mem.add(int64(size))}
 }
 
 // CreateRenderTexture allocates a 2D texture usable as a render target and
@@ -583,7 +589,7 @@ func (d *Device) CreateRenderTexture(width, height int, format TextureFormat) *T
 		"format": string(format),
 		"usage":  0x10 | 0x01, // RENDER_ATTACHMENT | COPY_SRC
 	})
-	return &Texture{v: v, bpt: BytesPerTexel(format)}
+	return d.newTexture(v, width, height, 1, 1, 1, format)
 }
 
 func (d *Device) CreateCommandEncoder() *CommandEncoder {
@@ -639,9 +645,24 @@ type Texture struct {
 	v js.Value
 	// bpt is the texture's bytes per texel — see the native side.
 	bpt int
+	// acct and bytes are what the texture counts in its device's
+	// AllocatedBytes, given back once on Release.
+	acct  *memAccount
+	bytes int64
 }
 
-func (t *Texture) Release() {}
+// Release gives the texture's bytes back to the device's count; the
+// browser frees the texture itself when it is collected.
+func (t *Texture) Release() {
+	t.acct.sub(t.bytes)
+	t.acct = nil
+}
+
+// newTexture wraps a created texture and counts its memory.
+func (d *Device) newTexture(v js.Value, width, height, layers, mips, samples int, format TextureFormat) *Texture {
+	n := textureBytes(width, height, layers, mips, samples, format)
+	return &Texture{v: v, bpt: BytesPerTexel(format), acct: d.mem.add(n), bytes: n}
+}
 
 func (t *Texture) CreateView() *TextureView {
 	return &TextureView{t.v.Call("createView")}
@@ -837,7 +858,7 @@ func (d *Device) CreateTexture2D(width, height int, format TextureFormat, usage 
 		"format": string(format),
 		"usage":  int(usage),
 	})
-	return &Texture{v: v, bpt: BytesPerTexel(format)}
+	return d.newTexture(v, width, height, 1, 1, 1, format)
 }
 
 // WriteTexture uploads tightly packed RGBA8 pixels (width*height*4 bytes)

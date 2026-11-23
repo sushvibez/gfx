@@ -217,10 +217,13 @@ type BlendDesc struct {
 type Buffer struct {
 	h    uintptr
 	size int
-	sim  bool // counted against GFX_SIM_VRAM_MB
+	sim  bool        // counted against GFX_SIM_VRAM_MB
+	acct *memAccount // counted in its device's AllocatedBytes
 }
 
 func (b *Buffer) Release() {
+	b.acct.sub(int64(b.size))
+	b.acct = nil
 	if b.sim {
 		simUsed.Add(-int64(b.size))
 		b.sim = false
@@ -247,7 +250,7 @@ func (d *Device) CreateBuffer(usage BufferUsage, size int) *Buffer {
 	if simVRAM > 0 && usage&BufferMapRead == 0 { // a readback's staging is not the scene's
 		return d.simBuffer(desc, size)
 	}
-	return &Buffer{h: wgpuDeviceCreateBuffer(d.h, &desc), size: size}
+	return &Buffer{h: wgpuDeviceCreateBuffer(d.h, &desc), size: size, acct: d.mem.add(int64(size))}
 }
 
 // WriteBuffer schedules a copy of data into b at offset.
@@ -339,7 +342,7 @@ func (d *Device) CreateRenderTexture(width, height int, format TextureFormat) *T
 		mipLevelCount: 1,
 		sampleCount:   1,
 	}
-	return &Texture{h: wgpuDeviceCreateTexture(d.h, &desc), bpt: BytesPerTexel(format)}
+	return d.newTexture(&desc, format)
 }
 
 // CreateMSAATexture allocates a multisampled color target for anti-aliased
@@ -357,7 +360,7 @@ func (d *Device) CreateMSAATexture(width, height int, format TextureFormat, samp
 		mipLevelCount: 1,
 		sampleCount:   uint32(samples),
 	}
-	return &Texture{h: wgpuDeviceCreateTexture(d.h, &desc), bpt: BytesPerTexel(format)}
+	return d.newTexture(&desc, format)
 }
 
 // mapCallback delivers wgpuBufferMapAsync's status; requests are serialized

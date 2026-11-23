@@ -276,6 +276,14 @@ other order). The registry with reference counts and debug leak detection that
 §7 describes is still not built; repeatable `Release` lives in the owners above
 `gpu` (`ecs.GPUColumn`, `render.Graph`, `audio.Device.Close`).
 
+*Status (2026-11-23):* `Device.AllocatedBytes` is the device's own count of the
+memory its live buffers and textures hold (each buffer's size; each texture's
+texels over every mip, layer and sample), kept atomically by the `Create*`
+calls and their `Release`s on both backends, always on, for a performance
+overlay's VRAM line. It is the application's count, not the driver's:
+alignment, padding and the swapchain are not in it. `GFX_SIM_VRAM_MB` keeps its
+own budget (buffers only, readback staging excluded).
+
 ## 6. FFI (the cgo replacement) and scripting
 
 ### 6.1 Replacing cgo

@@ -11,7 +11,7 @@ func (d *Device) CreateTexture2DArray(width, height, layers int, format TextureF
 		"format": string(format),
 		"usage":  int(usage),
 	})
-	return &Texture{v: v, bpt: BytesPerTexel(format)}
+	return d.newTexture(v, width, height, layers, 1, 1, format)
 }
 
 // CreateViewArray returns a texture_2d_array view over all layers.
