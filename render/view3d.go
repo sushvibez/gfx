@@ -17,7 +17,12 @@ package render
 // is written per Render); give each simultaneous viewport its own
 // Renderer3D, or submit between renders.
 
-import "github.com/sushvibez/gfx/gpu"
+import (
+	"fmt"
+	"image"
+
+	"github.com/sushvibez/gfx/gpu"
+)
 
 type View3D struct {
 	// Clear is the viewport background (defaults to opaque dark).
@@ -87,7 +92,7 @@ func (v *View3D) ResizeScaled(w, h int, scale float32) {
 	if v.device == nil {
 		return // test views without a device keep only the sizes
 	}
-	v.color = v.device.CreateTexture2D(pw, ph, v.format, gpu.TextureRenderAttachment|gpu.TextureBinding)
+	v.color = v.device.CreateTexture2D(pw, ph, v.format, gpu.TextureRenderAttachment|gpu.TextureBinding|gpu.TextureCopySrc)
 	v.colorView = v.color.CreateView()
 	v.depth = v.device.CreateDepthTexture(pw, ph)
 	v.depthView = v.depth.CreateView()
@@ -162,6 +167,30 @@ func (v *View3D) Render(enc *gpu.CommandEncoder, r3 *Renderer3D) error {
 
 // Image returns the sampleable color target (nil before first Resize).
 func (v *View3D) Image() *Image { return v.img }
+
+// ReadImage copies the view's last rendered picture back to the CPU at its
+// pixel size (a thumbnail or a screenshot of one viewport, where the
+// window's own screenshot would catch the chrome around it). It blocks
+// until the GPU is done, so it is not for every frame. RGBA8 and BGRA8
+// targets are supported; BGRA comes back swizzled to RGBA.
+func (v *View3D) ReadImage(q *gpu.Queue) (*image.RGBA, error) {
+	if v.color == nil || v.device == nil {
+		return nil, fmt.Errorf("render: View3D.ReadImage: the view has no target yet")
+	}
+	if v.format != gpu.FormatRGBA8Unorm && v.format != gpu.FormatBGRA8Unorm {
+		return nil, fmt.Errorf("render: View3D.ReadImage: unsupported target format %v", v.format)
+	}
+	pix, err := v.device.ReadTexture(q, v.color, v.pw, v.ph)
+	if err != nil {
+		return nil, err
+	}
+	if v.format == gpu.FormatBGRA8Unorm {
+		for i := 0; i+3 < len(pix); i += 4 {
+			pix[i], pix[i+2] = pix[i+2], pix[i]
+		}
+	}
+	return &image.RGBA{Pix: pix, Stride: v.pw * 4, Rect: image.Rect(0, 0, v.pw, v.ph)}, nil
+}
 
 func (v *View3D) release() {
 	if v.img != nil {

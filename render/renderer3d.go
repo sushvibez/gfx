@@ -966,6 +966,12 @@ func (r *Renderer3D) Jitter(dx, dy float32) {
 //
 // A material with Alpha < 1 is drawn after all opaque geometry, sorted back
 // to front.
+// Draws reports how many draw records have been queued since the last
+// Begin (an instanced draw is one record) — a performance overlay's
+// "draw calls" figure. Read it after the frame's draws, before the next
+// Begin.
+func (r *Renderer3D) Draws() int { return len(r.items) + len(r.mitems) }
+
 func (r *Renderer3D) DrawMaterial(mesh *Mesh, model core.Mat4, m *Material) {
 	r.DrawInstanced(mesh, []core.Mat4{model}, m)
 }

@@ -424,14 +424,21 @@ func (e *Env) Str(name string, p *core.Property[string]) {
 }
 
 // Func exposes a Go function callable from handlers: func(), func(float64),
-// func(float64, float64), func(string), func(bool), or func([]any) (any,
-// error) for anything else. Any other shape panics here, at registration —
+// func(float64, float64), func(string), func(bool), func([]any) (any,
+// error), or any other function whose parameters are strings, bools,
+// numbers or `any` and that returns nothing, a value, an error or (value,
+// error) — func(kind string, idx int, key, value string) — adapted by
+// reflection (adaptHostFunc). Any other shape panics here, at registration —
 // a call from markup could only fail later, quietly, as "not callable".
 func (e *Env) Func(name string, fn any) {
 	switch fn.(type) {
 	case func(), func(float64), func(float64, float64), func(string), func(bool), func([]any) (any, error), jsFunc:
 	default:
-		panic(fmt.Sprintf("gml: Env.Func(%q): unsupported signature %T", name, fn))
+		adapted, ok := adaptHostFunc(fn)
+		if !ok {
+			panic(fmt.Sprintf("gml: Env.Func(%q): unsupported signature %T", name, fn))
+		}
+		fn = adapted
 	}
 	e.vars[name] = fn
 }

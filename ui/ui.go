@@ -457,6 +457,7 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 				}
 			}
 		case app.MouseMove:
+			dragShift, dragCtrl = m.Shift, m.Ctrl
 			if u.dragSlider != nil {
 				u.dragToPoint(m.X, m.Y)
 			}
@@ -500,6 +501,7 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 			}
 			u.ctx.MousePressed = true
 			u.ctx.pressX, u.ctx.pressY = m.X, m.Y
+			dragShift, dragCtrl = m.Shift, m.Ctrl
 			u.dragX, u.dragY = m.X, m.Y
 			u.pressTarget = Rect{}
 			// A press on a scrollbar thumb starts a bar drag and consumes

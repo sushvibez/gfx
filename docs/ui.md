@@ -265,7 +265,9 @@ like `ScrollState`.
 | `ui.DelayButton(label, &st, ui.DelayOpts{…})` | DelayButton | hold for `Delay` (300 ms) to run `OnActivated`; a bar under it fills |
 | `ui.Switch(&prop, label, onToggle…)`, `ui.SwitchOpts{Disabled}.Build(…)` | Switch | pill and knob |
 | `ui.Checkbox`, `ui.TriCheckbox`, `ui.Radio` / `ui.RadioRing` with `ui.ButtonGroup` | CheckBox, RadioButton, ButtonGroup | a group makes members exclusive |
-| `ui.ComboBox(&cur, &open, ui.ComboOpts{…})`, `ui.SpinBox(&v, ui.SpinOpts{…})` | ComboBox, SpinBox | editable through an `InputState` |
+| `ui.ComboBox(&cur, &open, ui.ComboOpts{…})`, `ui.SpinBox(&v, ui.SpinOpts{…})` | ComboBox, SpinBox | editable through an `InputState`; ComboBox `Filter` (a search field over the open list) and `MaxRows` (scrolls past it) |
+| `ui.NumberField(&v, st, ui.NumberOpts{…})` | (Blender's number field) | float; drag to scrub (`ui.DragModifiers`: Shift fine, Ctrl snap), click to type (`ui.ParseNumber`: units, `a*b`), arrows; `st := ui.NewNumberState()` retained |
+| `orbit.New(target, dist)` (`ui/orbit`) | (an orbit camera) | navcube's convention; `Orbit`/`Pan`/`Zoom` or `Handle(mouse)`, `AnimateTo` + `Step` (a navcube snap), `SetHome`/`Reset`, `Matrices(aspect)` for `render.Post` |
 | `ui.DialControl(&v, from, to, ui.DialOpts{…})`, `ui.DialFace(pos, size, theme)` | Dial | a painted knob over `ui.Dial`'s interaction |
 | `ui.ProgressBar(v, ui.ProgressOpts{…})`, `ui.BusyIndicator(&activity, size)` | ProgressBar, BusyIndicator | `Indeterminate: &activity` sweeps; a `ui.Activity` runs off the animation clock and asks for frames only while running |
 | `ui.MenuBar(&st, []ui.MenuBarMenu{…})`, `ui.MenuPanel(&st, items, onClose)` | MenuBar, Menu, MenuItem, Action | `ui.MenuItem{Text, OnTrigger, Checkable, Checked, Group, Disabled, Separator, Sub, Shortcut}`; submenus open to the right; Up/Down/Enter/Right/Left/Escape; `item.Activate()` is what picking it does (wire a shortcut to it) |

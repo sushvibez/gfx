@@ -531,10 +531,14 @@ func (m *Model) draw(r *Renderer3D, transform core.Mat4, tint RGBA, fade float32
 		case blend:
 			m.one[0] = world
 			r.drawInstanced(it.mesh, m.one[:], it.fadeMaterial(c, fade), it.attrs, it.pal)
-		case it.mapped() && (it.pal != nil || it.skin < 0):
-			// Normal / ARM / emissive maps: the material pipeline. (A
-			// CPU-skinned item keeps the base path, which re-uploads
-			// its deformed vertices.)
+		case (it.mapped() || r.settings.Tonemap == TonemapHDR) && (it.pal != nil || it.skin < 0):
+			// Normal / ARM / emissive maps: the material pipeline. So is
+			// every item under an HDR camera (render.Post): the base path
+			// tone maps and gamma-encodes with its own fixed light, which
+			// a Post would expose and tone map again — a dark model came
+			// out washed to white, and lit unlike the scene round it. (A
+			// CPU-skinned item keeps the base path, which re-uploads its
+			// deformed vertices.)
 			m.one[0] = world
 			r.drawInstanced(it.mesh, m.one[:], it.mappedMaterial(c), it.attrs, it.pal)
 		case it.pal != nil:

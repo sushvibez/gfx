@@ -1708,6 +1708,8 @@ func buildElement(n *node, env *Env, doc *docState) (ui.Element, error) {
 		return buildBusyIndicator(n, env, doc)
 	case "SpinBox":
 		return buildSpinBox(n, env, doc)
+	case "NumberField":
+		return buildNumberField(n, env, doc)
 	case "ComboBox":
 		return buildComboBox(n, env, doc)
 	case "Slider":
@@ -1819,6 +1821,9 @@ type docState struct {
 	// background of its own has to match.
 	groundDark bool
 	inputs     map[string]*ui.InputState
+	// numbers are the NumberFields' retained state (scrub, typing), by
+	// element key.
+	numbers map[string]*numberFieldState
 	// inputSeed is the last bound `text:` value each retained input was
 	// seeded with, so a binding that changes underneath an unfocused
 	// field refreshes it (QML: the text property setter) while typing
@@ -3798,7 +3803,7 @@ func isControlKind(t string) bool {
 	case "Button", "ToolButton", "DelayButton", "RoundButton", "TabButton",
 		"MenuItem", "MenuBarItem", "ItemDelegate", "SwipeDelegate",
 		"CheckBox", "CheckDelegate", "Switch", "SwitchDelegate", "RadioButton",
-		"RadioDelegate", "Slider", "RangeSlider", "Dial", "SpinBox",
+		"RadioDelegate", "Slider", "RangeSlider", "Dial", "SpinBox", "NumberField",
 		"ComboBox", "TextField", "TextArea":
 		return true
 	}
@@ -7570,7 +7575,7 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 	var modelAttr *attr
 	var onActivated []stmt
 	var onAccepted []stmt
-	editable, enabled := false, true
+	editable, enabled, filterable, maxRows := false, true, false, 0
 	curIdx := 0
 	w := float32(140)
 	textRole, valueRole := "", ""
@@ -7599,13 +7604,20 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			onActivated = append(onActivated, a.stmt...)
 		case "onAccepted":
 			onAccepted = a.stmt
-		case "editable", "enabled":
+		case "editable", "enabled", "filterable":
 			if b, err := attrBool(a, env); err == nil {
-				if a.name == "editable" {
+				switch a.name {
+				case "editable":
 					editable = b
-				} else {
+				case "filterable":
+					filterable = b
+				default:
 					enabled = b
 				}
+			}
+		case "maxRows":
+			if f, err := attrFloat(a, env); err == nil {
+				maxRows = int(f)
 			}
 		case "onEditTextChanged", "displayText", "currentValue",
 			"font.pixelSize", "font.pointSize", "implicitHeight", "implicitWidth",
@@ -7732,7 +7744,10 @@ func buildComboBox(n *node, env *Env, doc *docState) (ui.Element, error) {
 		}
 		return float64(-1), nil
 	}))
-	o := ui.ComboOpts{Items: labels, Width: w, Disabled: !enabled}
+	o := ui.ComboOpts{Items: labels, Width: w, Disabled: !enabled, MaxRows: maxRows}
+	if filterable { // gfx extension: a filter field over the open list
+		o.Filter = doc.inputFor(doc.key(n)+".filter", env)
+	}
 	if editable {
 		in := doc.inputFor(doc.key(n)+".edit", env)
 		o.Input = in

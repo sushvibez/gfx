@@ -171,7 +171,7 @@ func (o SwitchOpts) Build(checked *core.Property[bool], label string, onToggle .
 
 func (o SwitchOpts) build(checked *core.Property[bool], label string, onToggle []func(bool)) Element {
 	tm := themeOr(o.Theme)
-	track := Div().Size(40, 22).Rounded(11).ItemsCenter().P(2).Focusable()
+	track := Div().Row().Size(40, 22).Rounded(11).ItemsCenter().P(2).Focusable()
 	if checked.Get() {
 		track.Bg(tm.Accent).Justify(AlignEnd)
 	} else {

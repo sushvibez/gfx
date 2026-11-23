@@ -67,6 +67,7 @@ type InputState struct {
 	caret    int          // active end, rune index
 	anchor   int          // selection anchor; anchor == caret means no selection
 	submit   func(string) // Enter handler (QML TextField.onAccepted)
+	cancel   func()       // Escape handler (QML Keys.onEscapePressed)
 	onEdit   func(string) // each committed change (QML onTextChanged / onTextEdited)
 	onBlur   func(string) // focus left the field (QML onEditingFinished)
 	focused  bool         // holds keyboard focus (QML activeFocus)
@@ -159,6 +160,10 @@ func (s *InputState) OnBlur(fn func(string)) { s.onBlur = fn }
 // pressed (QML TextField.onAccepted).
 func (s *InputState) OnSubmit(fn func(string)) { s.submit = fn }
 
+// OnCancel registers fn to run when Escape is pressed in the field (QML
+// Keys.onEscapePressed) — an in-place editor puts the old value back.
+func (s *InputState) OnCancel(fn func()) { s.cancel = fn }
+
 // SetText replaces the text programmatically, placing the caret at the end
 // and clearing any selection (QML TextField text setter). Use this instead
 // of Text.Set so the caret can't be left past the end of the new text.
@@ -205,6 +210,10 @@ func (s *InputState) Key(ev app.KeyEvent) {
 		return
 	}
 	if s.multiKey(ev) {
+		return
+	}
+	if ev.Key == app.KeyEscape && s.cancel != nil {
+		s.cancel()
 		return
 	}
 	if ev.Key == app.KeyEnter {

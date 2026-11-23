@@ -58,3 +58,40 @@ func TestComboBox(t *testing.T) {
 		t.Errorf("typed purple + Enter: accepted %q current %d, want purple and unchanged", accepted, cur.Get())
 	}
 }
+
+// A filtered list narrows as the filter is typed; Enter picks the first
+// match and clears the filter; a long list scrolls instead of growing.
+func TestComboBoxFilter(t *testing.T) {
+	var cur core.Property[int]
+	var open core.Property[bool]
+	filter := NewInput("")
+	items := []string{"brick", "Concrete", "herringbone_brick_03", "metal", "wood"}
+	for i := 0; i < 20; i++ {
+		items = append(items, "tile_"+string(rune('a'+i)))
+	}
+	u := New(nil, nil, func() Element {
+		return Div().Children(ComboBox(&cur, &open, ComboOpts{Items: items, Filter: filter, Width: 220}))
+	})
+	frame := func() { u.Layout(400, 600) }
+	frame()
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseDown, X: 40, Y: 16, Button: 1}, {Kind: app.MouseUp, X: 40, Y: 16, Button: 1}})
+	frame()
+	if !open.Get() {
+		t.Fatal("not open")
+	}
+	filter.SetText("BRICK")
+	frame()
+	u.Key(app.KeyEvent{Down: true, Key: app.KeyEnter})
+	frame()
+	if cur.Get() != 0 || open.Get() || filter.Text.Get() != "" {
+		t.Errorf("Enter on 'brick': current %d open %v filter %q, want 0 false \"\"", cur.Get(), open.Get(), filter.Text.Get())
+	}
+	filter.SetText("03")
+	open.Set(true)
+	frame()
+	u.Key(app.KeyEvent{Down: true, Key: app.KeyEnter})
+	frame()
+	if cur.Get() != 2 {
+		t.Errorf("'03' picks herringbone_brick_03: current %d", cur.Get())
+	}
+}

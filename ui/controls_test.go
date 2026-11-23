@@ -55,3 +55,22 @@ func TestPageSugar(t *testing.T) {
 		t.Errorf("page content at %+v, want y 30, 100 tall", r)
 	}
 }
+
+// The switch's knob sits at the start of the track when off and at the end
+// when on (the track is a row: Justify moves the knob along it).
+func TestSwitchKnobMoves(t *testing.T) {
+	var on core.Property[bool]
+	var track Element
+	u := New(nil, nil, func() Element { track = Switch(&on, ""); return track })
+	knobX := func() float32 {
+		u.Layout(200, 100)
+		k := Children(track)[0]
+		return Bounds(k).X - Bounds(track).X
+	}
+	off := knobX()
+	on.Set(true)
+	onX := knobX()
+	if off > 3 || onX < 18 {
+		t.Errorf("knob offset off %v, on %v: want ~2 then ~20", off, onX)
+	}
+}

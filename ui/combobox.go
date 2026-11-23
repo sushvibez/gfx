@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/sushvibez/gfx/app"
 	"github.com/sushvibez/gfx/core"
 )
@@ -18,10 +20,20 @@ type ComboOpts struct {
 	// OnAccepted runs after Enter in an editable box, with the typed text.
 	OnAccepted func(text string)
 	Disabled   bool
+	// Filter puts a search field at the top of the open list that narrows
+	// it as you type (case-insensitive, anywhere in the item); Enter picks
+	// the first match. For long lists — materials, models. nil: none.
+	Filter *InputState
+	// MaxRows caps the open list's height in rows (zero: 12); a longer
+	// list scrolls.
+	MaxRows int
 }
 
 // comboSynced is the current index each editable box's field last took.
 var comboSynced = map[*InputState]int{}
+
+// comboScroll is each box's list scroll, by its open state.
+var comboScroll = map[*core.Property[bool]]*ScrollState{}
 
 // ComboBox is a drop-down choice bound to current (QML's ComboBox): a
 // click opens the list under it (open is the retained open state), a pick
@@ -39,6 +51,9 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 	}
 	pick := func(i int) {
 		open.Set(false)
+		if o.Filter != nil {
+			o.Filter.SetText("")
+		}
 		if i < 0 || i >= len(o.Items) {
 			return
 		}
@@ -82,7 +97,9 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 		}
 		box.Children(Input(in, w-40).Bg(tm.Field).TextColor(tm.Text).Border(0, RGBA{}), toggle)
 	} else {
-		box.Children(Text(text, tm.Text), Div().Grow(), arrow)
+		// The current item truncates with an ellipsis: a long name must not
+		// run under the arrow or out of the box.
+		box.Children(Text(text, tm.Text).Truncate().Grow(), arrow)
 		if !o.Disabled {
 			box.OnClick(func() { open.Set(!open.Get()) })
 		}
@@ -112,17 +129,63 @@ func ComboBox(current *core.Property[int], open *core.Property[bool], o ComboOpt
 	if !open.Get() {
 		return box
 	}
-	list := Div().Col().W(w).Bg(tm.Field).Border(1, tm.Border).Rounded(4).P(2)
+	const rowH = 28
+	query := ""
+	if o.Filter != nil {
+		query = strings.ToLower(strings.TrimSpace(o.Filter.Text.Get()))
+	}
+	var shown []int
 	for i, it := range o.Items {
+		if query == "" || strings.Contains(strings.ToLower(it), query) {
+			shown = append(shown, i)
+		}
+	}
+	rows := Div().Col().W(w - 4)
+	for _, i := range shown {
 		i := i
-		row := Div().W(w-4).H(28).PadXY(8, 0).Row().ItemsCenter().Rounded(3).
+		row := Div().W(w-4).H(rowH).PadXY(8, 0).Row().ItemsCenter().Rounded(3).
 			HoverBg(tm.RowHover).OnClick(func() { pick(i) }).
-			Children(Text(it, tm.Text))
+			Children(Text(o.Items[i], tm.Text).Truncate())
 		if i == cur {
 			row.Bg(tm.RowSelected)
 		}
-		list.Children(row)
+		rows.Children(row)
+	}
+	if len(shown) == 0 {
+		rows.Children(Div().W(w-4).H(rowH).PadXY(8, 0).Row().ItemsCenter().Children(Text("No match", tm.Dim)))
+	}
+	maxRows := o.MaxRows
+	if maxRows <= 0 {
+		maxRows = 12
+	}
+	list := Div().Col().W(w).Bg(tm.Field).Border(1, tm.Border).Rounded(4).P(2).Gap(2)
+	if o.Filter != nil {
+		f := o.Filter
+		f.OnSubmit(func(string) {
+			if len(shown) > 0 {
+				pick(shown[0])
+			}
+		})
+		f.OnCancel(func() { f.SetText(""); open.Set(false) })
+		list.Children(Input(f, w-4).Bg(tm.Input).TextColor(tm.InputText).
+			Placeholder("Filter", tm.Dim).RequestFocus())
+	}
+	if len(shown) > maxRows {
+		st := comboScroll[open]
+		if st == nil {
+			st = &ScrollState{}
+			comboScroll[open] = st
+		}
+		list.Children(Scroll(st).W(w - 4).H(float32(maxRows * rowH)).Children(rows))
+	} else {
+		list.Children(rows)
+	}
+	closeList := func() {
+		open.Set(false)
+		if o.Filter != nil {
+			o.Filter.SetText("")
+		}
 	}
 	return Div().Children(box,
-		Overlay(list, 0, 0).AnchorBelow(box, 2).SnapToWindow(4).OnClickOutside(func() { open.Set(false) }))
+		Overlay(list, 0, 0).AnchorBelow(box, 2).SnapToWindow(4).OnClickOutside(closeList))
 }
