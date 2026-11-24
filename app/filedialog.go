@@ -17,5 +17,6 @@ type FileDialogOptions struct {
 }
 
 // ErrNoFileDialog is returned where the platform has no native file
-// dialog (X11, web, Android); apps fall back to ui.FileBrowser.
+// dialog (web, Android, or Linux without zenity / kdialog); apps fall back
+// to ui.FileBrowser.
 var ErrNoFileDialog = errors.New("app: no native file dialog on this platform")

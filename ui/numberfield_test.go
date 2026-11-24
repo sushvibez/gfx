@@ -23,7 +23,12 @@ func TestNumberField(t *testing.T) {
 		u.Mouse([]app.MouseEvent{{Kind: kind, X: x, Y: y, Button: 1, Shift: shift, Ctrl: ctrl}})
 	}
 	frame()
-	kids := Children(box)
+	// With a Unit the field is [box, unit] in a row: the unit sits after it.
+	outer := Children(box)
+	if len(outer) != 2 || Bounds(outer[1]).X < Bounds(outer[0]).X+Bounds(outer[0]).W {
+		t.Fatalf("unit not after the box: %d children", len(outer))
+	}
+	kids := Children(outer[0])
 	left, mid, right := Bounds(kids[0]), Bounds(kids[1]), Bounds(kids[2])
 	click := func(r Rect) {
 		frame()
@@ -72,10 +77,15 @@ func TestNumberField(t *testing.T) {
 	frame()
 	near("clamped at Max", 10)
 
-	// A click types: the text is the value; Enter commits.
+	// A single click does not type; a double-click does, the text being
+	// the value as shown. Enter commits.
+	click(mid)
+	if st.Editing() {
+		t.Fatal("a single click opened the editor")
+	}
 	click(mid)
 	if !st.Editing() || st.Input.Text.Get() != "10" {
-		t.Fatalf("click to type: editing %v text %q", st.Editing(), st.Input.Text.Get())
+		t.Fatalf("double-click to type: editing %v text %q", st.Editing(), st.Input.Text.Get())
 	}
 	st.Input.SetText("2*1.5 m")
 	u.Key(app.KeyEvent{Down: true, Key: app.KeyEnter})
@@ -85,6 +95,7 @@ func TestNumberField(t *testing.T) {
 		t.Error("still editing after Enter")
 	}
 	// Escape cancels: the value stays.
+	click(mid)
 	click(mid)
 	st.Input.SetText("9")
 	u.Key(app.KeyEvent{Down: true, Key: app.KeyEscape})
@@ -105,6 +116,16 @@ func TestNumberField(t *testing.T) {
 }
 
 func TestNumberFormatParse(t *testing.T) {
+	for _, c := range []struct {
+		v    float64
+		o    NumberOpts
+		want string
+	}{{60.000001, NumberOpts{Decimals: -1}, "60"}, {0.123456, NumberOpts{Decimals: -1}, "0.12"},
+		{0.123456, NumberOpts{Decimals: -1, MaxDecimals: 4}, "0.1235"}, {2, NumberOpts{Decimals: 2}, "2.00"}} {
+		if got := formatField(c.v, c.o); got != c.want {
+			t.Errorf("formatField(%v, %+v) = %q, want %q", c.v, c.o, got, c.want)
+		}
+	}
 	for _, c := range []struct {
 		v    float64
 		dec  int

@@ -3,7 +3,7 @@ package fbx
 import "strings"
 
 // This layer normalizes the two FBX generations we see (6100 name-keyed,
-// 7700 id-keyed) into a common object graph so extraction is version-blind:
+// 7000+ id-keyed) into a common object graph so extraction is version-blind:
 //   - obj.id is the connection key (int64 in 7700; a hash of the full name
 //     string in 6100, which keys connections by name).
 //   - obj.name is the clean object name ("mixamorig:Hips"), prefix-stripped
@@ -74,7 +74,9 @@ func (d *Doc) buildGraph() *graph {
 	if objs == nil {
 		return g
 	}
-	wide := d.Version >= 7500
+	// Objects and connections are keyed by int64 id from FBX 7.0 on (the
+	// 64-bit record offsets, a reader concern, only came with 7.5).
+	wide := d.Version >= 7000
 	for _, n := range objs.Children {
 		o := &object{node: n}
 		if wide {

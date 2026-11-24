@@ -49,6 +49,10 @@ type Theme struct {
 
 	Ring      RGBA // a dial's track
 	Indicator RGBA // a page indicator's dots (the current one; the rest are faded)
+
+	// ScrollBarWidth is a scroll view's bar, in pixels (zero: 3, a thin
+	// indicator); its grab area is never narrower than 14.
+	ScrollBarWidth float32
 }
 
 // ClassicTheme is the controls' look before themes (see Theme), which

@@ -804,7 +804,13 @@ type WindowDrag struct {
 	startPX, startPY int // root pointer at press
 	startX, startY   int // window origin at press
 	startW, startH   int
+	moved            bool // a move has passed the slop: a press alone (half a double-click) must not snap the window back
 }
+
+// moveSlop is how far (px) the pointer travels before a titlebar press
+// becomes a move. Without it the second press of a double-click starts a
+// move with the pre-maximise geometry and undoes the maximise.
+const moveSlop = 4
 
 // Active reports whether a move/resize drag is in progress (callers
 // usually suppress camera/selection input while it is).
@@ -835,7 +841,7 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 			if onEdge {
 				d.mode, d.edge = dragResize, edge
 			} else {
-				d.mode = dragMove
+				d.mode, d.moved = dragMove, false
 			}
 		case app.MouseUp:
 			if m.Button == 1 {
@@ -850,6 +856,10 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 	dx, dy := px-d.startPX, py-d.startPY
 	switch d.mode {
 	case dragMove:
+		if !d.moved && dx*dx+dy*dy < moveSlop*moveSlop {
+			return
+		}
+		d.moved = true
 		win.SetGeometry(d.startX+dx, d.startY+dy, d.startW, d.startH)
 	case dragResize:
 		x, y, gw, gh := d.startX, d.startY, d.startW, d.startH

@@ -6735,7 +6735,7 @@ func buildCheckbox(n *node, env *Env, doc *docState) (ui.Element, error) {
 			doc.assigned[broke] = true
 		}
 		if onToggled != nil {
-			run(onToggled, "onToggled")
+			withScope(env, "checked", pr.p.Get(), func() { run(onToggled, "onToggled") })
 		}
 	}
 	// A tristate box (Qt.Unchecked, PartiallyChecked, Checked): checkState
@@ -7152,12 +7152,12 @@ func buildSwitch(n *node, env *Env, doc *docState) (ui.Element, error) {
 		return nil, fmt.Errorf("gml:%d: Switch checked wants a bool property", n.line)
 	}
 	run := doc.handlerRunner(env)
-	track := ui.SwitchOpts{Disabled: !enabledAttr(n, env)}.Build(pr.p, "", func(bool) {
+	track := ui.SwitchOpts{Disabled: !enabledAttr(n, env)}.Build(pr.p, "", func(v bool) {
 		if broke != "" {
 			doc.assigned[broke] = true
 		}
 		if onToggled != nil {
-			run(onToggled, "onToggled")
+			withScope(env, "checked", v, func() { run(onToggled, "onToggled") })
 		}
 	})
 	return withLabel(track, label), nil
@@ -9290,3 +9290,17 @@ func enabledAttr(n *node, env *Env) bool {
 // qtAppFontPx is the size of Qt's default application font in the corpus'
 // reference renders: what a Text with no font size of its own draws at.
 const qtAppFontPx = 13
+
+// withScope runs fn with name bound to v in env — a control's own property
+// read bare in its handler (QML: `onToggled: save(checked)` sees the
+// control's checked) — and restores what the name meant before.
+func withScope(env *Env, name string, v any, fn func()) {
+	prev, had := env.vars[name]
+	env.vars[name] = v
+	fn()
+	if had {
+		env.vars[name] = prev
+	} else {
+		delete(env.vars, name)
+	}
+}

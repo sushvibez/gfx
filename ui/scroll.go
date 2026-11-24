@@ -387,15 +387,16 @@ func (e *ScrollEl) paint(ctx *Context) {
 		}
 	}
 	// Scrollbar indicators when the content overflows.
+	bw := scrollBarWidth()
 	if m := e.st.maxY(); m > 0 {
 		barH := max(24, e.rect.H*e.st.viewH/e.st.contentH)
 		barY := e.rect.Y + (e.rect.H-barH)*(e.st.Y/m)
-		ctx.R.FillRoundRect(e.rect.X+e.rect.W-5, barY, 3, barH, 1.5, bc)
+		ctx.R.FillRoundRect(e.rect.X+e.rect.W-bw-2, barY, bw, barH, bw/2, bc)
 	}
 	if m := e.st.maxX(); m > 0 {
 		barW := max(24, e.rect.W*e.st.viewW/e.st.contentW)
 		barX := e.rect.X + (e.rect.W-barW)*(e.st.X/m)
-		ctx.R.FillRoundRect(barX, e.rect.Y+e.rect.H-5, barW, 3, 1.5, bc)
+		ctx.R.FillRoundRect(barX, e.rect.Y+e.rect.H-bw-2, barW, bw, bw/2, bc)
 	}
 	ctx.R.PopClip()
 }
@@ -493,8 +494,8 @@ func (e *ScrollEl) scrollToY(y float32)        { scrollToYFor(e.rect, e.st, y) }
 
 func (e *ScrollEl) fixedWH() (float32, float32) { return e.w, e.h }
 
-// thumbRectFor computes a scrollbar thumb's grab rectangle (a 14px-wide hit
-// area on the right edge), zero W when there's nothing to scroll.
+// thumbRectFor computes a scrollbar thumb's grab rectangle (at least 14 px
+// wide, wider with a wider bar, on the right edge), zero W when there's nothing to scroll.
 func thumbRectFor(view Rect, s *ScrollState) Rect {
 	m := s.maxY()
 	if m <= 0 {
@@ -502,7 +503,8 @@ func thumbRectFor(view Rect, s *ScrollState) Rect {
 	}
 	barH := max(24, view.H*s.viewH/s.contentH)
 	barY := view.Y + (view.H-barH)*(s.Y/m)
-	return Rect{X: view.X + view.W - 14, Y: barY, W: 14, H: barH}
+	hit := max(14, scrollBarWidth()+6)
+	return Rect{X: view.X + view.W - hit, Y: barY, W: hit, H: barH}
 }
 
 // scrollToYFor maps a dragged thumb's pixel y to a scroll offset.
@@ -514,4 +516,12 @@ func scrollToYFor(view Rect, s *ScrollState, y float32) {
 	}
 	f := (y - view.Y - barH/2) / track
 	s.Y = min(max(f, 0), 1) * s.maxY()
+}
+
+// scrollBarWidth is the theme's bar width (3 when unset).
+func scrollBarWidth() float32 {
+	if w := CurrentTheme().ScrollBarWidth; w > 0 {
+		return w
+	}
+	return 3
 }

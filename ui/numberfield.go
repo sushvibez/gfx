@@ -27,10 +27,13 @@ type NumberOpts struct {
 	// finer, Ctrl snaps the dragged value to whole Steps.
 	Step          float64
 	PixelsPerStep float32
-	// Decimals is the shown precision (negative: as many as needed, up to
-	// six); typed text is kept at full precision.
-	Decimals int
-	// Label is drawn on the left inside the field, Unit after the value.
+	// Decimals is the shown precision: that many places, or (negative) as
+	// many as the value needs up to MaxDecimals (zero: 2). Typed text is
+	// kept at full precision.
+	Decimals, MaxDecimals int
+	// Label is drawn on the left inside the field (the value then sits on
+	// the right, as in Blender; without one the value is centred). Unit is
+	// drawn after the box, outside it.
 	Label, Unit string
 	// OnModified runs after every change the user makes: each arrow click,
 	// key, drag step and typed commit (Blender's live update).
@@ -49,6 +52,7 @@ type NumberState struct {
 	editing bool
 	start   float64
 	moved   bool
+	opened  string // the text the edit opened with: committing it unchanged keeps the unrounded value
 }
 
 // NewNumberState returns the state a NumberField keeps between frames.
@@ -59,7 +63,7 @@ func (s *NumberState) Editing() bool { return s.editing }
 
 // NumberField is a Blender-style number: one rounded box with the label on
 // the left, the value in the middle and step arrows at both ends. Drag
-// sideways on it to scrub the value; click it to type (Enter or a click
+// sideways on it to scrub the value; double-click it (or press Enter) to type (Enter or a click
 // elsewhere commits, refused text puts the value back); click an arrow or
 // press Up/Down (PageUp/PageDown ten steps) to step. Every change lands in
 // value at once and calls OnModified.
@@ -95,16 +99,24 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 	dim := tm.Text
 	dim.A *= 0.6
 	cur := value.Get()
-	shown := FormatNumber(cur, o.Decimals)
-	if o.Unit != "" {
-		shown += " " + o.Unit
-	}
+	shown := formatField(cur, o)
 	const h = 26
 	box := Div().Row().ItemsCenter().Size(w, h).Bg(tm.Field).Border(1, tm.Border).Rounded(5)
 	box.Access(Access{Role: RoleSpinButton, Name: o.Label, Value: shown, Checked: -1, Expanded: -1, Disabled: o.Disabled})
+	withUnit := func(el *DivEl) *DivEl {
+		if o.Unit == "" {
+			return el
+		}
+		return Div().Row().ItemsCenter().Gap(6).Children(el, Text(o.Unit, dim))
+	}
 	if o.Disabled {
-		return box.Opacity(0.5).Children(Div().Grow().Padding(0, 8, 0, 8).Row().ItemsCenter().Children(
-			Text(o.Label, dim), Div().Grow(), Text(shown, text)))
+		inner := Div().Grow().Padding(0, 8, 0, 8).Row().ItemsCenter()
+		if o.Label != "" {
+			inner.Children(Text(o.Label, dim), Div().Grow(), Text(shown, text))
+		} else {
+			inner.Children(Div().Grow(), Text(shown, text), Div().Grow())
+		}
+		return withUnit(box.Opacity(0.5).Children(inner))
 	}
 
 	if st.editing {
@@ -114,6 +126,9 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 				return
 			}
 			st.editing = false
+			if s == st.opened {
+				return
+			}
 			if v, ok := ParseNumber(s); ok {
 				set(v)
 			}
@@ -121,15 +136,19 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 		in.OnSubmit(finish)
 		in.OnBlur(finish)
 		in.OnCancel(func() { st.editing = false }) // Escape: the value stays
-		return box.Children(Input(in, w-2).Bg(tm.Field).TextColor(text).RequestFocus())
+		return withUnit(box.Children(Input(in, w-2).Bg(tm.Field).TextColor(text).RequestFocus()))
 	}
 
 	arrow := func(s string, n float64) *DivEl {
 		return Div().Size(18, h).JustifyCenter().ItemsCenter().Cursor(app.CursorPointer).
 			Children(Text(s, dim)).OnClick(func() { set(value.Get() + n*o.Step) })
 	}
-	middle := Div().Grow().Row().ItemsCenter().Size(0, h).Padding(0, 6, 0, 6).Cursor(app.CursorEW).Children(
-		Text(o.Label, dim), Div().Grow(), Text(shown, text))
+	middle := Div().Grow().Row().ItemsCenter().Size(0, h).Padding(0, 6, 0, 6).Cursor(app.CursorEW)
+	if o.Label != "" {
+		middle.Children(Text(o.Label, dim), Div().Grow(), Text(shown, text))
+	} else {
+		middle.Children(Div().Grow(), Text(shown, text), Div().Grow())
+	}
 	middle.OnDrag(func(dx, _ float32, phase DragPhase) {
 		switch phase {
 		case DragStart:
@@ -155,16 +174,25 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 			}
 		}
 	})
-	middle.OnClick(func() {
-		if st.moved {
-			return // the release of a drag
+	edit := func() {
+		t := shown // at the field's precision, without fixed trailing zeros
+		if o.Decimals > 0 {
+			t = FormatNumberUpTo(cur, o.Decimals)
 		}
-		st.editing = true
-		st.Input.SetText(strconv.FormatFloat(value.Get(), 'f', -1, 64))
+		st.editing, st.opened = true, t
+		st.Input.SetText(t)
 		st.Input.SelectAll()
+	}
+	// A double-click types (a single click is half a drag-scrub, and the
+	// release of a drag must not open the editor).
+	middle.OnDoubleClick(func() {
+		if !st.moved {
+			edit()
+		}
 	})
 	box.Children(arrow("‹", -1), middle, arrow("›", 1))
-	box.OnKeyAccept(func(ev app.KeyEvent) bool {
+	out := withUnit(box)
+	out.OnKeyAccept(func(ev app.KeyEvent) bool {
 		if !ev.Down {
 			return false
 		}
@@ -178,15 +206,38 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 		case app.KeyPageDown:
 			set(value.Get() - 10*o.Step)
 		case app.KeyEnter:
-			st.editing = true
-			st.Input.SetText(strconv.FormatFloat(value.Get(), 'f', -1, 64))
-			st.Input.SelectAll()
+			edit()
 		default:
 			return false
 		}
 		return true
 	})
-	return box
+	return out
+}
+
+// formatField is a field's shown value under its precision options.
+func formatField(v float64, o NumberOpts) string {
+	if o.Decimals >= 0 {
+		return FormatNumber(v, o.Decimals)
+	}
+	m := o.MaxDecimals
+	if m <= 0 {
+		m = 2
+	}
+	return FormatNumberUpTo(v, m)
+}
+
+// FormatNumberUpTo shows v with as few decimals as it needs, at most max,
+// without a trailing ".0" or "-0".
+func FormatNumberUpTo(v float64, max int) string {
+	s := strconv.FormatFloat(v, 'f', max, 64)
+	if strings.Contains(s, ".") {
+		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+	}
+	if s == "-0" {
+		s = "0"
+	}
+	return s
 }
 
 // FormatNumber shows v with decimals places, or (decimals < 0) with as few

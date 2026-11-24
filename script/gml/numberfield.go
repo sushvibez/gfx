@@ -36,7 +36,7 @@ func buildNumberField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	for _, a := range n.attrs {
 		switch a.name {
 		case "id", "visible", "opacity", "x", "y", "height", "focus", "focusPolicy":
-		case "value", "from", "to", "stepSize", "width", "decimals", "pixelsPerStep":
+		case "value", "from", "to", "stepSize", "width", "decimals", "maxDecimals", "pixelsPerStep":
 			v, err := a.expr.eval(env)
 			if err != nil {
 				return nil, err
@@ -61,6 +61,8 @@ func buildNumberField(n *node, env *Env, doc *docState) (ui.Element, error) {
 				o.Width = float32(f)
 			case "decimals":
 				o.Decimals = int(f)
+			case "maxDecimals":
+				o.MaxDecimals = int(f)
 			case "pixelsPerStep":
 				o.PixelsPerStep = float32(f)
 			}

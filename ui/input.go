@@ -321,8 +321,17 @@ func (s *InputState) Key(ev app.KeyEvent) {
 	}
 	// Deletions are always allowed through — a validator that refuses the
 	// empty string must not trap the user with text they cannot clear,
-	// which is Qt's behaviour too.
-	s.Text.Set(string(runes))
+	// which is Qt's behaviour too. They are edits like any other: the edit
+	// handler hears them (a search box emptied by Backspace shows
+	// everything again).
+	t := string(runes)
+	if t == s.Text.Get() {
+		return
+	}
+	s.Text.Set(t)
+	if s.onEdit != nil {
+		s.onEdit(t)
+	}
 }
 
 // moveCaret sets the caret, extending the selection when shift is held,
