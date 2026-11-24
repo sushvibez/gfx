@@ -284,6 +284,14 @@ overlay's VRAM line. It is the application's count, not the driver's:
 alignment, padding and the swapchain are not in it. `GFX_SIM_VRAM_MB` keeps its
 own budget (buffers only, readback staging excluded).
 
+*Status (2026-11-24):* a persistent pipeline cache is not reachable: wgpu
+has one (`PipelineCache`, Vulkan), but wgpu-native's C API does not export
+it (only a registry count). The drivers' own on-disk shader caches (Mesa's,
+NVIDIA's) already make a second launch fast (Drone Defend's delhi: 27.5 s of
+start-up on a cold cache against 8.5 s warm); what the first launch costs is
+covered instead by `shell.Options.Splash`/`SplashImage`, which `Run` presents
+before `Hooks.Init` (`TestDrawSplash`).
+
 ## 6. FFI (the cgo replacement) and scripting
 
 ### 6.1 Replacing cgo

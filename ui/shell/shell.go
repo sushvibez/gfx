@@ -95,6 +95,19 @@ type Options struct {
 	X, Y       int
 	Positioned bool
 	Fullscreen bool
+
+	// Splash puts something on the window while Hooks.Init runs (making
+	// the 3D renderer, its pipelines and the app's first assets can take
+	// seconds on a cold shader cache, with the window still hidden): Run
+	// configures the surface, draws SplashImage centred over the clear
+	// colour (ClearHex) and then Splash over it, presents that, shows the
+	// window, and only then calls Init; the first real frame replaces it.
+	// SplashImage is a PNG or JPEG, drawn at its own size in logical
+	// pixels (fitted down into a smaller window). Splash draws with the
+	// window's 2D renderer in logical pixels, w×h; what it makes must
+	// outlive only that one frame. Run only, and not when Hidden.
+	Splash      func(r *render.Renderer2D, w, h float32)
+	SplashImage []byte
 }
 
 // App hands the runner's state to hooks.
@@ -284,6 +297,12 @@ func Run(o Options, hooks Hooks) error {
 		}
 		r.Release()
 	})
+	// The splash goes up as soon as there is a renderer to draw it, before
+	// the fonts load.
+	shown := false
+	if o.splashOn() {
+		shown = presentSplash(o, win, surface, device, queue, r, msaaView, w, h)
+	}
 	font, err := newFont(r, o)
 	if err != nil {
 		return err
@@ -719,7 +738,7 @@ func Run(o Options, hooks Hooks) error {
 				fmt.Fprintln(os.Stderr, "shell: the vsync'd swapchain stalled three frames running; presenting immediately from now on")
 			}
 		}
-		if rendered == 0 && !o.Hidden {
+		if rendered == 0 && !o.Hidden && !shown {
 			win.Show() // first real frame is on screen — reveal the window
 		}
 		rendered++
@@ -805,7 +824,13 @@ type WindowDrag struct {
 	startX, startY   int // window origin at press
 	startW, startH   int
 	moved            bool // a move has passed the slop: a press alone (half a double-click) must not snap the window back
+	lastPress        time.Time
+	lastX, lastY     float32
 }
+
+// titleDoubleClick is the interval within which a second press on the
+// drag region toggles maximise (Qt's double-click interval).
+const titleDoubleClick = 400 * time.Millisecond
 
 // moveSlop is how far (px) the pointer travels before a titlebar press
 // becomes a move. Without it the second press of a double-click starts a
@@ -840,9 +865,20 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 			d.startX, d.startY, d.startW, d.startH = win.Geometry()
 			if onEdge {
 				d.mode, d.edge = dragResize, edge
-			} else {
-				d.mode, d.moved = dragMove, false
+				continue
 			}
+			// A double-click on the titlebar maximises / restores, as a
+			// system titlebar does. (Here, not in the app: the shell holds
+			// FrameStart back while a drag is active, so the app never
+			// sees presses on its own drag region.)
+			now := time.Now()
+			if now.Sub(d.lastPress) <= titleDoubleClick && abs32(m.X-d.lastX) < 6 && abs32(m.Y-d.lastY) < 6 {
+				d.lastPress = time.Time{}
+				win.ToggleMaximize()
+				continue
+			}
+			d.lastPress, d.lastX, d.lastY = now, m.X, m.Y
+			d.mode, d.moved = dragMove, false
 		case app.MouseUp:
 			if m.Button == 1 {
 				d.mode = dragNone
@@ -978,4 +1014,11 @@ func (o Options) resizeBand() float32 {
 		return 5
 	}
 	return o.ResizeBand
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }

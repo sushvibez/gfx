@@ -134,7 +134,8 @@ real browser. Win32 `WM_TOUCH` is not handled.
   headless still needs wgpu-native); macOS/iOS `app` glue (rendering
   already works through wgpu's Metal backend).
 - **`gpu`/`render` perf headroom**: render bundles, indirect draws with
-  GPU culling, a pipeline cache, threaded encoding, a compute pre-pass
+  GPU culling, a pipeline cache (needs wgpu-native to export wgpu's
+  `PipelineCache`; drivers' disk caches cover it meanwhile), threaded encoding, a compute pre-pass
   for skinning that writes deformed vertices once for many draws.
   Measured 2026-10-15: a 1080p scene makes ~200 ffi crossings (~11 µs)
   in a 1.2 ms frame, so nothing here pays until a scene draws thousands
