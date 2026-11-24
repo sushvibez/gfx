@@ -151,6 +151,9 @@ var x11CursorShape = map[Cursor]uint32{
 	CursorPointer: 60,  // XC_hand2
 	CursorText:    152, // XC_xterm
 	CursorEW:      108, // XC_sb_h_double_arrow
+	CursorNS:      116, // XC_sb_v_double_arrow
+	CursorNWSE:    14,  // XC_bottom_right_corner
+	CursorNESW:    12,  // XC_bottom_left_corner
 }
 
 // X11 keysyms for editing/navigation keys (X11/keysymdef.h).

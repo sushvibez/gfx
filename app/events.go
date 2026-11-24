@@ -77,6 +77,9 @@ const (
 	CursorPointer               // hand (clickable)
 	CursorText                  // I-beam (editable text)
 	CursorEW                    // left-right arrows (a value dragged sideways)
+	CursorNS                    // up-down arrows (a window's top / bottom edge)
+	CursorNWSE                  // diagonal: a window's top-left / bottom-right corner
+	CursorNESW                  // diagonal: a window's top-right / bottom-left corner
 )
 
 // Key identifies a non-printable key. Printable input arrives as

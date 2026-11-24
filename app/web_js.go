@@ -249,7 +249,7 @@ func (w *Window) MouseEvents() []MouseEvent {
 
 var domCursor = map[Cursor]string{
 	CursorDefault: "default", CursorPointer: "pointer", CursorText: "text",
-	CursorEW: "ew-resize",
+	CursorEW: "ew-resize", CursorNS: "ns-resize", CursorNWSE: "nwse-resize", CursorNESW: "nesw-resize",
 }
 
 // SetCursor sets the canvas CSS cursor.

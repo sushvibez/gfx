@@ -41,7 +41,11 @@ func enterRow(viewKey string, delegate *node, env *Env, doc *docState, row map[s
 	// Push the row onto the handler-scope stack so handlers built inside the
 	// delegate (onClicked reading modelData) re-bind this row when they fire,
 	// possibly frames later (handlerRunner snapshots the stack).
-	doc.rowScope = append(doc.rowScope, rowBind{row: row, idx: i})
+	rb := rowBind{row: row, idx: i}
+	if vals != nil {
+		rb.tok = vals.tok
+	}
+	doc.rowScope = append(doc.rowScope, rb)
 	restoreScope := doc.declareRowScopeCached(delegate, env, row, viewKey, i, tracked)
 	return func() {
 		restoreScope()

@@ -48,8 +48,11 @@ type NumberOpts struct {
 // NumberState is a NumberField's retained state: whether it is being typed
 // into, the text field it types into, and the value a drag started from.
 type NumberState struct {
-	Input   *InputState
-	editing bool
+	Input *InputState
+	// editing is a Property, not a bool: a retained (gml) tree rebuilds
+	// only when a tracked value changes, and opening the editor from a
+	// double-click changes nothing else.
+	editing core.Property[bool]
 	start   float64
 	moved   bool
 	opened  string // the text the edit opened with: committing it unchanged keeps the unrounded value
@@ -59,7 +62,7 @@ type NumberState struct {
 func NewNumberState() *NumberState { return &NumberState{Input: NewInput("")} }
 
 // Editing reports whether the field is being typed into.
-func (s *NumberState) Editing() bool { return s.editing }
+func (s *NumberState) Editing() bool { return s.editing.Get() }
 
 // NumberField is a Blender-style number: one rounded box with the label on
 // the left, the value in the middle and step arrows at both ends. Drag
@@ -119,13 +122,13 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 		return withUnit(box.Opacity(0.5).Children(inner))
 	}
 
-	if st.editing {
+	if st.editing.Get() {
 		in := st.Input
 		finish := func(s string) {
-			if !st.editing {
+			if !st.editing.Get() {
 				return
 			}
-			st.editing = false
+			st.editing.Set(false)
 			if s == st.opened {
 				return
 			}
@@ -135,7 +138,7 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 		}
 		in.OnSubmit(finish)
 		in.OnBlur(finish)
-		in.OnCancel(func() { st.editing = false }) // Escape: the value stays
+		in.OnCancel(func() { st.editing.Set(false) }) // Escape: the value stays
 		return withUnit(box.Children(Input(in, w-2).Bg(tm.Field).TextColor(text).RequestFocus()))
 	}
 
@@ -179,7 +182,8 @@ func NumberField(value *core.Property[float64], st *NumberState, o NumberOpts) *
 		if o.Decimals > 0 {
 			t = FormatNumberUpTo(cur, o.Decimals)
 		}
-		st.editing, st.opened = true, t
+		st.opened = t
+		st.editing.Set(true)
 		st.Input.SetText(t)
 		st.Input.SelectAll()
 	}

@@ -24,7 +24,12 @@ import (
 // Go side exposes to markup. The same Env is read every frame, so markup
 // expressions are live bindings by construction.
 type Env struct {
-	vars   map[string]any
+	vars map[string]any
+	// events are the names a control has bound for the handler it is
+	// running (a NumberField's value, a TextField's text, a MouseArea's
+	// mouse): a delegate row's scope, re-bound around the handler, must
+	// not cover them though the row has a role of the same name.
+	events []string
 	parent *Env // scope chain: function/handler/block locals shadow the document
 	// derived marks a scope whose plain values were COMPUTED from tracked
 	// inputs during this build (an item's own width/height expressions,
@@ -2937,4 +2942,20 @@ func shown(v any) any {
 		}
 	}
 	return v
+}
+
+// bindEvent binds name to v for a handler run (an event's own value, which
+// shadows a delegate row's role of the same name) and returns the undo.
+func (env *Env) bindEvent(name string, v any) func() {
+	prev, had := env.vars[name]
+	env.vars[name] = v
+	env.events = append(env.events, name)
+	return func() {
+		env.events = env.events[:len(env.events)-1]
+		if had {
+			env.vars[name] = prev
+		} else {
+			delete(env.vars, name)
+		}
+	}
 }

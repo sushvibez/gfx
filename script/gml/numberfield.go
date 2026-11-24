@@ -118,14 +118,9 @@ func buildNumberField(n *node, env *Env, doc *docState) (ui.Element, error) {
 			return nil
 		}
 		return func() {
-			prev, had := env.vars["value"]
-			env.vars["value"] = ns.v.Get()
+			undo := env.bindEvent("value", ns.v.Get())
 			run(stmts, what)
-			if had {
-				env.vars["value"] = prev
-			} else {
-				delete(env.vars, "value")
-			}
+			undo()
 		}
 	}
 	o.OnModified = withValue(onModified, "onValueModified")

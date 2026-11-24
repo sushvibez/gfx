@@ -112,14 +112,9 @@ func (doc *docState) wireInputHandler(h, box *node, d *ui.DivEl, env *Env) {
 // withVar runs fn with name bound to v in env (a handler's bare read of
 // its own property, as QML resolves it against the handler).
 func withVar(env *Env, name string, v any, fn func()) {
-	prev, had := env.vars[name]
-	env.vars[name] = v
+	undo := env.bindEvent(name, v)
 	fn()
-	if had {
-		env.vars[name] = prev
-	} else {
-		delete(env.vars, name)
-	}
+	undo()
 }
 
 // wheelScaleMultiplier is Qt's default targetScaleMultiplier: the eighth

@@ -109,14 +109,9 @@ func runEvent(run func([]stmt, string), env *Env, stmts []stmt, what, name strin
 			}
 		}
 	}
-	prev, had := env.vars[name]
-	env.vars[name] = obj
+	undo := env.bindEvent(name, obj)
 	run(stmts, what)
-	if had {
-		env.vars[name] = prev
-	} else {
-		delete(env.vars, name)
-	}
+	undo()
 }
 
 // attrIsTrue reports whether n has attribute name and it evaluates true.

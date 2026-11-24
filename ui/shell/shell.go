@@ -160,6 +160,10 @@ type Hooks struct {
 	// DragRegion reports whether a point is in the app's titlebar move
 	// region (undecorated windows).
 	DragRegion func(a *App, x, y float32) bool
+	// MinSize is the smallest window (logical px) the app's content fits:
+	// an undecorated window's border resize stops there. Nil, or a zero
+	// side, keeps the default floor (320x240).
+	MinSize func(a *App) (w, h int)
 }
 
 // RunUI opens a window and drives a plain ui view — the no-hooks case.
@@ -430,6 +434,12 @@ func Run(o Options, hooks Hooks) error {
 			inRegion := func(x, y float32) bool {
 				return hooks.DragRegion != nil && hooks.DragRegion(a, x, y)
 			}
+			if hooks.MinSize != nil {
+				drag.Min = func() (int, int) {
+					mw, mh := hooks.MinSize(a)
+					return int(float32(mw) * scale), int(float32(mh) * scale)
+				}
+			}
 			drag.Handle(win, float32(w)/scale, float32(h)/scale, mouse, o.resizeBand(), inRegion)
 		}
 		if hooks.FrameStart != nil && !drag.Active() {
@@ -440,7 +450,11 @@ func Run(o Options, hooks Hooks) error {
 		for _, k := range keys {
 			u.Key(k)
 		}
-		win.SetCursor(u.Cursor())
+		if c, ok := drag.EdgeCursor(); ok && o.Undecorated {
+			win.SetCursor(c) // over (or dragging) a resize border
+		} else {
+			win.SetCursor(u.Cursor())
+		}
 		// Time-driven content (GIFs) pauses while unfocused: the animation
 		// clock only advances when the window has focus, so hover-driven
 		// repaints show a frozen frame.
@@ -826,6 +840,33 @@ type WindowDrag struct {
 	moved            bool // a move has passed the slop: a press alone (half a double-click) must not snap the window back
 	lastPress        time.Time
 	lastX, lastY     float32
+	hover            app.ResizeEdge // the border under the pointer, when onEdge
+	onEdge           bool
+	// Min, when set, is the smallest size (physical px) a border resize
+	// leaves the window: the app's content minimum (Hooks.MinSize).
+	Min func() (w, h int)
+}
+
+// EdgeCursor is the resize cursor for the border under the pointer or
+// being dragged; ok is false away from the borders.
+func (d *WindowDrag) EdgeCursor() (app.Cursor, bool) {
+	e := d.hover
+	if d.mode == dragResize {
+		e = d.edge
+	} else if !d.onEdge {
+		return app.CursorDefault, false
+	}
+	switch e {
+	case app.EdgeLeft, app.EdgeRight:
+		return app.CursorEW, true
+	case app.EdgeTop, app.EdgeBottom:
+		return app.CursorNS, true
+	case app.EdgeTopLeft, app.EdgeBottomRight:
+		return app.CursorNWSE, true
+	case app.EdgeTopRight, app.EdgeBottomLeft:
+		return app.CursorNESW, true
+	}
+	return app.CursorDefault, false
 }
 
 // titleDoubleClick is the interval within which a second press on the
@@ -852,6 +893,11 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 	}
 	for _, m := range mouse {
 		switch m.Kind {
+		case app.MouseMove:
+			d.onEdge = false
+			if band > 0 {
+				d.hover, d.onEdge = edgeAt(m.X, m.Y, w, h, band)
+			}
 		case app.MouseDown:
 			if m.Button != 1 || d.mode != dragNone {
 				continue
@@ -916,6 +962,11 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 		// SetGeometry itself no longer clamps (a move of a small window used
 		// to grow it to the floor on the first titlebar click).
 		minW, minH := 320, 240
+		if d.Min != nil {
+			if mw, mh := d.Min(); mw > 0 && mh > 0 {
+				minW, minH = mw, mh
+			}
+		}
 		if d.startW < minW {
 			minW = d.startW
 		}

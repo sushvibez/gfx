@@ -466,6 +466,8 @@ type rowBind struct {
 	// its declared properties), so a handler can be run inside them long
 	// after the row itself was built.
 	ids map[string]any
+	// tok is the row's token (rowtoken.go), nil for an untracked row.
+	tok *core.Property[uint64]
 }
 
 // handlerRunner captures the row-scope stack active at build time and
@@ -506,11 +508,29 @@ func (doc *docState) handlerRunner(env *Env) func(stmts []stmt, what string) {
 	}
 	scope := make([]rowBind, len(doc.rowScope))
 	copy(scope, doc.rowScope)
+	// The runner holds this snapshot of the rows: the subtree it is built
+	// into depends on them, though its build may read none (a MouseArea
+	// whose only use of modelData is in onClicked). Record the read, or
+	// the cache serves that subtree — and this stale snapshot — when the
+	// row below it now shows another item.
+	for _, rb := range scope {
+		if rb.tok != nil {
+			rb.tok.Get()
+		}
+	}
 	return func(stmts []stmt, what string) {
+		// What the control bound for this event, before the rows cover it.
+		var ev []any
+		for _, name := range env.events {
+			ev = append(ev, env.vars[name])
+		}
 		restores := []func(){bindParent()}
 		for _, rb := range scope {
 			restores = append(restores, bindRow(env, rb.row, rb.idx, nil))
 			restores = append(restores, bindVars(env, rb.ids))
+		}
+		if len(ev) > 0 {
+			restores = append(restores, bindVars(env, eventVars(env.events, ev)))
 		}
 		err := runStmts(stmts, env)
 		for i := len(restores) - 1; i >= 0; i-- {
@@ -770,4 +790,13 @@ func objectRows(v any) ([]any, bool) {
 		}
 	}
 	return nil, false
+}
+
+// eventVars pairs a handler's event names with their values.
+func eventVars(names []string, vals []any) map[string]any {
+	m := make(map[string]any, len(names))
+	for i, n := range names {
+		m[n] = vals[i]
+	}
+	return m
 }

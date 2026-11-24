@@ -214,14 +214,9 @@ func (doc *docState) wireDragTarget(n *node, d *ui.DivEl, env *Env, g *dragAttrs
 		if g.onActiveChgd != nil {
 			// The handler reads its own `active` by bare name, as QML
 			// resolves it against the handler object.
-			prev, had := env.vars["active"]
-			env.vars["active"] = on
+			undo := env.bindEvent("active", on)
 			run(g.onActiveChgd, "onActiveChanged")
-			if had {
-				env.vars["active"] = prev
-			} else {
-				delete(env.vars, "active")
-			}
+			undo()
 		}
 	}
 	m.OnMove = nil

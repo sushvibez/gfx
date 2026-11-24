@@ -25,9 +25,13 @@ func (o Options) splashOn() bool {
 // appears with the first real frame, as without one).
 func presentSplash(o Options, win *app.Window, surface *gpu.Surface, device *gpu.Device, queue *gpu.Queue,
 	r *render.Renderer2D, msaaView *gpu.TextureView, w, h int) bool {
+	// Map the window first: an image presented to a window that is not
+	// mapped yet is not kept on X11 (Xwayland, Xephyr) — the window then
+	// came up black and stayed so until the first real frame, after Init.
+	win.Show()
 	tex, ok := surface.CurrentTexture()
 	if !ok {
-		return false
+		return true // shown, without the splash
 	}
 	view := tex.CreateView()
 	scale := win.Scale()
@@ -55,11 +59,7 @@ func presentSplash(o Options, win *app.Window, surface *gpu.Surface, device *gpu
 	if img != nil {
 		img.Release() // the submitted frame keeps what it reads alive
 	}
-	if err != nil {
-		return false
-	}
-	win.Show()
-	return true
+	return true // the window is up either way
 }
 
 // drawSplash records the splash into r for a w×h target at scale: the

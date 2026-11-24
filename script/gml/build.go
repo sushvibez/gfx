@@ -6870,9 +6870,9 @@ func buildSlider(n *node, env *Env, doc *docState) (ui.Element, error) {
 		stmts := onValueChanged
 		p := pr.p
 		ref.onChange(func() {
-			env.vars["value"] = float64(p.Get())
+			undo := env.bindEvent("value", float64(p.Get()))
 			run(stmts, "onValueChanged")
-			delete(env.vars, "value")
+			undo()
 		})
 	}
 	if onMoved != nil || broke != "" || writeBack != nil {
@@ -6891,9 +6891,9 @@ func buildSlider(n *node, env *Env, doc *docState) (ui.Element, error) {
 			if onMoved == nil {
 				return
 			}
-			env.vars["value"] = float64(p.Get())
+			undo := env.bindEvent("value", float64(p.Get()))
 			run(onMoved, "onMoved")
-			delete(env.vars, "value")
+			undo()
 		})
 	}
 	return s, nil
@@ -7423,9 +7423,9 @@ func buildDial(n *node, env *Env, doc *docState) (ui.Element, error) {
 				doc.assigned[broke] = true // turning it breaks the bound default
 			}
 			if onMoved != nil {
-				env.vars["value"] = float64(p.Get())
+				undo := env.bindEvent("value", float64(p.Get()))
 				run(onMoved, "onMoved")
-				delete(env.vars, "value")
+				undo()
 			}
 		}
 	}
@@ -8179,14 +8179,9 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 		}
 		run := doc.handlerRunner(env)
 		return func(txt string) {
-			prev, had := env.vars["text"]
-			env.vars["text"] = txt
+			undo := env.bindEvent("text", txt)
 			run(stmts, what)
-			if had {
-				env.vars["text"] = prev
-			} else {
-				delete(env.vars, "text")
-			}
+			undo()
 		}
 	}
 	state.OnEdit(withText(onChanged, "onTextChanged"))
@@ -8199,14 +8194,9 @@ func buildTextField(n *node, env *Env, doc *docState) (ui.Element, error) {
 	if onAccepted != nil {
 		run := doc.handlerRunner(env)
 		state.OnSubmit(func(txt string) {
-			prev, had := env.vars["text"]
-			env.vars["text"] = txt
+			undo := env.bindEvent("text", txt)
 			run(onAccepted, "onAccepted")
-			if had {
-				env.vars["text"] = prev
-			} else {
-				delete(env.vars, "text")
-			}
+			undo()
 		})
 	} else {
 		state.OnSubmit(nil)

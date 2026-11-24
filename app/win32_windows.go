@@ -515,6 +515,9 @@ var idc = map[Cursor]uintptr{
 	CursorPointer: 32649, // IDC_HAND
 	CursorText:    32513, // IDC_IBEAM
 	CursorEW:      32644, // IDC_SIZEWE
+	CursorNS:      32645, // IDC_SIZENS
+	CursorNWSE:    32642, // IDC_SIZENWSE
+	CursorNESW:    32643, // IDC_SIZENESW
 }
 
 // vkKeys maps Win32 virtual-key codes to Key values.

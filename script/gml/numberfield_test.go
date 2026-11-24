@@ -74,3 +74,46 @@ Item {
 		t.Fatalf("w.value = %v after ›, want 21", v)
 	}
 }
+
+// A double-click on the value opens the field for typing (a single click
+// does not), with the value at the field's shown precision.
+func TestNumberFieldDoubleClickTypes(t *testing.T) {
+	src := `
+Item {
+    width: 400; height: 100
+    ScrollView { x: 0; y: 0; width: 400; height: 100
+        Column { width: 380
+            Repeater { model: rows
+                Rectangle { width: 380; height: 30; color: "#00000000"
+                    NumberField { x: 0; y: 2; width: 200; value: h; from: -180; to: 180; stepSize: 5; decimals: -1; unit: "°"
+                        onValueModified: setH(value) } } } } }
+}`
+	env := NewEnv()
+	env.Set("rows", []any{1})
+	env.Set("h", -29.999999999)
+	env.Func("setH", func(v float64) { env.Set("h", v) })
+	d, err := LoadString(src, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var root ui.Element
+	u := ui.New(nil, nil, func() ui.Element { root = d.View()(); return root })
+	frame := func() { u.Layout(400, 100); u.Layout(400, 100) }
+	click := func() {
+		u.Mouse([]app.MouseEvent{{Kind: app.MouseDown, X: 100, Y: 13, Button: 1}})
+		frame()
+		u.Mouse([]app.MouseEvent{{Kind: app.MouseUp, X: 100, Y: 13, Button: 1}})
+		frame()
+	}
+	frame()
+	click()
+	if _, ok := u.Hit(100, 13).(*ui.InputEl); ok {
+		t.Fatal("a single click opened the editor")
+	}
+	click()
+	in, ok := u.Hit(100, 13).(*ui.InputEl)
+	if !ok {
+		t.Fatalf("double-click: no text field under the pointer (%T)", u.Hit(100, 13))
+	}
+	_ = in
+}
