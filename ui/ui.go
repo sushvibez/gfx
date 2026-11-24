@@ -164,6 +164,23 @@ func (u *UI) Frame(width, height float32) {
 	}
 }
 
+// MinSize is the smallest size (logical px) the tree laid out last fits
+// without clipping: its min-content, by the rule Qt-style layouts already
+// size by (requiredSize). A box of fixed size, a one-line label, an image
+// is stuck at the size it measured; a box that stretches needs only what
+// its content cannot do without (a row: its children's minimums side by
+// side plus gaps and padding; a column: the widest, and their heights
+// stacked); a spacer, a wrapping paragraph, a scroll view or grid with no
+// fixed size needs nothing on the axis it fills. Zero before the first
+// layout. Cheap: the measures are the frame's own, memoized.
+func (u *UI) MinSize() (w, h float32) {
+	if u.root == nil || !u.laidOut {
+		return 0, 0
+	}
+	cw, ch := u.root.measure(&u.ctx)
+	return requiredSize(u.root, cw, ch, false)
+}
+
 // Layout rebuilds and lays out the tree without painting — for tests and
 // tools that need hit-testing or geometry but have no GPU.
 func (u *UI) Layout(width, height float32) { u.build(width, height) }

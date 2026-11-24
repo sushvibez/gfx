@@ -223,7 +223,12 @@ type layoutMinner interface {
 	layoutMin() (w, h float32)
 }
 
-func (d *DivEl) layoutMin() (float32, float32) { return d.minReqW, d.minReqH }
+// layoutMin is the box's own minimum: what its content cannot do without,
+// plus its padding.
+func (d *DivEl) layoutMin() (float32, float32) {
+	px, py := d.padWH()
+	return d.minReqW + 2*px, d.minReqH + 2*py
+}
 
 // requiredSize is how much room a child cannot do without, given the size
 // it measured and which way its parent runs. On an axis the child FILLS it
