@@ -351,7 +351,10 @@ fn clip_box(lo : vec3f, hi : vec3f, h : vec3f) -> vec3f {
     let sd = sqrt(max(m2 / 9.0 - mu * mu, vec3f(0.0)));
     let hraw = ycocg(compress(history(huv, dims) * e));
     let px = length(vel * dims);
-    let hold = T.m.w * flick * (1.0 - came) * (1.0 - smoothstep(4.0, 16.0, px));
+    // Only a still picture holds: any reprojection at all (a turning or
+    // moving camera, a fraction of a pixel up) clips the history again, or
+    // a thin edge flagged as flickering smears along the motion.
+    let hold = T.m.w * flick * (1.0 - came) * (1.0 - smoothstep(0.1, 0.6, px));
     let h = mix(clip_box(max(lo, mu - 1.25 * sd), min(hi, mu + 1.25 * sd), hraw), hraw, hold);
     let cur = ycocg(compress(raw * e));
     // More of the new frame while moving, where the resampling blurs.

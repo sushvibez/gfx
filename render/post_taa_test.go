@@ -157,6 +157,13 @@ func TestPostTAAPan(t *testing.T) {
 	if gOn > gOff*1.1+1 {
 		t.Fatalf("TAA ghosts: %.2f from the supersampled picture where the pan changed it, %.2f without TAA", gOn, gOff)
 	}
+	// Over the whole picture too: a thin edge flagged as flickering must
+	// not keep its history unclipped while the camera moves (it trailed
+	// along the motion: 2.81 against 2.34 without TAA, before only a still
+	// picture held).
+	if eOn > eOff*1.08 {
+		t.Fatalf("TAA after a pan: mean error %.2f, %.2f without; the history trails", eOn, eOff)
+	}
 	fastOn, fastOff := eOn, eOff
 	// A slow pan (about a pixel a frame): TAA is no worse than one sample
 	// per pixel even on wires this thin, the hardest case (each frame's
