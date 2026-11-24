@@ -427,6 +427,8 @@ func (w *Window) Maximized() bool { return false }
 
 // BeginMove and BeginResize exist for API parity; not applicable here.
 func (w *Window) BeginMove()             {}
+func (w *Window) SetMinSize(int, int)    {}
+func (w *Window) HasWM() bool            { return false }
 func (w *Window) BeginResize(ResizeEdge) {}
 
 // RootPointer, Geometry and SetGeometry exist for API parity; the browser

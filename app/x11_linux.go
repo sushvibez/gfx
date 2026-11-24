@@ -339,6 +339,11 @@ type Window struct {
 	retainDisplay bool // see RetainDisplay
 
 	fullscreen bool // last state asked for (Options.Fullscreen/SetFullscreen)
+
+	unresizable bool // Options.Unresizable: the size hints pin the size
+	minW, minH  int  // last PMinSize sent (SetMinSize)
+	wm          bool // a window manager runs (HasWM), once wmChecked
+	wmChecked   bool
 }
 
 // NewWindow opens and maps a window. Phase-0 X11; the constructor is the
@@ -580,6 +585,7 @@ func createWindow(display uintptr, o Options) (*Window, error) {
 		transparent: o.Transparent,
 		focused:     focusWin == win,
 		fullscreen:  o.Fullscreen,
+		unresizable: o.Unresizable,
 	}
 	w.mapped = !o.Hidden
 	if o.Fullscreen && !o.Hidden {

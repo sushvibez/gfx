@@ -421,12 +421,13 @@ type Options struct {
 
 // Window is a native Win32 window plus its message pump.
 type Window struct {
-	maximized bool
-	hwnd      uintptr
-	hinstance uintptr
-	width     int
-	height    int
-	closed    bool
+	minW, minH int // smallest client size (SetMinSize), 0 = none
+	maximized  bool
+	hwnd       uintptr
+	hinstance  uintptr
+	width      int
+	height     int
+	closed     bool
 	// OnCloseRequest, when set, runs when the user asks the window manager
 	// to close the window (the title bar's ×, Alt+F4, WM_DELETE_WINDOW);
 	// returning false keeps the window open (an unsaved-changes dialog).
@@ -547,6 +548,9 @@ var wndProc = sync.OnceValue(func() uintptr {
 			if w != nil && (w.OnCloseRequest == nil || w.OnCloseRequest()) {
 				w.closed = true
 			}
+			return 0
+		case 0x0024: // WM_GETMINMAXINFO
+			w.answerMinMax(lparam)
 			return 0
 		case wmSize:
 			if w != nil {

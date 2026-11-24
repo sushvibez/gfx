@@ -490,6 +490,22 @@ of this section that's real. Value-type APIs are followed throughout.
 | Headless | virtual window + synthetic input | offscreen wgpu, or null GPU | no display server needed — see §8.1 |
 | macOS/iOS (wishlist) | purego + objc_msgSend | wgpu-native (Metal) | rendering is already covered by WebGPU; only `app` glue is new work |
 
+*Status (2026-11-24):* a window's floor comes from its content. `ui.UI.MinSize`
+is the laid-out tree's min-content by the rule Qt-style layouts already used
+(`requiredSize`: fixed boxes and one-line labels at their size, stretching
+boxes at what their content cannot do without, spacers, wrapping paragraphs
+and unsized scroll views at nothing; `layoutMin` now counts the box's own
+padding). `shell.Run` takes it as the floor when `Hooks.MinSize` gives none
+(at least 160×120) and publishes the floor to the system (never above the
+window's present size): `Window.SetMinSize` is `WM_NORMAL_HINTS` `PMinSize`
+on X11 and `WM_GETMINMAXINFO` on Windows. On X11 with a window manager
+running (`Window.HasWM`, EWMH `_NET_SUPPORTING_WM_CHECK`) an undecorated
+window's border and titlebar presses go to the WM (`BeginResize`,
+`BeginMove`), which mutter under XWayland follows where it did not follow
+the client moving its own window; the client-side drag stays for no WM,
+for Windows, and under `GFX_CLIENT_RESIZE=1`. The WM path is not verified
+under mutter by a test (it needs a live window).
+
 WASM specifics — web is first-class, so these are design constraints, not
 porting notes:
 - The deliverable is the same as QML-for-WebAssembly / Godot web export: any

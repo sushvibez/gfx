@@ -161,8 +161,10 @@ type Hooks struct {
 	// region (undecorated windows).
 	DragRegion func(a *App, x, y float32) bool
 	// MinSize is the smallest window (logical px) the app's content fits:
-	// an undecorated window's border resize stops there. Nil, or a zero
-	// side, keeps the default floor (320x240).
+	// border resizes stop there (an undecorated window's own, and the
+	// window manager's, which is told it as a size hint). Nil, or a zero
+	// side, takes the content's minimum from the laid-out tree
+	// (ui.UI.MinSize), at least minFloorW×minFloorH.
 	MinSize func(a *App) (w, h int)
 }
 
@@ -430,17 +432,28 @@ func Run(o Options, hooks Hooks) error {
 			a.Touches = nil
 		}
 		a.Gest.Feed(a.Touches)
+		// The window's floor: the app's own (Hooks.MinSize), else what the
+		// laid-out tree cannot do without (UI.MinSize), in physical px. The
+		// window manager is told it too (never above the window's present
+		// size, so publishing it cannot grow the window).
+		minW, minH := contentMin(hooks, a, u, scale)
+		if !o.Hidden {
+			win.SetMinSize(min(minW, w), min(minH, h))
+		}
 		if o.Undecorated {
 			inRegion := func(x, y float32) bool {
 				return hooks.DragRegion != nil && hooks.DragRegion(a, x, y)
 			}
-			if hooks.MinSize != nil {
-				drag.Min = func() (int, int) {
-					mw, mh := hooks.MinSize(a)
-					return int(float32(mw) * scale), int(float32(mh) * scale)
+			drag.Min = func() (int, int) { return minW, minH }
+			drag.Handle(win, float32(w)/scale, float32(h)/scale, mouse, o.resizeBand(), inRegion)
+			if drag.HandedOff {
+				// The window manager took the press: its release never
+				// comes here, so the UI is told the button is up.
+				if n := len(mouse); n > 0 {
+					m := mouse[n-1]
+					mouse = append(mouse, app.MouseEvent{Kind: app.MouseUp, Button: 1, X: m.X, Y: m.Y})
 				}
 			}
-			drag.Handle(win, float32(w)/scale, float32(h)/scale, mouse, o.resizeBand(), inRegion)
 		}
 		if hooks.FrameStart != nil && !drag.Active() {
 			hooks.FrameStart(a, dt, mouse, keys)
@@ -769,6 +782,27 @@ func Run(o Options, hooks Hooks) error {
 	return frameErr
 }
 
+// The smallest floor contentMin gives, logical px: a window whose content
+// needs next to nothing still does not collapse to a sliver.
+const minFloorW, minFloorH = 160, 120
+
+// contentMin is the window's floor in physical px: Hooks.MinSize when it
+// gives both sides, else the UI's min-content, at least the small fixed
+// floor.
+func contentMin(hooks Hooks, a *App, u *ui.UI, scale float32) (int, int) {
+	var mw, mh float32
+	if hooks.MinSize != nil {
+		if w, h := hooks.MinSize(a); w > 0 && h > 0 {
+			mw, mh = float32(w), float32(h)
+		}
+	}
+	if mw == 0 && u != nil {
+		mw, mh = u.MinSize()
+	}
+	mw, mh = max(mw, minFloorW), max(mh, minFloorH)
+	return int(math.Ceil(float64(mw * scale))), int(math.Ceil(float64(mh * scale)))
+}
+
 // releases is what a run made and must release, in the order it was made.
 type releases []func()
 
@@ -845,6 +879,18 @@ type WindowDrag struct {
 	// Min, when set, is the smallest size (physical px) a border resize
 	// leaves the window: the app's content minimum (Hooks.MinSize).
 	Min func() (w, h int)
+	// HandedOff is set by the Handle call in which a press was handed to
+	// the window manager (BeginMove/BeginResize): the WM takes the pointer
+	// from there, so the button's release never reaches the window and a
+	// caller should release it in its own input state.
+	HandedOff bool
+}
+
+// useWM reports whether presses go to the window manager: on X11 when one
+// runs (mutter under XWayland does not follow a client moving and sizing
+// its own window), unless GFX_CLIENT_RESIZE=1 keeps the client-side drag.
+func useWM(win *app.Window) bool {
+	return os.Getenv("GFX_CLIENT_RESIZE") != "1" && win.HasWM()
 }
 
 // EdgeCursor is the resize cursor for the border under the pointer or
@@ -891,6 +937,7 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 	if band == 0 {
 		band = 5
 	}
+	d.HandedOff = false
 	for _, m := range mouse {
 		switch m.Kind {
 		case app.MouseMove:
@@ -905,6 +952,12 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 			edge, onEdge := edgeAt(m.X, m.Y, w, h, band)
 			inDrag := inDragRegion != nil && inDragRegion(m.X, m.Y)
 			if !onEdge && !inDrag {
+				continue
+			}
+			wm := useWM(win)
+			if onEdge && wm {
+				win.BeginResize(edge)
+				d.HandedOff = true
 				continue
 			}
 			d.startPX, d.startPY = win.RootPointer()
@@ -924,6 +977,11 @@ func (d *WindowDrag) Handle(win *app.Window, w, h float32, mouse []app.MouseEven
 				continue
 			}
 			d.lastPress, d.lastX, d.lastY = now, m.X, m.Y
+			if wm {
+				win.BeginMove()
+				d.HandedOff = true
+				continue
+			}
 			d.mode, d.moved = dragMove, false
 		case app.MouseUp:
 			if m.Button == 1 {
