@@ -129,6 +129,23 @@ func TestClipIntersection(t *testing.T) {
 	}
 	r.PopClip()
 
+	// A plain clip of the same box inside a rounded one (DrawImageCropped
+	// inside a card) keeps the corners, and so does the other order.
+	r.PushClipRound(10, 10, 80, 60, 11)
+	r.PushClip(10, 10, 80, 60)
+	if got := r.clip(); got.r != 11 {
+		t.Errorf("the same box inside a rounded clip has radius %v, want 11", got.r)
+	}
+	r.PopClip()
+	r.PopClip()
+	r.PushClip(10, 10, 80, 60)
+	r.PushClipRound(10, 10, 80, 60, 11)
+	if got := r.clip(); got.r != 11 {
+		t.Errorf("a rounded clip of the same box inside a plain one has radius %v, want 11", got.r)
+	}
+	r.PopClip()
+	r.PopClip()
+
 	// Two rounded clips that only partly overlap: neither box survives, so
 	// the shape is the intersection box.
 	r.PushClipRound(0, 0, 100, 100, 20)

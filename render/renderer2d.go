@@ -1670,10 +1670,15 @@ func (r *Renderer2D) PushClipRound(x, y, w, h, radius float32) {
 		// own extent: narrowing the box only trims what shows through.
 		box.maskID = top.maskID
 		box.mx, box.my, box.mw, box.mh = top.mx, top.my, top.mw, top.mh
+		same := func(a clipRect) bool { return box.x == a.x && box.y == a.y && box.w == a.w && box.h == a.h }
 		switch {
-		case box.x == c.x && box.y == c.y && box.w == c.w && box.h == c.h:
+		case same(c) && same(top):
+			// The same box twice (DrawImageCropped's square clip inside a
+			// card's rounded one): the intersection is the rounder of the two.
+			box.r = max(c.r, top.r)
+		case same(c):
 			box.r = c.r // the new clip is the whole intersection
-		case box.x == top.x && box.y == top.y && box.w == top.w && box.h == top.h:
+		case same(top):
 			box.r = top.r // the old one is
 		}
 		c = box
