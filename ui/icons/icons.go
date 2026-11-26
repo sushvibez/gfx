@@ -161,6 +161,11 @@ func Parse(name, color string) (*render.SVG, error) {
 	if err != nil {
 		return nil, fmt.Errorf("icons: %s: %w", name, err)
 	}
+	// The stroke glyphs are drawn small: fit their strokes to the pixels.
+	mu.RLock()
+	_, isFull := full[name]
+	mu.RUnlock()
+	s.Hinted = !isFull
 	mu.Lock()
 	parsed[key] = s
 	mu.Unlock()

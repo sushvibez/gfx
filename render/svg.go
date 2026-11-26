@@ -28,6 +28,13 @@ type SVG struct {
 	// viewBox="0 -960 960 960").
 	offX, offY float32
 	shapes     []svgShape
+	// Hinted fits the strokes to the pixel grid when the drawing is small
+	// (icons.Parse sets it on the stroke icons): each stroke is a whole
+	// number of device pixels wide, and the ends of a horizontal or
+	// vertical run sit on pixel centres (odd widths) or edges (even), so a
+	// 2-unit stroke on a 24-unit grid drawn at 14–18 px is one crisp
+	// pixel instead of 1.2–1.5 px straddling two rows.
+	Hinted bool
 }
 
 type svgShape struct {
@@ -183,6 +190,7 @@ func (r *Renderer2D) drawSVG(s *SVG, x, y, sx, sy, angleRad float32, c RGBA, mix
 	// A stroke has ONE width: under a non-uniform scale take the geometric
 	// mean, the way a renderer approximates a scaled pen.
 	scale := math32.Sqrt(max(sx*sy, 0))
+	hint, ex, ey, dpi := r.svgHint(s, sx, sy, angleRad)
 	for i := range s.shapes {
 		sh := &s.shapes[i]
 		// The fill: cached triangles, transformed straight into the
@@ -219,9 +227,36 @@ func (r *Renderer2D) drawSVG(s *SVG, x, y, sx, sy, angleRad float32, c RGBA, mix
 			continue
 		}
 		tp := NewPath()
+		width := sh.strokeW * scale
+		snap := func(v float32) float32 { return v }
+		if hint {
+			// Whole device pixels: one from about 1.2 px down to nothing,
+			// two from 1.65 px (an icon of 20 px and up).
+			px := max(1, math32.Floor(width*dpi+0.35))
+			width = px / dpi
+			odd := int(px)%2 == 1
+			snap = func(v float32) float32 {
+				if odd {
+					return (math32.Floor(v*dpi) + 0.5) / dpi
+				}
+				return math32.Round(v*dpi) / dpi
+			}
+		}
 		for si, poly := range sh.path.subs {
 			for j, pt := range poly {
 				X, Y := xf(pt.X, pt.Y)
+				if hint {
+					// A point on a vertical run (its neighbour has the
+					// same x) snaps its x; on a horizontal run its y. The
+					// transform's translation (ex, ey) is where the grid is.
+					prev, next := poly[(j+len(poly)-1)%len(poly)], poly[(j+1)%len(poly)]
+					if (j > 0 || sh.path.closed[si]) && prev.X == pt.X || (j < len(poly)-1 || sh.path.closed[si]) && next.X == pt.X {
+						X = snap(X+ex) - ex
+					}
+					if (j > 0 || sh.path.closed[si]) && prev.Y == pt.Y || (j < len(poly)-1 || sh.path.closed[si]) && next.Y == pt.Y {
+						Y = snap(Y+ey) - ey
+					}
+				}
 				if j == 0 {
 					tp.MoveTo(X, Y)
 				} else {
@@ -240,17 +275,41 @@ func (r *Renderer2D) drawSVG(s *SVG, x, y, sx, sy, angleRad float32, c RGBA, mix
 				for i, d := range sh.dash {
 					pat[i] = d * scale
 				}
-				r.StrokePathDashed(tp, sh.strokeW*scale, mix(sh.stroke, c),
+				r.StrokePathDashed(tp, width, mix(sh.stroke, c),
 					pat, sh.dashOff*scale, sh.round)
 				continue
 			}
 			if sh.round {
-				r.StrokePathRound(tp, sh.strokeW*scale, mix(sh.stroke, c))
+				r.StrokePathRound(tp, width, mix(sh.stroke, c))
 			} else {
-				r.StrokePath(tp, sh.strokeW*scale, mix(sh.stroke, c))
+				r.StrokePath(tp, width, mix(sh.stroke, c))
 			}
 		}
 	}
+}
+
+// svgHint says whether s's strokes are fitted to the pixel grid on this
+// draw, and the grid: the current transform's translation (logical px) and
+// device pixels per logical pixel. Only an upright, evenly scaled small
+// drawing under no transform but a translation (and no 2D camera) is
+// hinted; past 48 device px a stroke is wide enough to need none.
+func (r *Renderer2D) svgHint(s *SVG, sx, sy, angle float32) (bool, float32, float32, float32) {
+	if !s.Hinted || angle != 0 || sx != sy || r.camZoom != 0 {
+		return false, 0, 0, 0
+	}
+	var ex, ey float32
+	if len(r.xforms) > 0 {
+		m := r.xform()
+		if m.A != 1 || m.B != 0 || m.C != 0 || m.D != 1 {
+			return false, 0, 0, 0
+		}
+		ex, ey = m.E, m.F
+	}
+	dpi := r.sc()
+	if max(s.W, s.H)*sx*dpi > 48 {
+		return false, 0, 0, 0
+	}
+	return true, ex, ey, dpi
 }
 
 func mulColor(a, b RGBA) RGBA {
