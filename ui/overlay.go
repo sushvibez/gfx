@@ -32,7 +32,8 @@ type OverlayEl struct {
 	ax, ay  float32 // offset from the anchor's top-left
 	below   bool    // offset from the anchor's BOTTOM-left instead
 	beside  bool    // ... or from its top-RIGHT corner (a submenu)
-	above   bool    // ... or centred ABOVE it (a tooltip)
+	above   bool    // ... or centred ABOVE it
+	cursor  bool    // ... or beside the pointer, above and right of it (a tooltip)
 	pin     Anchor  // which point of the overlay lands on the position
 	snap    float32 // snap-to-window margin (GPUI snap_to_window_with_margin); <0 = off
 	outside func()  // dismiss on a click outside the child (on_mouse_down_out)
@@ -76,6 +77,25 @@ func (o *OverlayEl) AnchorAbove(el Element, gap float32) *OverlayEl {
 	return o
 }
 
+// Pointer offsets of a tip placed by AnchorPointer: right of the hot spot,
+// and clear of it above, or below past the arrow's tail when there is no
+// room above.
+const (
+	tipPointerDX    = 10
+	tipPointerAbove = 8
+	tipPointerBelow = 22
+)
+
+// AnchorPointer sits the overlay above and to the right of the pointer, a
+// few pixels clear of it, and below it when there is no room above — a
+// tooltip that never covers the pointer, so it can never take the click
+// meant for what is under it. It follows the pointer while shown. With the
+// pointer outside the window it falls back to above the anchor, centred.
+func (o *OverlayEl) AnchorPointer(el Element) *OverlayEl {
+	o.anchor, o.ax, o.ay, o.above, o.cursor = el, 0, -4, true, true
+	return o
+}
+
 // SnapToWindow keeps the overlay fully on-screen, at least margin px from
 // every window edge (GPUI anchored().snap_to_window_with_margin).
 func (o *OverlayEl) SnapToWindow(margin float32) *OverlayEl { o.snap = margin; return o }
@@ -98,7 +118,21 @@ func (o *OverlayEl) outOfFlow() bool { return true }
 func (o *OverlayEl) layout(ctx *Context, _ Rect) {
 	x, y := o.x, o.y
 	cw, ch := o.child.measure(ctx)
-	if o.anchor != nil {
+	if o.cursor && ctx.MouseX != noPointer && ctx.MouseY != noPointer {
+		x, y = ctx.MouseX+tipPointerDX, ctx.MouseY-tipPointerAbove-ch
+		if o.snap >= 0 && y < o.snap {
+			y = ctx.MouseY + tipPointerBelow
+		}
+		if o.snap >= 0 && x > ctx.winW-cw-o.snap {
+			x = ctx.MouseX - tipPointerDX - cw // flip left at the right edge
+			if x < o.snap {
+				// No room either side (a narrow window): below the
+				// pointer, where the snap's sideways shift cannot put it
+				// over the hot spot.
+				x, y = ctx.MouseX+tipPointerDX, ctx.MouseY+tipPointerBelow
+			}
+		}
+	} else if o.anchor != nil {
 		b := o.anchor.bounds()
 		x, y = b.X+o.ax, b.Y+o.ay
 		switch {

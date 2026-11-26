@@ -63,9 +63,14 @@ func TestToolTipDelay(t *testing.T) {
 	if !tipShown() {
 		t.Fatal("no tip after the delay")
 	}
+	// Above and right of the pointer (60, 60), clear of it: a tip under
+	// the pointer would take the click meant for the button.
 	tip := Bounds(Children(Children(btn)[0])[0])
-	if tip.Y+tip.H > Bounds(btn).Y {
-		t.Errorf("tip at %+v is not above the button %+v", tip, Bounds(btn))
+	if tip.Y+tip.H > 60-tipPointerAbove+0.5 || tip.X < 60+tipPointerDX-0.5 {
+		t.Errorf("tip at %+v is not above and right of the pointer (60, 60)", tip)
+	}
+	if tip.X <= 60 && 60 <= tip.X+tip.W && tip.Y <= 60 && 60 <= tip.Y+tip.H {
+		t.Errorf("tip at %+v covers the pointer", tip)
 	}
 	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 300, Y: 250}})
 	frame()
@@ -94,4 +99,30 @@ func TestToolTipDue(t *testing.T) {
 		t.Error("shown at once after being unwanted")
 	}
 	st.Due(false, o)
+}
+
+// At the window's top a tip goes below the pointer, past its arrow; at the
+// right edge it flips to the pointer's left.
+func TestToolTipBesidePointerAtEdges(t *testing.T) {
+	var st ToolTipState
+	var btn *DivEl
+	u := New(nil, nil, func() Element {
+		btn = st.Attach(Div().Size(80, 20).OnClick(func() {}), "Theme", ToolTipOpts{})
+		return Div().Children(Div().Size(310, 0), btn).Row()
+	})
+	frame := func() { u.Layout(400, 300) }
+	frame()
+	u.Mouse([]app.MouseEvent{{Kind: app.MouseMove, X: 385, Y: 6}})
+	frame()
+	frame()
+	if len(Children(btn)) == 0 {
+		t.Fatal("no tip")
+	}
+	tip := Bounds(Children(Children(btn)[0])[0])
+	if tip.Y < 6+tipPointerBelow-0.5 {
+		t.Errorf("tip at %+v not below the pointer at the window's top", tip)
+	}
+	if tip.X+tip.W > 385 {
+		t.Errorf("tip at %+v not left of the pointer at the right edge", tip)
+	}
 }

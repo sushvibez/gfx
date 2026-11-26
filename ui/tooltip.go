@@ -83,8 +83,10 @@ func (st *ToolTipState) Attach(box *DivEl, text string, o ToolTipOpts) *DivEl {
 	return box
 }
 
-// AttachTip floats panel centred above box, 4 px clear of it and kept on
-// screen — where Qt's ToolTip style places a control's tip.
+// AttachTip floats panel above and to the right of the pointer, clear of
+// it (below it at the window's top), and kept on screen; centred above box
+// when the pointer is not in the window. A tip over the pointer would take
+// the click meant for the control.
 func AttachTip(box *DivEl, panel Element) *DivEl {
-	return box.Children(Overlay(panel, 0, 0).AnchorAbove(box, 4).SnapToWindow(2))
+	return box.Children(Overlay(panel, 0, 0).AnchorPointer(box).SnapToWindow(2))
 }
