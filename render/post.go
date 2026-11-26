@@ -508,8 +508,12 @@ func (p *Post) uniforms() []float32 {
 		ao = 0
 	}
 	sharpen := s.Sharpen
-	if s.TAA {
-		sharpen += taaSharpen // the history's resampling softens a little
+	// TAA's history softens a still picture a little, so it sharpens more;
+	// a moving one is mostly the new frame, aliased like one without TAA,
+	// so FXAA smooths it as it would without (and sharpens only as much).
+	fxaa := s.FXAA && (!p.taa.on || p.taa.moving)
+	if s.TAA && !p.taa.moving {
+		sharpen += taaSharpen
 	}
 	rate := s.AdaptRate
 	if p.frame < 2 {
@@ -519,7 +523,7 @@ func (p *Post) uniforms() []float32 {
 		s.Exposure, s.AutoExposure, s.Key, s.Bloom,
 		s.MinExposure, s.MaxExposure, rate, s.AgX,
 		s.Saturation, s.Vignette, s.ChromaticAberration, s.Grain,
-		float32(math.Mod(float64(p.time), 64)), b(s.FXAA && !s.TAA), sharpen, s.BloomSpread,
+		float32(math.Mod(float64(p.time), 64)), b(fxaa), sharpen, s.BloomSpread,
 		s.ShadowTint[0], s.ShadowTint[1], s.ShadowTint[2], s.Contrast,
 		s.HighlightTint[0], s.HighlightTint[1], s.HighlightTint[2], s.LensFlare,
 		s.Lift[0], s.Lift[1], s.Lift[2], s.LensStreak,

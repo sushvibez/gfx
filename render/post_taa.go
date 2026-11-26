@@ -37,6 +37,7 @@ package render
 // sharpens a little more.
 
 import (
+	"math"
 	"unsafe"
 
 	"github.com/sushvibez/gfx/core"
@@ -58,14 +59,44 @@ const (
 	taaBlend   = 0.1
 	taaSharpen = 0.1
 	taaHold    = 1
+	// taaMovingPx is the reprojection, in pixels, past which a frame counts
+	// as moving: its history is clipped hard and largely replaced, so the
+	// new frame's own aliasing shows through and FXAA runs as well.
+	taaMovingPx = 1.0
+	// taaStillPx is where a moving frame counts as still again: lower, so a
+	// camera drifting near a pixel a frame does not switch FXAA and the
+	// jitter on and off every few frames (a pop each time).
+	taaStillPx = 0.5
 )
 
+// taaScreenMotion is how far, in pixels, the camera's motion moves a point
+// ten units ahead at the centre and toward each corner of the picture: the
+// largest of the five.
+func taaScreenMotion(reproj, proj core.Mat4, w, h int) float32 {
+	if proj[0] == 0 || proj[5] == 0 {
+		return 0
+	}
+	const d = 10
+	var most float32
+	for _, n := range [][2]float32{{0, 0}, {-0.8, -0.8}, {0.8, -0.8}, {-0.8, 0.8}, {0.8, 0.8}} {
+		c := reproj.MulVec4(core.V4(n[0]/proj[0]*d, n[1]/proj[5]*d, -d, 1))
+		if c.W <= 1e-6 {
+			return 1e9
+		}
+		dx := (c.X/c.W - n[0]) * float32(w) / 2
+		dy := (c.Y/c.W - n[1]) * float32(h) / 2
+		most = max(most, dx*dx+dy*dy)
+	}
+	return float32(math.Sqrt(float64(most)))
+}
+
 type postTAA struct {
-	on    bool       // the pass runs this frame
-	valid bool       // hist[1-k] holds the last frame's result
-	jit   [2]float32 // the scene's jitter this frame (NDC)
-	next  [2]float32 // the jitter Jitter handed out
-	asked bool       // Jitter was called since the last Render
+	on     bool       // the pass runs this frame
+	moving bool       // the camera moves the picture by a pixel or more this frame
+	valid  bool       // hist[1-k] holds the last frame's result
+	jit    [2]float32 // the scene's jitter this frame (NDC)
+	next   [2]float32 // the jitter Jitter handed out
+	asked  bool       // Jitter was called since the last Render
 
 	hist   [2]postTex // the result, frame by frame in turn; alpha keeps log2(1 + distance)
 	uni    *gpu.Buffer
@@ -87,6 +118,12 @@ type postTAA struct {
 func (p *Post) Jitter() (dx, dy float32) {
 	if !p.Settings.TAA || p.w == 0 {
 		p.taa.asked = false
+		return 0, 0
+	}
+	if p.taa.moving {
+		// The last frame moved: its history is mostly replaced, so jitter
+		// would only make every edge crawl. It resumes once still.
+		p.taa.next, p.taa.asked = [2]float32{}, true
 		return 0, 0
 	}
 	i := p.frame%taaSamples + 1
@@ -171,6 +208,11 @@ func (p *Post) taaSetup(cam postCamera) {
 		lc.Release()
 		t.valid = false
 	}
+	limit := float32(taaMovingPx)
+	if t.moving {
+		limit = taaStillPx
+	}
+	t.moving = !cam.ok || taaScreenMotion(cam.reproj, p.Projection, p.w, p.h) > limit
 	u := taaUniforms{Reproj: cam.reproj, M: core.V4(0, cam.travel*p.Projection[5]*float32(p.h)*0.5, taaBlend, taaHold),
 		Ride: cam.ride, R: core.V4(max(p.RideRadius, 0), 0, 0, 0)}
 	if t.valid && cam.ok {

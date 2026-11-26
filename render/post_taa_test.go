@@ -425,3 +425,50 @@ func TestView3DTAA(t *testing.T) {
 		t.Fatalf("the pole shows in %d of %d rows with TAA (%d without)", on, h/4, off)
 	}
 }
+
+// In motion the picture is mostly the new frame, so TAA stops jittering it
+// (the edges would crawl by ±½ px a frame) and FXAA smooths it instead;
+// once the camera stops, the jitter and the history's convergence resume
+// and FXAA steps aside. Between the two thresholds the state holds.
+func TestPostTAAStillWhileMoving(t *testing.T) {
+	const w, h = 240, 160
+	pan := taaPanViews(12, 1)
+	views := append(append([]core.Mat4{}, pan...), make([]core.Mat4, 10)...)
+	for i := len(pan); i < len(views); i++ {
+		views[i] = pan[len(pan)-1]
+	}
+	type state struct {
+		moving bool
+		jit    [2]float32
+		fxaa   float32
+	}
+	var seen []state // seen[i]: what frame i left (recorded before frame i+1)
+	logDepthFrames(t, w, h, false, true, func(p *Post) {
+		p.Settings.TAA = true
+		p.Settings.FXAA = true
+	}, views, func(p *Post, i int) {
+		if i > 0 {
+			seen = append(seen, state{p.taa.moving, p.taa.next, p.uniforms()[13]})
+		}
+	})
+	for i, s := range seen {
+		t.Logf("frame %2d: moving %v jitter %v fxaa %v", i, s.moving, s.jit, s.fxaa)
+	}
+	for i := 2; i < len(pan)-1; i++ {
+		s := seen[i]
+		if !s.moving || s.jit != [2]float32{} || s.fxaa != 1 {
+			t.Errorf("panning, frame %d: moving %v, jitter %v, fxaa %v; want moving, no jitter, FXAA", i, s.moving, s.jit, s.fxaa)
+		}
+	}
+	for i := len(pan) + 2; i < len(seen); i++ {
+		s := seen[i]
+		if s.moving || s.jit == [2]float32{} || s.fxaa != 0 {
+			t.Errorf("still, frame %d: moving %v, jitter %v, fxaa %v; want still, jittered, no FXAA", i, s.moving, s.jit, s.fxaa)
+		}
+	}
+	// The thresholds: a frame that moved 0.7 px stays moving if the last
+	// one moved, and is still if the last one was.
+	if taaStillPx >= taaMovingPx {
+		t.Fatalf("taaStillPx %v must be under taaMovingPx %v", taaStillPx, taaMovingPx)
+	}
+}
