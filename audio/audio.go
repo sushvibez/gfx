@@ -137,14 +137,20 @@ type Sound struct {
 // Frames returns the sound's length in frames.
 func (s *Sound) Frames() int { return len(s.samples) / 2 }
 
-// Play starts the sound once, at full volume.
-func (s *Sound) Play() *Voice { return s.start(false) }
+// Play starts the sound once, at full volume, centred.
+func (s *Sound) Play() *Voice { return s.start(false, 1, 0) }
+
+// PlayMix starts the sound once at a volume (0..1) and pan (-1 left .. 1
+// right, see Voice.SetPan). Unlike Play followed by SetVolume/SetPan, the
+// mixer never sees the voice at full volume or centred, not even for its
+// first chunk.
+func (s *Sound) PlayMix(vol, pan float32) *Voice { return s.start(false, vol, pan) }
 
 // Loop starts the sound looping until stopped.
-func (s *Sound) Loop() *Voice { return s.start(true) }
+func (s *Sound) Loop() *Voice { return s.start(true, 1, 0) }
 
-func (s *Sound) start(loop bool) *Voice {
-	v := &Voice{snd: s, vol: 1, loop: loop}
+func (s *Sound) start(loop bool, vol, pan float32) *Voice {
+	v := &Voice{snd: s, vol: clamp01(vol), pan: clampPan(pan), loop: loop}
 	d := s.dev
 	select {
 	case <-d.stop:
@@ -164,6 +170,7 @@ type Voice struct {
 	snd  *Sound
 	pos  int // frame cursor
 	vol  float32
+	pan  float32 // -1 left .. 1 right
 	loop bool
 	stop bool
 }
@@ -173,6 +180,18 @@ func (v *Voice) SetVolume(vol float32) {
 	d := v.snd.dev
 	d.mu.Lock()
 	v.vol = clamp01(vol)
+	d.mu.Unlock()
+}
+
+// SetPan places the voice between the speakers: -1 is the left speaker
+// only, 0 centred (both at the voice's volume), 1 the right only. It is a
+// balance: the side the voice moves away from fades linearly while the
+// near side stays at full volume, so a centred voice is unchanged and
+// panning never makes a voice louder than its volume (nothing to clip).
+func (v *Voice) SetPan(pan float32) {
+	d := v.snd.dev
+	d.mu.Lock()
+	v.pan = clampPan(pan)
 	d.mu.Unlock()
 }
 
@@ -250,6 +269,8 @@ func (v *Voice) mixInto(mix []float32) {
 		v.stop = true
 		return
 	}
+	gl, gr := panGains(v.pan)
+	gl, gr = gl*v.vol, gr*v.vol
 	for i := 0; i < len(mix); i += 2 {
 		if v.pos >= frames {
 			if !v.loop {
@@ -258,11 +279,18 @@ func (v *Voice) mixInto(mix []float32) {
 			}
 			v.pos = 0
 		}
-		mix[i] += src[v.pos*2] * v.vol
-		mix[i+1] += src[v.pos*2+1] * v.vol
+		mix[i] += src[v.pos*2] * gl
+		mix[i+1] += src[v.pos*2+1] * gr
 		v.pos++
 	}
 }
+
+// panGains is the left and right gain for a pan (see Voice.SetPan).
+func panGains(pan float32) (l, r float32) {
+	return min(1, 1-pan), min(1, 1+pan)
+}
+
+func clampPan(p float32) float32 { return max(-1, min(1, p)) }
 
 func clamp01(v float32) float32 {
 	if v < 0 {
