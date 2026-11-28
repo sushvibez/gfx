@@ -88,3 +88,29 @@ func TestWheelAndHoverMove(t *testing.T) {
 		t.Errorf("wheel dy = %v, want 36", gotDY)
 	}
 }
+
+// UI.OnClick sees each click on a clickable element before its handler,
+// with that element; a click on nothing clickable does not reach it.
+func TestUIOnClickHook(t *testing.T) {
+	var order []string
+	var seen Element
+	btn := Div().Size(100, 100).OnClick(func() { order = append(order, "handler") })
+	u := New(nil, nil, func() Element {
+		return Div().Size(200, 200).Children(btn)
+	})
+	u.OnClick(func(el Element) { order = append(order, "hook"); seen = el })
+	u.Layout(200, 200)
+	click(u, 50, 50)
+	if len(order) != 2 || order[0] != "hook" || order[1] != "handler" || seen != Element(btn) {
+		t.Fatalf("click: %v (element %T), want hook then handler on the button", order, seen)
+	}
+	click(u, 150, 150) // the plain background
+	if len(order) != 2 {
+		t.Errorf("a click on nothing clickable reached the hook: %v", order)
+	}
+	u.OnClick(nil)
+	click(u, 50, 50)
+	if len(order) != 3 {
+		t.Errorf("after OnClick(nil): %v", order)
+	}
+}

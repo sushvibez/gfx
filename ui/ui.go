@@ -15,6 +15,8 @@ import (
 // hit-test the most recent layout.
 type UI struct {
 	ctx Context
+	// clickHook sees every pointer click before its handler (OnClick).
+	clickHook func(Element)
 	// layerSeen is when each layer was last painted, in RenderLayers
 	// calls (layerTick), so idle targets can be freed (layer.go).
 	layerSeen   map[*LayerState]uint64
@@ -439,6 +441,12 @@ func (u *UI) WantsFrame() bool { return u.ctx.wantsFrame || u.gestures.holding(u
 // a click fires only if the press and the release hit a handler with the
 // same bounds (element identity across per-frame rebuilds is matched by
 // rect, since elements themselves are rebuilt).
+// OnClick sets a hook that runs for every pointer click on an element with
+// a click handler, just before the handler: an app's click sound, say. It
+// gets the clicked element, so it can pass over some (a 3D view's tap). A
+// nil fn removes it.
+func (u *UI) OnClick(fn func(Element)) { u.clickHook = fn }
+
 func (u *UI) Mouse(events []app.MouseEvent) {
 	if len(events) > 0 {
 		// Hover and press are read off the pointer at paint time, so a
@@ -694,6 +702,9 @@ func (u *UI) Mouse(events []app.MouseEvent) {
 					el = nil // a drag over a 3D view turned the camera: not a tap
 				}
 				if el != nil && el.onClick() != nil && el.bounds() == u.pressTarget {
+					if u.clickHook != nil {
+						u.clickHook(el)
+					}
 					el.onClick()()
 					u.gestures.clicked(el)
 				}
