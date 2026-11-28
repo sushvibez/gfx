@@ -108,6 +108,23 @@ type Options struct {
 	// outlive only that one frame. Run only, and not when Hidden.
 	Splash      func(r *render.Renderer2D, w, h float32)
 	SplashImage []byte
+	// SplashMin keeps the splash up at least this long from when it went
+	// up (over the app's first frames when Init is quicker), and
+	// SplashFade then fades it into the app; both 0, the first real frame
+	// replaces it at once. Hooks.Init can put a line of progress under the
+	// image with App.SplashStatus, in SplashTextHex (0: a grey that reads
+	// on ClearHex).
+	SplashMin     time.Duration
+	SplashFade    time.Duration
+	SplashTextHex uint32
+	// SplashAccentHex colours the progress bar (App.SplashProgress); 0:
+	// the status line's colour.
+	SplashAccentHex uint32
+	// SplashWindow, when set (logical width, height), puts the splash in a
+	// small undecorated window of its own, centred on the primary monitor:
+	// the app's window shows only once Init has returned and SplashMin
+	// has passed, and the splash window then closes (SplashFade unused).
+	SplashWindow [2]int
 }
 
 // App hands the runner's state to hooks.
@@ -131,7 +148,8 @@ type App struct {
 	Gest    app.Gestures
 	Touches []app.TouchEvent
 
-	host *childHost // child-window management (nil when headless)
+	host   *childHost // child-window management (nil when headless)
+	splash *splash    // the start-up splash (nil without one)
 }
 
 // Hooks are the app-specific extension points; all optional except Init.
@@ -306,8 +324,18 @@ func Run(o Options, hooks Hooks) error {
 	// The splash goes up as soon as there is a renderer to draw it, before
 	// the fonts load.
 	shown := false
+	var sp *splash
 	if o.splashOn() {
-		shown = presentSplash(o, win, surface, device, queue, r, msaaView, w, h)
+		if o.SplashWindow[0] > 0 && o.SplashWindow[1] > 0 {
+			sp = openSplashWindow(o, inst, device, queue, r, format, msaa)
+		}
+		if sp == nil {
+			sp = &splash{o: o, win: win, surface: surface, device: device, queue: queue, r: r, msaaView: msaaView, w: w, h: h, progress: -1}
+			shown = true // the splash shows the app's window
+		}
+		sp.loadImage()
+		owned.add(sp.release)
+		sp.present()
 	}
 	font, err := newFont(r, o)
 	if err != nil {
@@ -315,8 +343,20 @@ func Run(o Options, hooks Hooks) error {
 	}
 	owned.add(font.Release)
 	a := &App{Win: win, Device: device, Queue: queue, Format: format, GPU: adapter.Name(), R2: r, Font: font, W: w, H: h,
-		host: &childHost{inst: inst, device: device, format: format, msaa: msaa}}
+		host: &childHost{inst: inst, device: device, format: format, msaa: msaa}, splash: sp}
+	if sp != nil {
+		sp.font, sp.inInit = font, true
+	}
 	view, err := hooks.Init(a)
+	if sp != nil {
+		sp.inInit, sp.initDone, sp.barFrom = false, time.Now(), sp.progress
+		if !sp.own {
+			sp.status = "" // over the app the hold shows the image alone
+		}
+	}
+	if err == nil {
+		sp.hold() // a splash window stays up its minimum, the app's window hidden
+	}
 	if err != nil {
 		return err
 	}
@@ -423,6 +463,18 @@ func Run(o Options, hooks Hooks) error {
 
 		mouse := win.MouseEvents()
 		keys := win.KeyEvents()
+		// While the splash is opaque over the first frames the page under
+		// it cannot be seen, so it gets no presses, wheel or keys (moves
+		// still pass, so hover is right when it fades).
+		if sp.alpha(time.Now()) >= 1 {
+			kept := mouse[:0]
+			for _, m := range mouse {
+				if m.Kind == app.MouseMove {
+					kept = append(kept, m)
+				}
+			}
+			mouse, keys = kept, nil
+		}
 		// Touch is a per-backend extra (not part of Host yet — the win32
 		// backend grows WM_TOUCH separately): drain when present so the
 		// gesture state is always current and the buffer never accumulates.
@@ -547,7 +599,15 @@ func Run(o Options, hooks Hooks) error {
 		// The window's own damage (an Expose) is consumed HERE, once: it
 		// decides both whether to render and whether the render is full.
 		exposed := win.TakeDamage()
-		if rendered > 0 && o.MaxFrames == 0 &&
+		// The splash over the first frames: every frame renders, in full,
+		// until it has faded, and once more when it has gone.
+		splashA := sp.alpha(now)
+		splashEnded := false
+		if splashA <= 0 && sp != nil && !sp.over && !sp.own {
+			sp.finish()
+			splashEnded = true
+		}
+		if rendered > 0 && o.MaxFrames == 0 && splashA <= 0 && !splashEnded &&
 			(hooks.FrameStart == nil || o.EventDriven) && hooks.Encode3D == nil &&
 			len(mouse) == 0 && len(keys) == 0 && !drag.Active() &&
 			!resized && !exposed && !(u.WantsFrame() && win.Focused()) &&
@@ -641,7 +701,7 @@ func Run(o Options, hooks Hooks) error {
 		u.Layout(lw, lh)
 		lap(&tLayout)
 		if damageOK {
-			if resized || exposed || rendered == 0 || presentFallback != lastFallback {
+			if resized || exposed || rendered == 0 || presentFallback != lastFallback || splashA > 0 || splashEnded {
 				u.ForceFullRedraw()
 			}
 			lastFallback = presentFallback
@@ -713,6 +773,9 @@ func Run(o Options, hooks Hooks) error {
 				render.RGBA{R: float32(clear.R), G: float32(clear.G), B: float32(clear.B), A: 1})
 		}
 		u.Frame(lw, lh)
+		if splashA > 0 {
+			sp.draw(lw, lh, splashA)
+		}
 		lap(&tPaint)
 		var pass *gpu.RenderPass
 		switch {
@@ -767,6 +830,9 @@ func Run(o Options, hooks Hooks) error {
 		}
 		if rendered == 0 && !o.Hidden && !shown {
 			win.Show() // first real frame is on screen — reveal the window
+		}
+		if rendered == 0 && sp != nil && sp.own {
+			sp.finish() // the app's window is up: the splash window goes
 		}
 		rendered++
 		// Capture the revision AFTER the frame: building/painting flushes

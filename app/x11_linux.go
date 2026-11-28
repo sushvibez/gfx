@@ -1005,6 +1005,11 @@ func (w *Window) Destroy() {
 			procDisplay = 0
 		}
 		xCloseDisplay(w.display)
+	} else {
+		// The connection stays open (RetainDisplay, or a shared one): send
+		// the destroy now, or a window closed while the process goes on
+		// (a splash window) stays on screen until something else flushes.
+		xFlush(w.display)
 	}
 	w.display = 0
 	w.closed = true
