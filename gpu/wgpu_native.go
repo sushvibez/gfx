@@ -153,6 +153,9 @@ func (p *ProbeInfo) String() string {
 var (
 	loadOnce sync.Once
 	loadErr  error
+	// loadedLib is the name wgpu-native was opened under (a path when
+	// LibPaths found one); dxcPath looks beside it for dxcompiler.dll.
+	loadedLib string
 )
 
 // The typed stubs in zffi_gen.go are generated from the remaining
@@ -175,6 +178,7 @@ func Load(libPaths ...string) error {
 			loadErr = err
 			return
 		}
+		loadedLib = lib.Name()
 		bindGenerated(lib)
 		bindAll(lib)
 		bindResources(lib)

@@ -50,3 +50,32 @@ if [ -d "$DEST/lib" ]; then
 fi
 echo "$VERSION" > "$DEST/commit-sha"
 echo "wgpu-native $VERSION ready in $DEST"
+
+# Windows: the DirectX Shader Compiler beside the DLL. gpu (dxc.go) has DX12
+# compile shaders with it when it is there — several times faster than FXC,
+# wgpu's default (an app's pipelines in ~2-5 s rather than ~20 s). Only
+# dxcompiler.dll (MIT / LLVM licences, shipped beside it) is needed: since
+# v1.8.2502, wgpu's minimum, it no longer loads dxil.dll.
+if [ "$os" = "windows" ]; then
+  DXC_VERSION=v1.9.2609
+  dxc_asset=dxc_2026_09_29.zip
+  case "$arch" in
+    x86_64) dxc_arch=x64 ;;
+    aarch64) dxc_arch=arm64 ;;
+  esac
+  dxc_url="https://github.com/microsoft/DirectXShaderCompiler/releases/download/$DXC_VERSION/$dxc_asset"
+  echo "fetching $dxc_url"
+  tmp="$DEST/dxc-tmp"
+  mkdir -p "$tmp"
+  curl -sfL -o "$tmp/$dxc_asset" "$dxc_url"
+  # The zip's paths use backslashes (bin\x64\...): match them with ? and
+  # flatten; unzip warns about them with exit status 1, which is not a failure.
+  unzip -o -q -j "$tmp/$dxc_asset" "bin?$dxc_arch?dxcompiler.dll" LICENCE-MIT.txt LICENSE-LLVM.txt -d "$tmp" 2>/dev/null \
+    || [ $? -eq 1 ]
+  cp -f "$tmp/dxcompiler.dll" "$DEST/"
+  cp -f "$tmp/LICENCE-MIT.txt" "$DEST/dxcompiler-LICENSE-MIT.txt"
+  cp -f "$tmp/LICENSE-LLVM.txt" "$DEST/dxcompiler-LICENSE-LLVM.txt"
+  rm -rf "$tmp"
+  echo "$DXC_VERSION" > "$DEST/dxc-version"
+  echo "DXC $DXC_VERSION ready in $DEST"
+fi

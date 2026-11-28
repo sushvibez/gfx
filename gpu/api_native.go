@@ -177,9 +177,22 @@ func createInstance() uintptr {
 		backends:               mask,
 		dx12PresentationSystem: dx12SwapchainKind(),
 	}
+	// DX12 compiles shaders with DXC when dxcompiler.dll is at hand (see
+	// dxc.go): FXC, wgpu's default, took ~20 s to build an app's pipelines
+	// on an Intel laptop where DXC takes ~2-5 s.
+	var dxc []byte
+	if mask&backendDX12 != 0 {
+		if p := dxcPath(); p != "" {
+			dxc = []byte(p)
+			extras.dx12ShaderCompiler = dx12CompilerDxc
+			extras.dxcPath = strView(dxc)
+			extras.dxcMaxShaderModel = dxcMaxShaderModel6_6
+		}
+	}
 	desc := instanceDescriptor{nextInChain: uintptr(unsafe.Pointer(&extras))}
 	h := wgpuCreateInstance(unsafe.Pointer(&desc))
 	runtime.KeepAlive(&extras)
+	runtime.KeepAlive(dxc)
 	return h
 }
 
