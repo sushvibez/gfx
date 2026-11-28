@@ -42,11 +42,12 @@ func drawMSAA(t *testing.T, w, h int, draw func(r *Renderer2D)) []byte {
 	return pix
 }
 
-// A hinted icon's 2-unit strokes on a 24-unit grid, drawn at 14 px from a
-// fractional position, come out one crisp device pixel wide: the
-// horizontal stroke fills one row (nearly opaque) with almost nothing in
-// the rows beside it, the vertical one a column. Unhinted, the 1.17 px
-// stroke straddles two rows at partial coverage.
+// An upright small icon is drawn as a browser draws it, Hinted or not:
+// the coverage raster takes the exact geometry, so a 2-unit stroke at
+// 14 px is 1.17 px of coverage across the rows it straddles. (Hinted once
+// rounded it to one opaque pixel here; side by side with Chrome that made
+// every glyph thinner at 14–18 px and heavier from 20, and squared small
+// curves — see TestSVGRasterExactWidth.)
 func TestSVGHintedStrokesCrisp(t *testing.T) {
 	const W, H = 24, 24
 	doc := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><path d="M5 12H19"/><path d="M12 5V19"/></svg>`)
@@ -60,44 +61,31 @@ func TestSVGHintedStrokesCrisp(t *testing.T) {
 			r.DrawSVGScaled(s, 3.3, 2.7, 14.0/24, 14.0/24, 0, White)
 		})
 	}
-	// The plus's arms: the horizontal at y ≈ 2.7 + 7 = 9.7, the vertical
-	// at x ≈ 3.3 + 7 = 10.3. Profiles across each, away from the middle.
+	// The plus's arms: profiles across each, away from the middle.
 	profile := func(pix []byte, horiz bool) []int {
 		var p []int
-		for i := 5; i < 15; i++ {
+		for i := 2; i < 18; i++ {
 			if horiz {
-				p = append(p, int(pix[(i*W+6)*4])) // column 6, rows 5..14
+				p = append(p, int(pix[(i*W+6)*4])) // column 6
 			} else {
-				p = append(p, int(pix[(6*W+i)*4])) // row 6, columns 5..14
+				p = append(p, int(pix[(6*W+i)*4])) // row 6
 			}
 		}
 		return p
 	}
-	crisp := func(p []int) (peak, side int) {
-		at := 0
-		for i, v := range p {
-			if v > p[at] {
-				at = i
-			}
-		}
-		for i, v := range p {
-			if i != at {
-				side = max(side, v)
-			}
-		}
-		return p[at], side
-	}
 	hinted, plain := shoot(true), shoot(false)
 	for _, horiz := range []bool{true, false} {
-		hp, hs := crisp(profile(hinted, horiz))
-		pp, ps := crisp(profile(plain, horiz))
-		t.Logf("horizontal %v: hinted peak %d side %d (%v); unhinted peak %d side %d (%v)",
-			horiz, hp, hs, profile(hinted, horiz), pp, ps, profile(plain, horiz))
-		if hp < 230 || hs > 40 {
-			t.Errorf("horizontal %v: hinted stroke peak %d, brightest neighbour %d: want one opaque pixel", horiz, hp, hs)
+		hp, pp := profile(hinted, horiz), profile(plain, horiz)
+		sum := 0
+		for i := range hp {
+			if hp[i] != pp[i] {
+				t.Errorf("horizontal %v: hinted %v, unhinted %v: want the same", horiz, hp, pp)
+				break
+			}
+			sum += hp[i]
 		}
-		if ps < 60 {
-			t.Errorf("horizontal %v: the unhinted stroke is already crisp (side %d): the test shows nothing", horiz, ps)
+		if want := 14.0 / 12 * 255; float64(sum) < want-8 || float64(sum) > want+8 {
+			t.Errorf("horizontal %v: profile %v sums to %d, want %.0f (a 1.17 px stroke)", horiz, hp, sum, want)
 		}
 	}
 }

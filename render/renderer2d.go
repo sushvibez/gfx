@@ -27,6 +27,8 @@ type Renderer2D struct {
 	// MeasureText share it; see shape.go.
 	shapes map[shapeKey]*shapedRun
 	frame  uint32
+	// svgRasters caches small SVGs rasterized per device size (svgraster.go).
+	svgRasters map[svgRasterKey]*svgRaster
 
 	// damage clamps every scissor of the next Flush to this framebuffer
 	// rectangle (w < 0: none) — see SetDamage.
@@ -1472,6 +1474,7 @@ func (r *Renderer2D) growQuadBuf(size int) {
 }
 
 func (r *Renderer2D) Release() {
+	r.releaseSVGRasters()
 	if r.quadBind != nil {
 		r.quadBind.Release()
 	}
@@ -1630,6 +1633,7 @@ func (r *Renderer2D) Begin(width, height int) {
 	r.groupCut = r.groupCut[:0]
 	r.compVerts = r.compVerts[:0]
 	r.sweepShapes()
+	r.sweepSVGRasters()
 	// The distance-field text parameters start each frame uncommitted,
 	// so the first run that draws takes slot zero again.
 	r.msdfSlotN, r.msdfSlot = 0, -1

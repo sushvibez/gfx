@@ -33,7 +33,10 @@ type SVG struct {
 	// number of device pixels wide, and the ends of a horizontal or
 	// vertical run sit on pixel centres (odd widths) or edges (even), so a
 	// 2-unit stroke on a 24-unit grid drawn at 14–18 px is one crisp
-	// pixel instead of 1.2–1.5 px straddling two rows.
+	// pixel instead of 1.2–1.5 px straddling two rows. It applies only to
+	// the tessellated path: an upright small drawing goes through the
+	// coverage raster (svgraster.go), which draws the exact geometry as a
+	// browser does, so the flag does not change it.
 	Hinted bool
 }
 
@@ -151,14 +154,14 @@ func (r *Renderer2D) DrawSVG(s *SVG, x, y, scale float32, c RGBA) {
 // center (QML rotation / GPUI with_transformation). Paths are already
 // transformed CPU-side per draw, so rotation composes with the scale free.
 func (r *Renderer2D) DrawSVGRotated(s *SVG, x, y, scale, angleRad float32, c RGBA) {
-	r.drawSVG(s, x, y, scale, scale, angleRad, c, mulColor)
+	r.drawSVG(s, x, y, scale, scale, angleRad, c, mulColor, false)
 }
 
 // DrawSVGScaled scales the two axes INDEPENDENTLY — what an
 // `Image { fillMode: Image.Stretch }` does to a vector source, which the
 // uniform scale cannot express (it letterboxes instead).
 func (r *Renderer2D) DrawSVGScaled(s *SVG, x, y, sx, sy, angleRad float32, c RGBA) {
-	r.drawSVG(s, x, y, sx, sy, angleRad, c, mulColor)
+	r.drawSVG(s, x, y, sx, sy, angleRad, c, mulColor, false)
 }
 
 // DrawSVGColorized draws s recoloured to c at each shape's own luminance,
@@ -166,17 +169,20 @@ func (r *Renderer2D) DrawSVGScaled(s *SVG, x, y, sx, sy, angleRad float32, c RGB
 // Controls style tints an icon. A multiply (DrawSVG) can only darken, so a
 // coloured icon comes out muddy instead of recoloured.
 func (r *Renderer2D) DrawSVGColorized(s *SVG, x, y, scale, angleRad float32, c RGBA) {
-	r.drawSVG(s, x, y, scale, scale, angleRad, c, lumColor)
+	r.drawSVG(s, x, y, scale, scale, angleRad, c, lumColor, true)
 }
 
 // DrawSVGScaledColorized is DrawSVGScaled with a colorization.
 func (r *Renderer2D) DrawSVGScaledColorized(s *SVG, x, y, sx, sy, angleRad float32, c RGBA) {
-	r.drawSVG(s, x, y, sx, sy, angleRad, c, lumColor)
+	r.drawSVG(s, x, y, sx, sy, angleRad, c, lumColor, true)
 }
 
 // drawSVG walks the shapes, mapping every shape colour through mix (a
 // multiply, or a colorization).
-func (r *Renderer2D) drawSVG(s *SVG, x, y, sx, sy, angleRad float32, c RGBA, mix func(a, b RGBA) RGBA) {
+func (r *Renderer2D) drawSVG(s *SVG, x, y, sx, sy, angleRad float32, c RGBA, mix func(a, b RGBA) RGBA, colorize bool) {
+	if angleRad == 0 && r.drawSVGRaster(s, x, y, sx, sy, c, colorize) {
+		return
+	}
 	cx, cy := x+s.W*sx/2, y+s.H*sy/2
 	sin, cos := math32.Sincos(angleRad)
 	xf := func(px, py float32) (float32, float32) {
@@ -475,7 +481,28 @@ func shapePath(t xml.StartElement, tol float32) *Path {
 	case "rect":
 		x, y := parseLen(attr("x")), parseLen(attr("y"))
 		w, h := parseLen(attr("width")), parseLen(attr("height"))
-		return NewPath().MoveTo(x, y).LineTo(x+w, y).LineTo(x+w, y+h).LineTo(x, y+h).Close()
+		// Rounded corners (rx/ry; either alone sets both, each at most
+		// half its side) — a Lucide square's rx="2" was drawn sharp.
+		rx, ry := parseLen(attr("rx")), parseLen(attr("ry"))
+		if attr("rx") == "" {
+			rx = ry
+		}
+		if attr("ry") == "" {
+			ry = rx
+		}
+		rx, ry = clampf(rx, 0, w/2), clampf(ry, 0, h/2)
+		if rx <= 0 || ry <= 0 {
+			return NewPath().MoveTo(x, y).LineTo(x+w, y).LineTo(x+w, y+h).LineTo(x, y+h).Close()
+		}
+		p := NewPath().Flatness(tol).MoveTo(x+rx, y).LineTo(x+w-rx, y)
+		arcTo(p, x+w-rx, y, rx, ry, 0, false, true, x+w, y+ry)
+		p.LineTo(x+w, y+h-ry)
+		arcTo(p, x+w, y+h-ry, rx, ry, 0, false, true, x+w-rx, y+h)
+		p.LineTo(x+rx, y+h)
+		arcTo(p, x+rx, y+h, rx, ry, 0, false, true, x, y+h-ry)
+		p.LineTo(x, y+ry)
+		arcTo(p, x, y+ry, rx, ry, 0, false, true, x+rx, y)
+		return p.Close()
 	case "circle":
 		return ellipsePath(parseLen(attr("cx")), parseLen(attr("cy")), parseLen(attr("r")), parseLen(attr("r")))
 	case "ellipse":
