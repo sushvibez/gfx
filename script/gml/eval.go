@@ -141,16 +141,16 @@ func NewEnv() *Env {
 			}
 			return newRegExp(src, flags)
 		},
-		// Qt's translation functions. There are no translation catalogues,
-		// so each returns its source text: qsTr(text, disambiguation, n)
-		// with %n replaced by n, qsTranslate(context, text, …) the same,
-		// qsTrId(id) the id; QT_TR_NOOP and friends mark text unchanged.
-		"qsTr":              func(args []any) (any, error) { return trText(args, 0), nil },
-		"qsTranslate":       func(args []any) (any, error) { return trText(args, 1), nil },
-		"qsTrId":            func(args []any) (any, error) { return trText(args, 0), nil },
-		"QT_TR_NOOP":        func(args []any) (any, error) { return trText(args, 0), nil },
-		"QT_TRANSLATE_NOOP": func(args []any) (any, error) { return trText(args, 1), nil },
-		"QT_TRID_NOOP":      func(args []any) (any, error) { return trText(args, 0), nil },
+		// Qt's translation functions: qsTr(text, disambiguation, n) with %n
+		// replaced by n, qsTranslate(context, text, …) the same, qsTrId(id)
+		// the id — each through the app's catalogue (SetTranslator), else
+		// its source text; QT_TR_NOOP and friends mark text unchanged.
+		"qsTr":              func(args []any) (any, error) { return trText(args, 0, true), nil },
+		"qsTranslate":       func(args []any) (any, error) { return trText(args, 1, true), nil },
+		"qsTrId":            func(args []any) (any, error) { return trText(args, 0, true), nil },
+		"QT_TR_NOOP":        func(args []any) (any, error) { return trText(args, 0, false), nil },
+		"QT_TRANSLATE_NOOP": func(args []any) (any, error) { return trText(args, 1, false), nil },
+		"QT_TRID_NOOP":      func(args []any) (any, error) { return trText(args, 0, false), nil },
 		"Boolean": func(args []any) (any, error) {
 			if len(args) == 0 {
 				return false, nil
@@ -1786,6 +1786,14 @@ func callBuiltinMethod(base any, name string, argExprs []expr, env *Env, line in
 		return nil, false, nil
 	case string:
 		switch name {
+		case "arg":
+			// QString::arg: the lowest-numbered %1…%99 marker, every
+			// occurrence of it, takes the argument (a translated sentence
+			// keeps its own word order: qsTr("Saved %1 of %2").arg(a).arg(b)).
+			if len(args) == 0 {
+				return recv, true, nil
+			}
+			return qtArg(recv, str(args[0])), true, nil
 		case "toUpperCase":
 			return strings.ToUpper(recv), true, nil
 		case "toLowerCase":
@@ -2761,11 +2769,68 @@ func stampScrollTokens() {
 // trText is a translation call's result with no catalogue loaded: the
 // source text at args[at], with %n replaced by the count two places after
 // it (qsTr(text, disambiguation, n)), as Qt does for the untranslated case.
-func trText(args []any, at int) string {
+// translator is the app's catalogue for qsTr and friends (SetTranslator).
+var translator atomic.Pointer[func(string) string]
+
+// SetTranslator installs the catalogue qsTr, qsTranslate and qsTrId look
+// their source text up in (the text is the key, Qt's convention): fn
+// returns the translation, or the text itself when it has none. nil
+// removes it. Pages built after the call see it; a page already built keeps
+// the text it evaluated until its bindings re-evaluate (rebuild it to
+// switch language at once).
+func SetTranslator(fn func(text string) string) {
+	if fn == nil {
+		translator.Store(nil)
+		return
+	}
+	translator.Store(&fn)
+}
+
+// qtArg replaces every occurrence of s's lowest-numbered %N marker with v;
+// with no marker, s is returned unchanged (Qt warns and does the same).
+func qtArg(s, v string) string {
+	low, lowLen := 100, 0
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] != '%' || s[i+1] < '0' || s[i+1] > '9' {
+			continue
+		}
+		n, l := int(s[i+1]-'0'), 2
+		if i+2 < len(s) && s[i+2] >= '0' && s[i+2] <= '9' {
+			n, l = n*10+int(s[i+2]-'0'), 3
+		}
+		if n > 0 && n < low {
+			low, lowLen = n, l
+		}
+	}
+	if lowLen == 0 {
+		return s
+	}
+	marker := "%" + strconv.Itoa(low)
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], marker) {
+			// %1 must not eat the start of %10.
+			end := i + len(marker)
+			if !(end < len(s) && s[end] >= '0' && s[end] <= '9' && lowLen == 2) {
+				b.WriteString(v)
+				i = end
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func trText(args []any, at int, translate bool) string {
 	if at >= len(args) {
 		return ""
 	}
 	s := str(args[at])
+	if fn := translator.Load(); translate && fn != nil {
+		s = (*fn)(s)
+	}
 	if at+2 < len(args) {
 		if n, err := toFloat64(args[at+2]); err == nil {
 			s = strings.ReplaceAll(s, "%n", strconv.FormatFloat(n, 'f', -1, 64))

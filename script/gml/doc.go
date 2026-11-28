@@ -50,7 +50,7 @@ func loadSource(src string, env *Env, baseDir string) (*Document, error) {
 	// face's own line height, and everything below a heading sits several
 	// pixels off without it.
 	render.SetQtTextMetrics(true)
-	root, err := Parse(src)
+	root, err := parseForDisplay(src)
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +416,7 @@ func (l *Live) maybeReload() {
 		l.lastErr = err
 		return
 	}
-	root, err := Parse(string(src))
+	root, err := parseForDisplay(string(src))
 	if err != nil {
 		l.lastErr = err
 		logf("gml: reload: %v", err)

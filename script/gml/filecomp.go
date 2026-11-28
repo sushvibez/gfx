@@ -54,7 +54,7 @@ func (doc *docState) fileComponent(name string) *node {
 		doc.fileComps[name] = nil
 		return nil
 	}
-	root, err := Parse(string(src))
+	root, err := parseForDisplay(string(src))
 	if err != nil {
 		logf("gml: component %s: %v", name, err)
 		doc.fileComps[name] = nil
@@ -94,7 +94,7 @@ func (doc *docState) fileComponentAt(relPath string) *node {
 		doc.fileComps[path] = nil
 		return nil
 	}
-	root, err := Parse(string(src))
+	root, err := parseForDisplay(string(src))
 	if err != nil {
 		logf("gml: Loader source %s: %v", relPath, err)
 		doc.fileComps[path] = nil
