@@ -166,6 +166,10 @@ func (d *Device) DualSourceBlending() bool { return false }
 
 func (d *Device) Release() {}
 
+// OnRelease is a no-op on the web: Release is, and the browser collects
+// the device's objects.
+func (d *Device) OnRelease(fn func()) {}
+
 func (d *Device) Queue() *Queue { return &Queue{d.v.Get("queue")} }
 
 // Flush is a no-op on web: the browser submits queued writes itself.
@@ -603,6 +607,9 @@ func (m *ShaderModule) Release() {}
 type RenderPipeline struct{ v js.Value }
 
 func (p *RenderPipeline) Release() {}
+
+// Share is the same pipeline: the browser collects it (Release is a no-op).
+func (p *RenderPipeline) Share() *RenderPipeline { return p }
 
 // Surface is a canvas's WebGPU context.
 type Surface struct {

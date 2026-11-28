@@ -280,20 +280,14 @@ func NewPost(device *gpu.Device, queue *gpu.Queue, format gpu.TextureFormat) (*P
 	p.uni = device.CreateBuffer(gpu.BufferUniform|gpu.BufferCopyDst, postUniformSize)
 	hdr := gpu.FormatRGBA16Float
 	var err error
+	// The pipelines are shared with the device's other Posts (post_cache.go):
+	// only the first Post of a format builds them.
 	mk := func(label, body, entry string, format gpu.TextureFormat) *gpu.RenderPipeline {
 		if err != nil {
 			return nil
 		}
-		var m *gpu.ShaderModule
-		if m, err = device.CreateShaderModuleWGSL(label, postCommonWGSL+body); err != nil {
-			err = fmt.Errorf("render: post %s: %w", label, err)
-			return nil
-		}
-		defer m.Release()
 		var pl *gpu.RenderPipeline
-		if pl, err = device.CreateRenderPipeline(&gpu.RenderPipelineDesc{
-			Shader: m, VertexEntry: "vs", FragmentEntry: entry, Format: format,
-		}); err != nil {
+		if pl, err = postPipeline(device, label, postCommonWGSL+body, entry, format); err != nil {
 			err = fmt.Errorf("render: post %s: %w", label, err)
 		}
 		return pl

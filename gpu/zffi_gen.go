@@ -67,6 +67,7 @@ var (
 	addr_wgpuRenderPassEncoderSetPipeline      uintptr
 	addr_wgpuRenderPassEncoderSetScissorRect   uintptr
 	addr_wgpuRenderPassEncoderSetVertexBuffer  uintptr
+	addr_wgpuRenderPipelineAddRef              uintptr
 	addr_wgpuRenderPipelineGetBindGroupLayout  uintptr
 	addr_wgpuRenderPipelineRelease             uintptr
 	addr_wgpuSamplerRelease                    uintptr
@@ -303,6 +304,10 @@ func wgpuRenderPassEncoderSetVertexBuffer(pass uintptr, slot uint32, buffer uint
 	ffi.Call(addr_wgpuRenderPassEncoderSetVertexBuffer, pass, uintptr(slot), buffer, uintptr(offset), uintptr(size), 0)
 }
 
+func wgpuRenderPipelineAddRef(pipeline uintptr) {
+	ffi.Call(addr_wgpuRenderPipelineAddRef, pipeline, 0, 0, 0, 0, 0)
+}
+
 func wgpuRenderPipelineGetBindGroupLayout(pipeline uintptr, index uint32) uintptr {
 	return ffi.Call(addr_wgpuRenderPipelineGetBindGroupLayout, pipeline, uintptr(index), 0, 0, 0, 0)
 }
@@ -413,6 +418,7 @@ func bindGenerated(lib *ffi.Lib) {
 	addr_wgpuRenderPassEncoderSetPipeline = lib.MustSym("wgpuRenderPassEncoderSetPipeline")
 	addr_wgpuRenderPassEncoderSetScissorRect = lib.MustSym("wgpuRenderPassEncoderSetScissorRect")
 	addr_wgpuRenderPassEncoderSetVertexBuffer = lib.MustSym("wgpuRenderPassEncoderSetVertexBuffer")
+	addr_wgpuRenderPipelineAddRef = lib.MustSym("wgpuRenderPipelineAddRef")
 	addr_wgpuRenderPipelineGetBindGroupLayout = lib.MustSym("wgpuRenderPipelineGetBindGroupLayout")
 	addr_wgpuRenderPipelineRelease = lib.MustSym("wgpuRenderPipelineRelease")
 	addr_wgpuSamplerRelease = lib.MustSym("wgpuSamplerRelease")

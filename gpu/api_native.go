@@ -585,9 +585,19 @@ type Device struct {
 	// submit (shared by every Queue wrapper of this device).
 	staging *atomic.Int64
 	mem     *memAccount // live buffers' and textures' bytes (AllocatedBytes)
+	// onRelease runs, last added first, when the device is released.
+	onRelease []func()
 }
 
+// OnRelease runs fn when the device is released, before it goes — for a
+// cache of the device's objects to release what it holds.
+func (d *Device) OnRelease(fn func()) { d.onRelease = append(d.onRelease, fn) }
+
 func (d *Device) Release() {
+	for i := len(d.onRelease) - 1; i >= 0; i-- {
+		d.onRelease[i]()
+	}
+	d.onRelease = nil
 	FlushCallTrace() // a short run still reports its GFX_CALLS line
 	wgpuDeviceRelease(d.h)
 }
@@ -848,6 +858,14 @@ func (m *ShaderModule) Release() { wgpuShaderModuleRelease(m.h) }
 type RenderPipeline struct{ h uintptr }
 
 func (p *RenderPipeline) Release() { wgpuRenderPipelineRelease(p.h) }
+
+// Share is another reference to the same pipeline, released on its own:
+// the pipeline lives until every reference is released. A cache hands out
+// one per user so each can Release what it was given.
+func (p *RenderPipeline) Share() *RenderPipeline {
+	wgpuRenderPipelineAddRef(p.h)
+	return &RenderPipeline{p.h}
+}
 
 // Surface is a presentable window surface.
 type Surface struct {
