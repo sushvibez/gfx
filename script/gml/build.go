@@ -1710,6 +1710,8 @@ func buildElement(n *node, env *Env, doc *docState) (ui.Element, error) {
 		return buildSpinBox(n, env, doc)
 	case "NumberField":
 		return buildNumberField(n, env, doc)
+	case "ColorField":
+		return buildColorField(n, env, doc)
 	case "ComboBox":
 		return buildComboBox(n, env, doc)
 	case "Slider":
@@ -1824,6 +1826,8 @@ type docState struct {
 	// numbers are the NumberFields' retained state (scrub, typing), by
 	// element key.
 	numbers map[string]*numberFieldState
+	// colors are the ColorFields' retained state (open, hue), by key.
+	colors map[string]*ui.ColorState
 	// inputSeed is the last bound `text:` value each retained input was
 	// seeded with, so a binding that changes underneath an unfocused
 	// field refreshes it (QML: the text property setter) while typing

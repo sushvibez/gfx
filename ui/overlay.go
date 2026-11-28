@@ -138,6 +138,12 @@ func (o *OverlayEl) layout(ctx *Context, _ Rect) {
 		switch {
 		case o.below:
 			y += b.H
+			// A drop-down with no room under its trigger opens above it
+			// (when there is room there), instead of being snapped up
+			// over the trigger it belongs to.
+			if o.snap >= 0 && y+ch > ctx.winH-o.snap && b.Y-o.ay-ch >= o.snap {
+				y = b.Y - o.ay - ch
+			}
 		case o.beside:
 			x += b.W
 		case o.above:
