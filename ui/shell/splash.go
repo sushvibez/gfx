@@ -276,12 +276,7 @@ func openSplashWindow(o Options, inst *gpu.Instance, device *gpu.Device, queue *
 				m = c
 			}
 		}
-		k := m.Scale
-		if k <= 0 {
-			k = 1
-		}
-		wo.Width, wo.Height = int(float32(sw)*k), int(float32(sh)*k)
-		wo.X, wo.Y, wo.Positioned = m.X+(m.Width-wo.Width)/2, m.Y+(m.Height-wo.Height)/2, true
+		wo.X, wo.Y, wo.Positioned = splashOrigin(m, sw, sh)
 	}
 	win, err := app.NewWindow(wo)
 	if err != nil {
@@ -302,6 +297,21 @@ func openSplashWindow(o Options, inst *gpu.Instance, device *gpu.Device, queue *
 		s.msaaView = s.msaaTex.CreateView()
 	}
 	return s
+}
+
+// splashOrigin is where a splash window of logical size sw×sh goes to sit
+// centred on monitor m. app.Options sizes are LOGICAL (each backend
+// multiplies them by the DPI scale) while X/Y are PHYSICAL desktop pixels,
+// as Monitors reports them, so the centring uses the physical size the
+// window will have. (Scaling the size here as well made a 150 % Windows
+// display get a 2.25× window placed as if it were 1.5×: off down and right.)
+func splashOrigin(m app.Monitor, sw, sh int) (x, y int, positioned bool) {
+	k := m.Scale
+	if k <= 0 {
+		k = 1
+	}
+	pw, ph := int(float32(sw)*k+0.5), int(float32(sh)*k+0.5)
+	return m.X + (m.Width-pw)/2, m.Y + (m.Height-ph)/2, true
 }
 
 // hold keeps a splash in its own window up until SplashMin has passed

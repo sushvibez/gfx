@@ -3,6 +3,8 @@ package shell
 import (
 	"testing"
 	"time"
+
+	"github.com/sushvibez/gfx/app"
 )
 
 // The splash over the first frames: off without a hold or fade, opaque
@@ -63,5 +65,27 @@ func TestSplashTextColor(t *testing.T) {
 	}
 	if c := (Options{ClearHex: 0x070708, SplashTextHex: 0xff0000}).splashTextColor(); c.R != 1 || c.G != 0 {
 		t.Errorf("set: %v", c)
+	}
+}
+
+// The splash window is centred by its physical size (logical × the
+// monitor's scale): the 480×300 splash on a 1920×1080 monitor at 150 %
+// is 720×450 physical, so its corner is at (600, 315); on a second monitor
+// the monitor's origin carries over.
+func TestSplashOrigin(t *testing.T) {
+	for _, c := range []struct {
+		m    app.Monitor
+		x, y int
+	}{
+		{app.Monitor{Width: 1920, Height: 1080, Scale: 1}, 720, 390},
+		{app.Monitor{Width: 1920, Height: 1080, Scale: 1.5}, 600, 315},
+		{app.Monitor{Width: 3840, Height: 2160, Scale: 2}, 1440, 780},
+		{app.Monitor{X: 1920, Width: 2560, Height: 1440, Scale: 1.25}, 1920 + 980, 532},
+		{app.Monitor{Width: 1920, Height: 1080}, 720, 390}, // no scale reported
+	} {
+		x, y, ok := splashOrigin(c.m, 480, 300)
+		if !ok || x != c.x || y != c.y {
+			t.Errorf("%+v: (%d, %d), want (%d, %d)", c.m, x, y, c.x, c.y)
+		}
 	}
 }
